@@ -7,7 +7,7 @@ use crate::{
             map_openai_reasoning_effort_to_claude_output,
             map_openai_reasoning_effort_to_thinking_budget,
         },
-        shared::model_directives::claude_model_uses_adaptive_effort,
+        shared::model_directives::{claude_model_is_haiku_5_5, claude_model_uses_adaptive_effort},
     },
     protocol::canonical::{
         canonical_extension_object_mut, canonical_instructions_to_claude_system,
@@ -130,10 +130,12 @@ pub fn to_raw(
     if upstream_is_stream {
         output.insert("stream".to_string(), Value::Bool(true));
     }
-    insert_f64(&mut output, "temperature", canonical.generation.temperature);
-    insert_f64(&mut output, "top_p", canonical.generation.top_p);
-    if let Some(top_k) = canonical.generation.top_k {
-        output.insert("top_k".to_string(), Value::from(top_k));
+    if !claude_model_is_haiku_5_5(mapped_model) {
+        insert_f64(&mut output, "temperature", canonical.generation.temperature);
+        insert_f64(&mut output, "top_p", canonical.generation.top_p);
+        if let Some(top_k) = canonical.generation.top_k {
+            output.insert("top_k".to_string(), Value::from(top_k));
+        }
     }
     if let Some(stop_sequences) = &canonical.generation.stop_sequences {
         output.insert(
@@ -161,7 +163,9 @@ pub fn to_raw(
             .or_else(|| openai_effort.and_then(map_openai_reasoning_effort_to_thinking_budget));
         let uses_adaptive = claude_model_uses_adaptive_effort(mapped_model)
             || claude_model_uses_adaptive_effort(canonical.model.as_str());
-        if thinking.enabled || budget_tokens.is_some() {
+        if uses_adaptive && openai_effort == Some("none") {
+            output.insert("thinking".to_string(), json!({"type":"disabled"}));
+        } else if thinking.enabled || budget_tokens.is_some() {
             let thinking_config = if uses_adaptive {
                 json!({"type": "adaptive"})
             } else {
@@ -183,10 +187,10 @@ pub fn to_raw(
             );
         }
     }
-    output.extend(namespace_extension_object(
-        &canonical.extensions,
-        "claude",
-        &output,
-    ));
+    let mut extension = namespace_extension_object(&canonical.extensions, "claude", &output);
+    // These canonical helpers have already been emitted in tools; they are not API fields.
+    extension.remove("builtin_tools");
+    extension.remove("web_search_options");
+    output.extend(extension);
     Some(Value::Object(output))
 }

@@ -286,7 +286,10 @@ fn history_conversion_enabled(report_context: &Value) -> bool {
         && report_context
             .get("provider_api_format")
             .and_then(Value::as_str)
-            .is_some_and(|format| format.eq_ignore_ascii_case("openai:chat"))
+            .is_some_and(|format| {
+                format.eq_ignore_ascii_case("openai:chat")
+                    || format.eq_ignore_ascii_case("claude:messages")
+            })
 }
 
 pub(crate) fn expand_previous_response_for_chat(
@@ -356,7 +359,17 @@ pub fn record_converted_response_history(
             })
             .unwrap_or_default()
     };
-    transcript.extend(request_input_items(request));
+    let mut current_input = request_input_items(request);
+    if report_context
+        .get("provider_api_format")
+        .and_then(Value::as_str)
+        == Some("claude:messages")
+    {
+        // Tool definitions belong to the current request, not conversation
+        // messages. Keeping Lite envelopes here duplicates them on continuation.
+        current_input.retain(|item| item["type"] != "additional_tools");
+    }
+    transcript.extend(current_input);
     if let Some(output) = response.get("output").and_then(Value::as_array) {
         transcript.extend(output.iter().cloned());
     }

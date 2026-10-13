@@ -114,7 +114,12 @@ fn openai_responses_incomplete_stop_reason(body: &Map<String, Value>) -> Canonic
 }
 
 pub fn to_raw(canonical: &CanonicalResponse, report_context: &Value, compact: bool) -> Value {
-    let namespace_tool_aliases = NamespaceToolAliases::from_report_context(report_context);
+    let namespace_tool_aliases =
+        if crate::formats::claude::responses_tools::is_claude_provider(report_context) {
+            NamespaceToolAliases::default()
+        } else {
+            NamespaceToolAliases::from_report_context(report_context)
+        };
     let mut response = Map::new();
     let response_id = canonical.id.replace("chatcmpl", "resp");
     response.insert("id".to_string(), Value::String(response_id.clone()));
@@ -184,14 +189,37 @@ pub fn to_raw(canonical: &CanonicalResponse, report_context: &Value, compact: bo
             }
             CanonicalContentBlock::Thinking {
                 text,
+                signature,
                 encrypted_content,
                 extensions,
                 ..
             } => {
-                let encrypted_content = encrypted_content
-                    .as_ref()
-                    .filter(|value| !value.is_empty())
-                    .filter(|_| is_openai_thinking_block(extensions));
+                let claude_carrier =
+                    if crate::protocol::canonical::is_claude_thinking_block(extensions)
+                        && crate::formats::shared::model_directives::claude_model_is_haiku_5_5(
+                            &canonical.model,
+                        )
+                    {
+                        if let Some(signature) = signature.as_ref().filter(|s| !s.is_empty()) {
+                            crate::formats::claude::responses_tools::encode_thinking_carrier(&[
+                                json!({"type":"thinking","thinking":text,"signature":signature}),
+                            ])
+                        } else if let Some(data) = encrypted_content {
+                            crate::formats::claude::responses_tools::encode_thinking_carrier(&[
+                                json!({"type":"redacted_thinking","data":data}),
+                            ])
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+                let encrypted_content = claude_carrier.as_ref().or_else(|| {
+                    encrypted_content
+                        .as_ref()
+                        .filter(|value| !value.is_empty())
+                        .filter(|_| is_openai_thinking_block(extensions))
+                });
                 if text.trim().is_empty() && encrypted_content.is_none() {
                     continue;
                 }
@@ -263,7 +291,11 @@ pub fn to_raw(canonical: &CanonicalResponse, report_context: &Value, compact: bo
                     }));
                 }
                 let namespaced_tool = namespace_tool_aliases.responses_name(name);
-                if namespaced_tool.is_none() && is_responses_web_search_tool(name) {
+                let declared_claude_tool = crate::formats::claude::responses_tools::ClaudeResponsesTools::from_report_context(report_context).identity(name).is_some();
+                if namespaced_tool.is_none()
+                    && !declared_claude_tool
+                    && is_responses_web_search_tool(name)
+                {
                     output.push(json!({
                         "type": "web_search_call",
                         "id": id,

@@ -2,6 +2,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{json, Map, Value};
 
+use crate::formats::claude::responses_tools::{
+    decode_custom_arguments, encode_thinking_carrier, encode_web_context, is_claude_provider,
+    restore_tool_search_call, web_sources, ClaudeResponsesTools,
+};
 use crate::formats::openai::namespace::NamespaceToolAliases;
 use crate::formats::openai::responses::{
     encode_gemini_tool_signature_carrier_with_direction, openai_responses_message_item_id,
@@ -1938,6 +1942,10 @@ struct OpenAIResponsesClientToolState {
     thought_signature_output_index: Option<usize>,
     output_index: Option<usize>,
     web_search: bool,
+    web_sources: Vec<Value>,
+    custom: bool,
+    tool_search: bool,
+    custom_input: Option<String>,
 }
 
 #[derive(Clone, Default)]
@@ -1985,6 +1993,8 @@ pub struct OpenAIResponsesClientEmitter {
     text_part_started: bool,
     message_output_index: Option<usize>,
     text: String,
+    text_annotations: Vec<Value>,
+    text_annotation_offset: usize,
     reasoning: String,
     reasoning_part: String,
     reasoning_summary_parts: Vec<String>,
@@ -1995,6 +2005,10 @@ pub struct OpenAIResponsesClientEmitter {
     opaque_output_indexes: BTreeMap<String, usize>,
     completed_history_response: Option<Value>,
     namespace_tool_aliases: NamespaceToolAliases,
+    claude_responses_tools: ClaudeResponsesTools,
+    claude_provider: bool,
+    claude_thinking_blocks: Vec<Value>,
+    claude_reasoning_signature: String,
 }
 
 impl OpenAIChatClientEmitter {
@@ -2293,9 +2307,22 @@ impl OpenAIChatClientEmitter {
 }
 
 impl OpenAIResponsesClientEmitter {
+    fn preserve_claude_thinking_part(&mut self) {
+        if self.claude_provider
+            && crate::formats::shared::model_directives::claude_model_is_haiku_5_5(self.model())
+            && !self.claude_reasoning_signature.is_empty()
+        {
+            self.claude_thinking_blocks
+                .push(json!({"type":"thinking", "thinking":self.reasoning_part,
+                "signature":std::mem::take(&mut self.claude_reasoning_signature)}));
+        }
+    }
+
     pub(crate) fn with_report_context(report_context: &Value) -> Self {
         Self {
             namespace_tool_aliases: NamespaceToolAliases::from_report_context(report_context),
+            claude_responses_tools: ClaudeResponsesTools::from_report_context(report_context),
+            claude_provider: is_claude_provider(report_context),
             ..Self::default()
         }
     }
@@ -2576,7 +2603,7 @@ impl OpenAIResponsesClientEmitter {
                     "part": {
                         "type": "output_text",
                         "text": "",
-                        "annotations": [],
+                        "annotations": self.text_annotations,
                     }
                 }),
             )?);
@@ -2615,7 +2642,7 @@ impl OpenAIResponsesClientEmitter {
                     "part": {
                         "type": "output_text",
                         "text": self.text.as_str(),
-                        "annotations": [],
+                        "annotations": self.text_annotations,
                     }
                 }),
             )?);
@@ -2634,7 +2661,7 @@ impl OpenAIResponsesClientEmitter {
                     "content": [{
                         "type": "output_text",
                         "text": self.text.as_str(),
-                        "annotations": [],
+                        "annotations": self.text_annotations,
                     }],
                 }
             }),
@@ -2643,6 +2670,9 @@ impl OpenAIResponsesClientEmitter {
     }
 
     fn finish_reasoning_item(&mut self) -> Result<Vec<u8>, AiSurfaceFinalizeError> {
+        if !self.reasoning_part_started {
+            self.preserve_claude_thinking_part();
+        }
         if !self.reasoning_item_started {
             return Ok(Vec::new());
         }
@@ -2677,6 +2707,7 @@ impl OpenAIResponsesClientEmitter {
                     }
                 }),
             )?);
+            self.preserve_claude_thinking_part();
             self.reasoning_summary_parts.push(part_text);
             self.reasoning_part.clear();
             self.reasoning_part_started = false;
@@ -2701,19 +2732,20 @@ impl OpenAIResponsesClientEmitter {
                 })
                 .collect::<Vec<_>>()
         };
-        out.extend(self.encode_response_event(
-            "response.output_item.done",
-            json!({
-                "type": "response.output_item.done",
-                "response_id": self.response_id(),
-                "output_index": output_index,
-                "item": {
-                    "type": "reasoning",
-                    "id": item_id,
-                    "summary": summary,
-                }
-            }),
-        )?);
+        let mut done = json!({
+            "type": "response.output_item.done",
+            "response_id": self.response_id(),
+            "output_index": output_index,
+            "item": {
+                "type": "reasoning",
+                "id": item_id,
+                "summary": summary,
+            }
+        });
+        if let Some(carrier) = encode_thinking_carrier(&self.claude_thinking_blocks) {
+            done["item"]["encrypted_content"] = json!(carrier);
+        }
+        out.extend(self.encode_response_event("response.output_item.done", done)?);
         Ok(out)
     }
 
@@ -2748,24 +2780,53 @@ impl OpenAIResponsesClientEmitter {
                             "action": {
                                 "type": "search",
                                 "query": web_search_query_from_arguments(&state.arguments),
+                                "sources": state.web_sources,
                             },
                         }
                     }),
                 )?);
                 continue;
             }
-            out.extend(self.encode_response_event(
-                "response.function_call_arguments.done",
-                json!({
-                    "type": "response.function_call_arguments.done",
-                    "response_id": self.response_id(),
-                    "output_index": output_index,
-                    "item_id": item_id.clone(),
-                    "call_id": call_id.clone(),
-                    "name": name,
-                    "arguments": state.arguments.as_str(),
-                }),
-            )?);
+            if state.tool_search {
+                let mut item = json!({"type":"function_call", "id":item_id, "call_id":call_id,
+                    "arguments":state.arguments, "status":"completed"});
+                restore_tool_search_call(&mut item).map_err(AiSurfaceFinalizeError::new)?;
+                out.extend(self.encode_response_event(
+                    "response.output_item.done",
+                    json!({
+                        "type":"response.output_item.done", "response_id":self.response_id(),
+                        "output_index":output_index, "item":item
+                    }),
+                )?);
+                continue;
+            }
+            let custom_input = if state.custom {
+                let input = decode_custom_arguments(&state.arguments)
+                    .map_err(AiSurfaceFinalizeError::new)?;
+                self.tool_calls.get_mut(&index).unwrap().custom_input = Some(input.clone());
+                // The provider streams a JSON string wrapper; emit the decoded
+                // payload only after validating it, never raw escaped JSON.
+                out.extend(self.encode_response_event(
+                    "response.custom_tool_call_input.delta",
+                    json!({"type":"response.custom_tool_call_input.delta", "response_id":self.response_id(),
+                        "output_index":output_index, "item_id":item_id, "call_id":call_id, "delta":input}),
+                )?);
+                Some(input)
+            } else {
+                None
+            };
+            let event_type = if state.custom {
+                "response.custom_tool_call_input.done"
+            } else {
+                "response.function_call_arguments.done"
+            };
+            let mut done = json!({
+                "type": event_type, "response_id": self.response_id(), "output_index": output_index,
+                "item_id": item_id, "call_id": call_id, "name": name,
+            });
+            done[if state.custom { "input" } else { "arguments" }] =
+                json!(custom_input.as_deref().unwrap_or(&state.arguments));
+            out.extend(self.encode_response_event(event_type, done)?);
             let mut completed_item = json!({
                 "type": "function_call",
                 "id": item_id.clone(),
@@ -2774,6 +2835,11 @@ impl OpenAIResponsesClientEmitter {
                 "arguments": state.arguments.as_str(),
                 "status": "completed",
             });
+            if state.custom {
+                completed_item["type"] = json!("custom_tool_call");
+                completed_item["input"] = json!(custom_input);
+                completed_item.as_object_mut().unwrap().remove("arguments");
+            }
             if let (Some(namespace), Some(item)) =
                 (state.namespace.clone(), completed_item.as_object_mut())
             {
@@ -2895,16 +2961,12 @@ impl OpenAIResponsesClientEmitter {
                 })
                 .collect::<Vec<_>>()
         };
-        if !summary.is_empty() {
-            ordered_output.push((
-                self.reasoning_output_index.unwrap_or(0),
-                json!({
-                    "type": "reasoning",
-                    "id": self.reasoning_item_id(),
-                    "status": "completed",
-                    "summary": summary,
-                }),
-            ));
+        if !summary.is_empty() || !self.claude_thinking_blocks.is_empty() {
+            let mut item = json!({"type":"reasoning", "id":self.reasoning_item_id(), "status":"completed", "summary":summary});
+            if let Some(carrier) = encode_thinking_carrier(&self.claude_thinking_blocks) {
+                item["encrypted_content"] = json!(carrier);
+            }
+            ordered_output.push((self.reasoning_output_index.unwrap_or(0), item));
         }
         if self.text_item_started || !self.text.is_empty() {
             ordered_output.push((
@@ -2917,7 +2979,7 @@ impl OpenAIResponsesClientEmitter {
                     "content": [{
                         "type": "output_text",
                         "text": self.text.as_str(),
-                        "annotations": [],
+                        "annotations": self.text_annotations,
                     }],
                 }),
             ));
@@ -2958,6 +3020,7 @@ impl OpenAIResponsesClientEmitter {
                             "action": {
                                 "type": "search",
                                 "query": web_search_query_from_arguments(&state.arguments),
+                                "sources": state.web_sources,
                             },
                         }),
                     ));
@@ -2975,6 +3038,15 @@ impl OpenAIResponsesClientEmitter {
                     "arguments": state.arguments.clone(),
                     "status": "completed",
                 });
+                if state.custom {
+                    item["type"] = json!("custom_tool_call");
+                    item["input"] = json!(state.custom_input.as_deref().unwrap_or_default());
+                    item.as_object_mut().unwrap().remove("arguments");
+                }
+                if state.tool_search {
+                    // finish_tool_items has already validated the object arguments.
+                    restore_tool_search_call(&mut item).expect("validated tool-search arguments");
+                }
                 if let (Some(namespace), Some(item)) =
                     (state.namespace.clone(), item.as_object_mut())
                 {
@@ -3151,6 +3223,9 @@ impl OpenAIResponsesClientEmitter {
                 Ok(out)
             }
             CanonicalStreamEvent::ReasoningSummaryDone => {
+                if !self.reasoning_part_started {
+                    self.preserve_claude_thinking_part();
+                }
                 // Close the current reasoning part and reset state so the next
                 // ReasoningDelta starts a fresh part within the same item.
                 if !self.reasoning_item_started || !self.reasoning_part_started {
@@ -3186,12 +3261,23 @@ impl OpenAIResponsesClientEmitter {
                         }
                     }),
                 )?);
+                self.preserve_claude_thinking_part();
                 self.reasoning_summary_parts.push(part_text);
                 self.reasoning_part.clear();
                 self.reasoning_part_started = false;
                 Ok(out)
             }
-            CanonicalStreamEvent::ReasoningSignature(_) => Ok(Vec::new()),
+            CanonicalStreamEvent::ReasoningSignature(signature) => {
+                if self.claude_provider
+                    && crate::formats::shared::model_directives::claude_model_is_haiku_5_5(
+                        self.model(),
+                    )
+                {
+                    self.claude_reasoning_signature.push_str(&signature);
+                    return self.ensure_reasoning_item_started();
+                }
+                Ok(Vec::new())
+            }
             CanonicalStreamEvent::ContentPart(part) => {
                 let placeholder = openai_stream_placeholder_for_content_part(&part);
                 let mut out = self.ensure_text_item_started()?;
@@ -3266,16 +3352,26 @@ impl OpenAIResponsesClientEmitter {
                 let response_id = self.response_id().to_string();
                 let item_id = self.tool_call_item_id(index);
                 let namespaced_tool = self.namespace_tool_aliases.responses_name(&name);
-                let emitted_name = namespaced_tool
-                    .map(|(_, child_name)| child_name.to_string())
+                let claude_tool = self.claude_responses_tools.identity(&name);
+                let emitted_name = claude_tool
+                    .map(|tool| tool.name.clone())
+                    .or_else(|| namespaced_tool.map(|(_, child_name)| child_name.to_string()))
                     .unwrap_or_else(|| name.clone());
-                let emitted_namespace = namespaced_tool.map(|(namespace, _)| namespace.to_string());
-                let is_namespaced_tool = namespaced_tool.is_some();
+                let emitted_namespace = claude_tool
+                    .and_then(|tool| tool.namespace.clone())
+                    .or_else(|| namespaced_tool.map(|(namespace, _)| namespace.to_string()));
+                let is_namespaced_tool = emitted_namespace.is_some();
+                let custom = claude_tool.is_some_and(|tool| tool.custom);
+                let tool_search = claude_tool.is_some_and(|tool| tool.tool_search);
                 let state = self.tool_calls.entry(index).or_default();
+                state.custom = custom;
+                state.tool_search = tool_search;
                 state.call_id = call_id.clone();
                 state.name = emitted_name;
                 state.namespace = emitted_namespace;
-                state.web_search = !is_namespaced_tool && is_responses_web_search_tool(&name);
+                state.web_search = !is_namespaced_tool
+                    && claude_tool.is_none()
+                    && is_responses_web_search_tool(&name);
                 let emitted_call_id = state.call_id.clone();
                 let emitted_name = state.name.clone();
                 let emitted_namespace = state.namespace.clone();
@@ -3299,6 +3395,17 @@ impl OpenAIResponsesClientEmitter {
                         "status": "in_progress",
                     })
                 };
+                if custom {
+                    item["type"] = json!("custom_tool_call");
+                    item["input"] = json!("");
+                    item.as_object_mut().unwrap().remove("arguments");
+                }
+                if tool_search {
+                    item["type"] = json!("tool_search_call");
+                    item["execution"] = json!("client");
+                    item["arguments"] = json!({});
+                    item.as_object_mut().unwrap().remove("name");
+                }
                 if let (Some(namespace), Some(item)) = (emitted_namespace, item.as_object_mut()) {
                     item.insert("namespace".to_string(), Value::String(namespace));
                 }
@@ -3382,7 +3489,7 @@ impl OpenAIResponsesClientEmitter {
                 let response_id = self.response_id().to_string();
                 let state = self.tool_calls.entry(index).or_default();
                 state.arguments.push_str(&arguments);
-                if state.web_search {
+                if state.web_search || state.custom || state.tool_search {
                     return Ok(out);
                 }
                 let call_id = if state.call_id.is_empty() {
@@ -3410,6 +3517,80 @@ impl OpenAIResponsesClientEmitter {
                 name,
                 content,
             } => {
+                if self.claude_provider && name.as_deref() == Some("aether_web_citation") {
+                    let citation: Value = serde_json::from_str(&content)
+                        .map_err(|_| AiSurfaceFinalizeError::new("invalid web citation"))?;
+                    let url = citation
+                        .get("url")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| AiSurfaceFinalizeError::new("web citation requires url"))?;
+                    let cited = citation
+                        .get("cited_text")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    let length = self.text.chars().count();
+                    let matched = (!cited.is_empty())
+                        .then(|| self.text.rfind(cited))
+                        .flatten();
+                    let start = matched
+                        .map(|i| self.text[..i].chars().count())
+                        .unwrap_or_else(|| {
+                            if self.text_annotation_offset == length {
+                                self.text_annotations
+                                    .last()
+                                    .and_then(|a| a["start_index"].as_u64())
+                                    .unwrap_or(0) as usize
+                            } else {
+                                self.text_annotation_offset.min(length)
+                            }
+                        });
+                    let end = matched
+                        .map(|_| start + cited.chars().count())
+                        .unwrap_or(length);
+                    self.text_annotation_offset = length;
+                    let annotation = json!({"type":"url_citation","url":url,"title":citation["title"],
+                        "start_index":start,"end_index":end});
+                    let mut out = self.ensure_text_item_started()?;
+                    let annotation_index = self.text_annotations.len();
+                    self.text_annotations.push(annotation.clone());
+                    out.extend(self.encode_response_event("response.output_text.annotation.added",json!({
+                        "type":"response.output_text.annotation.added","response_id":self.response_id(),
+                        "item_id":self.message_item_id(),"output_index":self.message_output_index.unwrap_or(0),
+                        "content_index":0,"annotation_index":annotation_index,"annotation":annotation
+                    }))?);
+                    return Ok(out);
+                }
+                if self.claude_provider && name.as_deref() == Some("web_search") {
+                    let (call_index, state) = self
+                        .tool_calls
+                        .iter()
+                        .find(|(_, s)| s.web_search && s.call_id == tool_use_id)
+                        .map(|(i, s)| (*i, s.clone()))
+                        .ok_or_else(|| {
+                            AiSurfaceFinalizeError::new("web result has no matching server call")
+                        })?;
+                    let result: Value = serde_json::from_str(&content)
+                        .map_err(|_| AiSurfaceFinalizeError::new("invalid web result"))?;
+                    let input: Value = serde_json::from_str(&state.arguments)
+                        .map_err(|_| AiSurfaceFinalizeError::new("invalid web search arguments"))?;
+                    let native = json!({"type":"server_tool_use","id":tool_use_id,"name":"web_search","input":input});
+                    let carrier = encode_web_context(
+                        &[native, result.clone()],
+                        &[self.tool_call_item_id(call_index)],
+                    )
+                    .map_err(AiSurfaceFinalizeError::new)?;
+                    self.tool_calls.get_mut(&call_index).unwrap().web_sources =
+                        web_sources(&result);
+                    let output_index = self.allocate_output_index();
+                    let item = json!({"type":"reasoning","id":openai_responses_synthetic_reasoning_item_id(self.response_id(),output_index),
+                        "status":"completed","summary":[],"encrypted_content":carrier});
+                    let mut out = self.ensure_started()?;
+                    for event in ["response.output_item.added", "response.output_item.done"] {
+                        out.extend(self.encode_response_event(event,json!({"type":event,"response_id":self.response_id(),"output_index":output_index,"item":item}))?);
+                    }
+                    self.opaque_output_items.insert(output_index, item);
+                    return Ok(out);
+                }
                 let mut out = self.ensure_started()?;
                 let output_index = self.ensure_tool_result_output_index(index);
                 let response_id = self.response_id().to_string();

@@ -17,7 +17,10 @@ pub(crate) async fn hydrate_openai_response_history(
     history_scope: &str,
 ) -> Result<(), GatewayError> {
     if normalize_api_format_alias(client_api_format) != "openai:responses"
-        || normalize_api_format_alias(provider_api_format) != "openai:chat"
+        || !matches!(
+            normalize_api_format_alias(provider_api_format).as_str(),
+            "openai:chat" | "claude:messages"
+        )
     {
         return Ok(());
     }
@@ -211,6 +214,40 @@ mod tests {
         assert!(crate::ai_serving::response_history_is_loaded(
             response_id,
             Some(scope)
+        ));
+    }
+
+    #[tokio::test]
+    async fn claude_response_history_hydrates_encrypted_scoped_storage() {
+        let state = response_history_test_state();
+        let response_id = "resp_gateway_claude_encrypted_history_v1";
+        let scope = "response-history-claude-scope";
+        let storage_key = response_history_storage_key(response_id, Some(scope));
+        persist_response_history_record(
+            &state,
+            ResponseHistoryRecord {
+                storage_key,
+                payload: response_history_payload(response_id, scope, "claude-signed-history"),
+                ttl: Duration::from_secs(3600),
+            },
+        )
+        .await;
+        hydrate_openai_response_history(
+            &state,
+            &json!({"previous_response_id": response_id}),
+            "openai:responses",
+            "claude:messages",
+            scope,
+        )
+        .await
+        .expect("Claude history must hydrate from shared encrypted storage");
+        assert!(crate::ai_serving::response_history_is_loaded(
+            response_id,
+            Some(scope)
+        ));
+        assert!(!crate::ai_serving::response_history_is_loaded(
+            response_id,
+            Some("unrelated-scope")
         ));
     }
 

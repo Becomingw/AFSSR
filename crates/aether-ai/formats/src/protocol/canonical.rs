@@ -2077,6 +2077,32 @@ pub(crate) fn claude_block_to_canonical_block(block: &Value) -> Option<Canonical
         }),
         "image" => claude_media_block_to_canonical(block_object, true),
         "document" => claude_media_block_to_canonical(block_object, false),
+        "server_tool_use"
+            if block_object.get("name").and_then(Value::as_str) == Some("web_search") =>
+        {
+            let mut normalized = block.clone();
+            normalized["type"] = json!("tool_use");
+            let mut parsed = claude_block_to_canonical_block(&normalized)?;
+            if let CanonicalContentBlock::ToolUse { extensions, .. } = &mut parsed {
+                canonical_extension_object_mut(extensions, "aether")
+                    .insert("source".to_string(), json!("claude_web_server_use"));
+            }
+            Some(parsed)
+        }
+        "web_search_tool_result" => {
+            let mut normalized = block.clone();
+            normalized["type"] = json!("tool_result");
+            let mut parsed = claude_block_to_canonical_block(&normalized)?;
+            if let CanonicalContentBlock::ToolResult {
+                extensions, name, ..
+            } = &mut parsed
+            {
+                *name = Some("web_search".to_string());
+                canonical_extension_object_mut(extensions, "aether")
+                    .insert("source".to_string(), json!("claude_web_server_result"));
+            }
+            Some(parsed)
+        }
         "tool_use" => Some(CanonicalContentBlock::ToolUse {
             id: block_object
                 .get("id")
@@ -2492,6 +2518,21 @@ pub(crate) fn openai_responses_input_to_canonical_messages(
                     .to_ascii_lowercase();
                 match item_type.as_str() {
                     "reasoning" => {
+                        if let Some(blocks) = item_object
+                            .get("encrypted_content")
+                            .and_then(Value::as_str)
+                            .and_then(
+                                crate::formats::claude::responses_tools::decode_thinking_carrier,
+                            )
+                        {
+                            messages.push(CanonicalMessage {
+                                role: CanonicalRole::Assistant,
+                                content: claude_content_to_canonical_blocks(Some(&blocks))?,
+                                extensions: BTreeMap::new(),
+                            });
+                            pending_reasoning = None;
+                            continue;
+                        }
                         let reasoning = openai_responses_reasoning_block_from_item(item_object);
                         let previous_signature = reasoning.as_ref().and_then(|block| match block {
                             CanonicalContentBlock::Thinking {
@@ -4001,6 +4042,16 @@ pub(crate) fn is_claude_thinking_block(extensions: &BTreeMap<String, Value>) -> 
         .and_then(|value| value.get("source"))
         .and_then(Value::as_str)
         == Some(CLAUDE_THINKING_SOURCE_MARKER)
+}
+
+pub(crate) fn is_claude_web_server_block(extensions: &BTreeMap<String, Value>) -> bool {
+    matches!(
+        extensions
+            .get("aether")
+            .and_then(|v| v.get("source"))
+            .and_then(Value::as_str),
+        Some("claude_web_server_use" | "claude_web_server_result")
+    )
 }
 
 fn is_claude_raw_block(extensions: &BTreeMap<String, Value>) -> bool {
@@ -5990,10 +6041,22 @@ pub(crate) fn canonical_block_to_claude(
         } => {
             let input = remove_empty_pages_from_tool_input_value(name, input);
             let mut out = Map::new();
-            out.insert("type".to_string(), Value::String("tool_use".to_string()));
+            let server = is_claude_web_server_block(extensions);
+            out.insert(
+                "type".to_string(),
+                json!(if server {
+                    "server_tool_use"
+                } else {
+                    "tool_use"
+                }),
+            );
             out.insert(
                 "id".to_string(),
-                Value::String(claude_compatible_tool_use_id(id)),
+                Value::String(if server {
+                    id.clone()
+                } else {
+                    claude_compatible_tool_use_id(id)
+                }),
             );
             out.insert("name".to_string(), Value::String(name.clone()));
             out.insert("input".to_string(), input);
@@ -6009,10 +6072,22 @@ pub(crate) fn canonical_block_to_claude(
             ..
         } => {
             let mut out = Map::new();
-            out.insert("type".to_string(), Value::String("tool_result".to_string()));
+            let server = is_claude_web_server_block(extensions);
+            out.insert(
+                "type".to_string(),
+                json!(if server {
+                    "web_search_tool_result"
+                } else {
+                    "tool_result"
+                }),
+            );
             out.insert(
                 "tool_use_id".to_string(),
-                Value::String(claude_compatible_tool_use_id(tool_use_id)),
+                Value::String(if server {
+                    tool_use_id.clone()
+                } else {
+                    claude_compatible_tool_use_id(tool_use_id)
+                }),
             );
             out.insert(
                 "content".to_string(),
@@ -8852,7 +8927,10 @@ mod tests {
         });
 
         let canonical = from_claude_to_canonical_request(&request).expect("canonical request");
-        assert_eq!(canonical_request_unknown_block_count(&canonical), 2);
+        assert_eq!(canonical_request_unknown_block_count(&canonical), 0);
+        assert!(canonical.messages[0].content.iter().all(|block| matches!(block,
+            CanonicalContentBlock::ToolUse { extensions, .. } | CanonicalContentBlock::ToolResult { extensions, .. }
+                if super::is_claude_web_server_block(extensions))));
 
         let rebuilt = canonical_to_claude_request(&canonical, "claude-upstream", false)
             .expect("claude request");

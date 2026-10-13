@@ -351,37 +351,65 @@ pub fn build_cross_format_openai_responses_request_body_with_model_directives_an
     enable_model_directives: bool,
     history_scope: Option<&str>,
 ) -> Option<Value> {
-    let chat_like_request =
-        chat_compatible_body_for_standard_source(body_json, client_api_format, history_scope)?;
     let conversion_kind = request_conversion_kind(client_api_format, provider_api_format)?;
-    let provider_request_body = match conversion_kind {
-        RequestConversionKind::ToOpenAIChat => {
-            build_local_openai_chat_request_body_with_model_directives(
-                chat_like_request.as_ref(),
-                mapped_model,
-                upstream_is_stream,
-                enable_model_directives,
-            )?
-        }
-        RequestConversionKind::ToOpenAiResponses => {
-            convert_openai_chat_request_to_openai_responses_request(
-                chat_like_request.as_ref(),
-                mapped_model,
-                upstream_is_stream,
-                false,
-            )?
-        }
-        RequestConversionKind::ToClaudeStandard => convert_openai_chat_request_to_claude_request(
-            chat_like_request.as_ref(),
-            mapped_model,
-            upstream_is_stream,
-        )?,
-        RequestConversionKind::ToGeminiStandard => convert_openai_chat_request_to_gemini_request(
-            chat_like_request.as_ref(),
-            mapped_model,
-            upstream_is_stream,
-        )?,
-    };
+    // A Chat intermediate loses Responses custom-tool payloads and Claude thinking signatures.
+    let provider_request_body =
+        if matches!(conversion_kind, RequestConversionKind::ToClaudeStandard)
+            && matches!(
+                aether_ai_formats::normalize_api_format_alias(client_api_format).as_str(),
+                "openai:responses" | "openai:responses:compact"
+            )
+        {
+            let mut context = FormatContext::default()
+                .with_mapped_model(mapped_model)
+                .with_upstream_stream(upstream_is_stream);
+            context.history_scope = history_scope.map(str::to_string);
+            aether_ai_formats::convert_request(
+                client_api_format,
+                provider_api_format,
+                body_json,
+                &context,
+            )
+            .ok()?
+        } else {
+            let chat_like_request = chat_compatible_body_for_standard_source(
+                body_json,
+                client_api_format,
+                history_scope,
+            )?;
+            match conversion_kind {
+                RequestConversionKind::ToOpenAIChat => {
+                    build_local_openai_chat_request_body_with_model_directives(
+                        chat_like_request.as_ref(),
+                        mapped_model,
+                        upstream_is_stream,
+                        enable_model_directives,
+                    )?
+                }
+                RequestConversionKind::ToOpenAiResponses => {
+                    convert_openai_chat_request_to_openai_responses_request(
+                        chat_like_request.as_ref(),
+                        mapped_model,
+                        upstream_is_stream,
+                        false,
+                    )?
+                }
+                RequestConversionKind::ToClaudeStandard => {
+                    convert_openai_chat_request_to_claude_request(
+                        chat_like_request.as_ref(),
+                        mapped_model,
+                        upstream_is_stream,
+                    )?
+                }
+                RequestConversionKind::ToGeminiStandard => {
+                    convert_openai_chat_request_to_gemini_request(
+                        chat_like_request.as_ref(),
+                        mapped_model,
+                        upstream_is_stream,
+                    )?
+                }
+            }
+        };
     let mut provider_request_body = with_model_directive_overrides(
         provider_request_body,
         provider_api_format,

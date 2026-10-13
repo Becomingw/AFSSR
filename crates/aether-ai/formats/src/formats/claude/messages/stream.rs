@@ -183,6 +183,26 @@ impl ClaudeProviderState {
                             event: CanonicalStreamEvent::ReasoningDelta(piece.to_string()),
                         });
                     }
+                    "citations_delta"
+                        if delta
+                            .get("citation")
+                            .and_then(|c| c.get("type"))
+                            .and_then(Value::as_str)
+                            == Some("web_search_result_location") =>
+                    {
+                        self.ensure_started(report_context, &mut out);
+                        let (id, model) = self.identity(report_context);
+                        out.push(CanonicalStreamFrame {
+                            id,
+                            model,
+                            event: CanonicalStreamEvent::ToolResultDelta {
+                                index,
+                                tool_use_id: String::new(),
+                                name: Some("aether_web_citation".to_string()),
+                                content: delta["citation"].to_string(),
+                            },
+                        });
+                    }
                     "signature_delta" => {
                         let Some(signature) = delta.get("signature").and_then(Value::as_str) else {
                             return Ok(out);
@@ -219,6 +239,25 @@ impl ClaudeProviderState {
                     .get("type")
                     .and_then(Value::as_str)
                     .unwrap_or_default();
+                if block_type == "web_search_tool_result" {
+                    self.ensure_started(report_context, &mut out);
+                    let (id, model) = self.identity(report_context);
+                    out.push(CanonicalStreamFrame {
+                        id,
+                        model,
+                        event: CanonicalStreamEvent::ToolResultDelta {
+                            index,
+                            tool_use_id: block
+                                .get("tool_use_id")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .to_string(),
+                            name: Some("web_search".to_string()),
+                            content: Value::Object(block.clone()).to_string(),
+                        },
+                    });
+                    return Ok(out);
+                }
                 if block_type == "thinking" {
                     self.in_thinking_block = true;
                     let Some(piece) = block
@@ -266,7 +305,13 @@ impl ClaudeProviderState {
                     });
                     return Ok(out);
                 }
-                if block_type != "tool_use" {
+                if block_type != "tool_use"
+                    && !(block_type == "server_tool_use"
+                        && block.get("name").and_then(Value::as_str) == Some("web_search")
+                        && block
+                            .get("caller")
+                            .is_none_or(|c| c == &json!({"type":"direct"})))
+                {
                     out.push(
                         self.unknown_frame(report_context, Value::Object(event_object.clone())),
                     );

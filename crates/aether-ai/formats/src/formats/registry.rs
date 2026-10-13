@@ -123,7 +123,13 @@ pub fn convert_request_pure_with_context(
     let source = parse_format(source_format)?;
     let target = parse_format(target_format)?;
     let normalized_body = normalize_openai_responses_to_chat_body(source, target, body)?;
-    let request = parse_request(source_format, &normalized_body, &pure_ctx)?;
+    let mut request = parse_request(source_format, &normalized_body, &pure_ctx)?;
+    if source == FormatId::OpenAiResponses && target == FormatId::ClaudeMessages {
+        crate::formats::claude::responses_tools::ClaudeResponsesTools::attach_native_web_tools(
+            body,
+            &mut request,
+        )?;
+    }
     validate_openai_responses_target_contract(target_format, &normalized_body)?;
     validate_request_conversion(
         source_format,
@@ -145,7 +151,16 @@ pub fn convert_request(
 ) -> Result<Value, FormatError> {
     let source = parse_format(source_format)?;
     let target = parse_format(target_format)?;
-    let expanded_body = if source == FormatId::OpenAiResponses && target == FormatId::OpenAiChat {
+    // Lite definitions must stay outside the transcript when previous-response history is expanded.
+    let lifted_body = if source == FormatId::OpenAiResponses && target == FormatId::ClaudeMessages {
+        Some(crate::formats::claude::responses_tools::ClaudeResponsesTools::lift_lite_tools(body)?)
+    } else {
+        None
+    };
+    let body = lifted_body.as_ref().unwrap_or(body);
+    let expanded_body = if source == FormatId::OpenAiResponses
+        && matches!(target, FormatId::OpenAiChat | FormatId::ClaudeMessages)
+    {
         Some(
             openai_responses::history::expand_previous_response_for_chat(
                 body,
@@ -178,6 +193,12 @@ pub fn convert_request(
     {
         request.model = mapped_model.to_string();
     }
+    if source == FormatId::OpenAiResponses && target == FormatId::ClaudeMessages {
+        crate::formats::claude::responses_tools::ClaudeResponsesTools::attach_native_web_tools(
+            body,
+            &mut request,
+        )?;
+    }
     emit_request_inner(target_format, &request, ctx)
 }
 
@@ -186,6 +207,13 @@ fn normalize_openai_responses_to_chat_body(
     target: FormatId,
     body: &Value,
 ) -> Result<Value, FormatError> {
+    if matches!(
+        source,
+        FormatId::OpenAiResponses | FormatId::OpenAiResponsesCompact
+    ) && target == FormatId::ClaudeMessages
+    {
+        return crate::formats::claude::responses_tools::ClaudeResponsesTools::normalize(body);
+    }
     if !matches!(
         source,
         FormatId::OpenAiResponses | FormatId::OpenAiResponsesCompact
@@ -462,7 +490,15 @@ pub fn convert_response_pure(
 ) -> Result<Converted<Value>, FormatError> {
     let response = parse_response_pure(source_format, body)?;
     validate_response_conversion(source_format, target_format, body, &response)?;
-    let value = emit_response_pure(target_format, &response)?;
+    let mut value = emit_response_pure(target_format, &response)?;
+    if parse_format(source_format)? == FormatId::ClaudeMessages
+        && matches!(
+            parse_format(target_format)?,
+            FormatId::OpenAiResponses | FormatId::OpenAiResponsesCompact
+        )
+    {
+        crate::formats::claude::responses_tools::restore_native_web_response(body, &mut value)?;
+    }
     let report = build_response_conversion_report(source_format, target_format, body, &value);
     Ok(Converted { value, report })
 }
@@ -484,7 +520,20 @@ pub fn convert_response(
             response.model = mapped_model.to_string();
         }
     }
-    emit_response_inner(target_format, &response, ctx)
+    let mut emitted = emit_response_inner(target_format, &response, ctx)?;
+    if parse_format(source_format)? == FormatId::ClaudeMessages
+        && matches!(
+            parse_format(target_format)?,
+            FormatId::OpenAiResponses | FormatId::OpenAiResponsesCompact
+        )
+    {
+        crate::formats::claude::responses_tools::ClaudeResponsesTools::from_report_context(
+            &ctx.report_context_value(),
+        )
+        .restore_response(&mut emitted)?;
+        crate::formats::claude::responses_tools::restore_native_web_response(body, &mut emitted)?;
+    }
+    Ok(emitted)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1025,6 +1074,25 @@ fn validate_response_content_has_no_unknown_blocks(
             .iter()
             .flat_map(|output| output.content.iter()),
     ) {
+        if let CanonicalContentBlock::ToolUse { extensions, .. }
+        | CanonicalContentBlock::ToolResult { extensions, .. } = block
+        {
+            if crate::protocol::canonical::is_claude_web_server_block(extensions)
+                && !matches!(
+                    target,
+                    FormatId::ClaudeMessages
+                        | FormatId::OpenAiResponses
+                        | FormatId::OpenAiResponsesCompact
+                )
+            {
+                return openai_responses_lossy_response(
+                    source,
+                    target,
+                    "output[].type",
+                    "native server-tool actor cannot be mapped to this target",
+                );
+            }
+        }
         if let CanonicalContentBlock::Unknown { raw_type, .. } = block {
             if raw_type == "refusal"
                 && matches!(
@@ -1572,6 +1640,20 @@ fn validate_request_content_has_no_unknown_blocks(
 ) -> Result<(), FormatError> {
     for message in &request.messages {
         for block in &message.content {
+            if let CanonicalContentBlock::ToolUse { extensions, .. }
+            | CanonicalContentBlock::ToolResult { extensions, .. } = block
+            {
+                if crate::protocol::canonical::is_claude_web_server_block(extensions)
+                    && target != FormatId::ClaudeMessages
+                {
+                    return openai_responses_lossy_input(
+                        source,
+                        target,
+                        "input[].type".to_string(),
+                        "native server-tool history requires its Claude provider",
+                    );
+                }
+            }
             if let CanonicalContentBlock::Unknown { raw_type, .. } = block {
                 return Err(FormatError::LossyConversionBlocked {
                     source_format: source.as_str().to_string(),
