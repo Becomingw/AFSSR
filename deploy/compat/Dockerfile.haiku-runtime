@@ -1,0 +1,5 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+COPY runtime-root/ /
+LABEL org.opencontainers.image.version="0.7.19-haiku-compat1" \
+      org.opencontainers.image.revision="361952ada9e3d01ac180846cee497cd1f55ad1c3-haiku-compat1"

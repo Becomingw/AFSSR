@@ -1,0 +1,26 @@
+[
+  {
+    "enabled": true,
+    "action": "set",
+    "path": "thinking.type",
+    "value": "adaptive",
+    "condition": {
+      "all": [
+        { "path": "model", "op": "eq", "value": "claude-haiku-5-5" },
+        { "path": "thinking.type", "op": "eq", "value": "enabled" }
+      ]
+    }
+  },
+  {
+    "enabled": true,
+    "action": "drop",
+    "path": "thinking.budget_tokens",
+    "condition": {
+      "all": [
+        { "path": "model", "op": "eq", "value": "claude-haiku-5-5" },
+        { "path": "thinking.type", "op": "eq", "value": "adaptive" },
+        { "path": "thinking.budget_tokens", "op": "exists" }
+      ]
+    }
+  }
+]

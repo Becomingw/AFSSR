@@ -1579,6 +1579,35 @@ fn strip_codex_hosted_tool_names_for_backend(body_object: &mut serde_json::Map<S
     }
 }
 
+fn strip_foreign_plaintext_reasoning_for_codex(body: &mut serde_json::Map<String, Value>) {
+    let Some(input) = body.get_mut("input").and_then(Value::as_array_mut) else {
+        return;
+    };
+    // GLM-native rs_resp_* items are not OpenAI server-side item references.
+    // Keep native/opaque reasoning and all tool calls/results unchanged.
+    input.retain(|item| {
+        let foreign_id = item
+            .get("id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| id.starts_with("rs_resp_"));
+        let has_plaintext = item
+            .get("content")
+            .and_then(Value::as_array)
+            .is_some_and(|parts| {
+                parts
+                    .iter()
+                    .any(|part| part.get("type").and_then(Value::as_str) == Some("reasoning_text"))
+            });
+        let no_opaque_state = item
+            .get("encrypted_content")
+            .is_none_or(|value| value.is_null() || value.as_str().is_some_and(str::is_empty));
+        !(item.get("type").and_then(Value::as_str) == Some("reasoning")
+            && foreign_id
+            && has_plaintext
+            && no_opaque_state)
+    });
+}
+
 fn strip_codex_hosted_tool_choice_name_for_backend(
     body_object: &mut serde_json::Map<String, Value>,
 ) {
@@ -1872,6 +1901,7 @@ fn apply_codex_openai_responses_special_body_edits_with_source_model_and_capabil
     };
 
     wrap_codex_responses_string_input_for_backend(body_object, provider_api_format);
+    strip_foreign_plaintext_reasoning_for_codex(body_object);
     for field in CODEX_OPENAI_RESPONSES_UNSUPPORTED_BODY_FIELDS {
         if !body_rules_handle_path(body_rules, field) {
             body_object.remove(*field);

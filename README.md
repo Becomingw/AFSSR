@@ -1,3 +1,18 @@
+# AFSSR
+
+基于 [Aether](https://github.com/fawney19/Aether) 的下游修改版，由
+[Mengfei Wang / Becomingw](https://github.com/Becomingw) 维护。
+原始 Aether 及其贡献者的版权和署名保留，本仓库不是 Aether 官方版本。
+
+- 完整源码包含后端、前端、隧道以及 Codex/Haiku/GLM 兼容修改和测试。
+- `haiku-compat6-20261013` 标签对应已部署并通过公网合成验收的源码；
+  `main` 还包含尚未部署的本地 GLM 历史兼容修改。
+- 继续使用原 [非商业许可证](LICENSE)，改名不改变许可条件。
+- 本仓库目前仅发布源码，没有发布 AFSSR 的预构建镜像。下方上游文档中的
+  Aether 镜像和更新地址不包含这里的修改，请先阅读 [AFSSR 版本说明](docs/AFSSR.md)。
+
+## 上游 Aether 文档
+
 <p align="center">
   <img src="frontend/public/aether_adaptive.svg" width="120" height="120" alt="Aether Logo">
 </p>

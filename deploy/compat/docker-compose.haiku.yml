@@ -1,0 +1,4 @@
+services:
+  app:
+    image: aether-local:0.7.19-haiku-compat1
+    pull_policy: never

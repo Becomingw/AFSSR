@@ -1,0 +1,16 @@
+FROM rust:1.95.0-slim-bookworm
+
+RUN sed -i 's|http://deb.debian.org|https://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update && apt-get install -y --no-install-recommends \
+       build-essential musl-tools cmake clang libclang-dev pkg-config git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+ENV RUSTUP_DIST_SERVER=https://rsproxy.cn \
+    CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse \
+    CARGO_BUILD_JOBS=4 \
+    CARGO_PROFILE_RELEASE_LTO=false \
+    CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 \
+    CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc \
+    AETHER_BUILD_VERSION=0.7.19-haiku-compat1 \
+    AETHER_BUILD_TYPE=release
+RUN rustup target add x86_64-unknown-linux-musl
+WORKDIR /build
