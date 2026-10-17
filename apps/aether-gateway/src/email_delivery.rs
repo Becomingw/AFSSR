@@ -292,14 +292,45 @@ pub(crate) fn system_config_u16(value: Option<&serde_json::Value>, default: u16)
     }
 }
 
+/// Encodes a header value. Non-ASCII text becomes RFC 2047 encoded words of at most 75 characters
+/// (split on character boundaries and folded onto continuation lines): a single long encoded word
+/// is what stricter mail servers reject or score as spam.
 fn encode_mime_header(value: &str) -> String {
     if value.is_ascii() {
         return value.to_string();
     }
+    // 45 bytes of text encode to 60 base64 characters, plus 12 for `=?UTF-8?B?` and `?=`.
+    const MAX_CHUNK_BYTES: usize = 45;
+    let mut words: Vec<String> = Vec::new();
+    let mut chunk = String::new();
+    for ch in value.chars() {
+        if chunk.len() + ch.len_utf8() > MAX_CHUNK_BYTES {
+            words.push(encoded_word(&chunk));
+            chunk.clear();
+        }
+        chunk.push(ch);
+    }
+    if !chunk.is_empty() {
+        words.push(encoded_word(&chunk));
+    }
+    words.join("\r\n ")
+}
+
+fn encoded_word(text: &str) -> String {
     format!(
         "=?UTF-8?B?{}?=",
-        base64::engine::general_purpose::STANDARD.encode(value.as_bytes())
+        base64::engine::general_purpose::STANDARD.encode(text.as_bytes())
     )
+}
+
+/// `Message-ID` needs a domain; use the sender's, which is what receivers compare it against.
+fn message_id(from_email: &str) -> String {
+    let domain = from_email
+        .rsplit_once('@')
+        .map(|(_, domain)| domain.trim())
+        .filter(|domain| !domain.is_empty())
+        .unwrap_or("arca.local");
+    format!("<{}@{}>", uuid::Uuid::new_v4().simple(), domain)
 }
 
 fn wrap_base64(value: &str) -> String {
@@ -593,9 +624,12 @@ fn build_email_message(
         )
     };
     let message = format!(
-        "From: {from_header}\r\nTo: <{to_email}>\r\nSubject: {subject}\r\nMIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=\"{boundary}\"\r\n\r\n--{boundary}\r\nContent-Type: text/plain; charset=\"utf-8\"\r\nContent-Transfer-Encoding: base64\r\n\r\n{text_body}--{boundary}\r\nContent-Type: text/html; charset=\"utf-8\"\r\nContent-Transfer-Encoding: base64\r\n\r\n{html_body}--{boundary}--\r\n",
+        "Date: {date}\r\nMessage-ID: {message_id}\r\nFrom: {from_header}\r\nTo: <{to_email}>\r\nSubject: {subject}\r\nMIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=\"{boundary}\"\r\n\r\n--{boundary}\r\nContent-Type: text/plain; charset=\"utf-8\"\r\nContent-Transfer-Encoding: base64\r\n\r\n{text_body}--{boundary}\r\nContent-Type: text/html; charset=\"utf-8\"\r\nContent-Transfer-Encoding: base64\r\n\r\n{html_body}--{boundary}--\r\n",
         to_email = email.to_email,
         subject = encode_mime_header(&email.subject),
+        // RFC 5322 requires both; many receivers reject or junk mail that lacks them.
+        date = chrono::Utc::now().to_rfc2822(),
+        message_id = message_id(&config.from_email),
     );
     if message.len() > SMTP_MAX_MESSAGE_BYTES {
         return Err(GatewayError::Internal(
@@ -788,6 +822,64 @@ mod tests {
         let error = validate_smtp_delivery_inputs(&config(), &malicious_email)
             .expect_err("CRLF in a header value must be rejected");
         assert!(format!("{error:?}").contains("subject"));
+    }
+
+    #[test]
+    fn messages_carry_the_headers_receivers_require() {
+        let message = build_email_message(&config(), &email()).unwrap();
+        let headers = message.split("\r\n\r\n").next().unwrap();
+        let find = |name: &str| {
+            headers
+                .lines()
+                .find(|line| line.starts_with(name))
+                .unwrap_or_else(|| panic!("missing {name} in {headers}"))
+        };
+        let date = find("Date: ").trim_start_matches("Date: ");
+        assert!(
+            chrono::DateTime::parse_from_rfc2822(date).is_ok(),
+            "Date must be RFC 5322: {date}"
+        );
+        let id = find("Message-ID: ").trim_start_matches("Message-ID: ");
+        assert!(
+            id.starts_with('<') && id.ends_with("@example.com>"),
+            "Message-ID uses the sender's domain: {id}"
+        );
+        // Two messages never share an id.
+        let other = build_email_message(&config(), &email()).unwrap();
+        assert_ne!(
+            message.split("Message-ID: ").nth(1),
+            other.split("Message-ID: ").nth(1)
+        );
+    }
+
+    #[test]
+    fn non_ascii_headers_become_short_encoded_words_that_decode_back() {
+        assert_eq!(encode_mime_header("plain subject"), "plain subject");
+        let subject = "[来自小黑屋的关爱] Mengfei 提到了你 · #12 一个比较长的反馈标题用来测试折行";
+        let encoded = encode_mime_header(subject);
+        let words: Vec<&str> = encoded.split("\r\n ").collect();
+        assert!(words.len() > 1, "long subjects are split: {encoded}");
+        let mut decoded = String::new();
+        for word in &words {
+            assert!(
+                word.len() <= 75,
+                "encoded word too long ({}): {word}",
+                word.len()
+            );
+            let body = word
+                .strip_prefix("=?UTF-8?B?")
+                .and_then(|w| w.strip_suffix("?="))
+                .expect("encoded word syntax");
+            decoded.push_str(
+                &String::from_utf8(
+                    base64::engine::general_purpose::STANDARD
+                        .decode(body)
+                        .unwrap(),
+                )
+                .expect("every word is valid UTF-8 on its own"),
+            );
+        }
+        assert_eq!(decoded, subject);
     }
 
     #[test]

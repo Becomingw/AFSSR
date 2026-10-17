@@ -1190,11 +1190,10 @@ async fn mcp_feedback_agent_can_read_reply_and_resolve_without_other_admin_write
         list["result"]["structuredContent"]["data"]["total"], 1,
         "{list}"
     );
-    let mut version = 1;
-    for action in [
+    for (version, action) in (1..).zip([
         json!({"action":"reply","content":"Synthetic verification evidence"}),
         json!({"action":"set_status","status":"resolved","comment":"Verified"}),
-    ] {
+    ]) {
         let mut body = action;
         body["expected_version"] = json!(version);
         body["client_request_id"] = json!(uuid::Uuid::new_v4().to_string());
@@ -1235,7 +1234,6 @@ async fn mcp_feedback_agent_can_read_reply_and_resolve_without_other_admin_write
             result["result"]["structuredContent"]["ok"], true,
             "{result}"
         );
-        version += 1;
     }
     let denied: Value = post(
         &client,

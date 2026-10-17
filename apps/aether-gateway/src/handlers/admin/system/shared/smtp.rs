@@ -1,4 +1,7 @@
-use crate::email_delivery::{probe_smtp_connection, system_config_u16, SmtpDeliveryConfig};
+use crate::email_delivery::{
+    probe_smtp_connection, send_smtp_email, system_config_u16, ComposedEmail, SmtpDeliveryConfig,
+};
+use crate::email_layout::{render_email_html, EmailBlock};
 use crate::handlers::admin::request::AdminAppState;
 use crate::handlers::shared::{
     decrypt_or_migrate_smtp_password, smtp_password_binding, system_config_bool,
@@ -19,6 +22,8 @@ struct AdminSmtpTestRequest {
     smtp_use_ssl: Option<serde_json::Value>,
     smtp_from_email: Option<serde_json::Value>,
     smtp_from_name: Option<serde_json::Value>,
+    /// When set, a real message is sent to this address instead of only logging in.
+    send_to: Option<String>,
 }
 
 #[derive(Clone)]
@@ -43,6 +48,12 @@ pub(crate) async fn build_admin_smtp_test_payload(
             .map_err(|err| GatewayError::Internal(err.to_string()))?,
         _ => AdminSmtpTestRequest::default(),
     };
+    let send_to = request
+        .send_to
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
     let config = resolve_admin_smtp_config(state, request).await?;
     let missing_fields = missing_smtp_fields(&config);
     if !missing_fields.is_empty() {
@@ -52,6 +63,24 @@ pub(crate) async fn build_admin_smtp_test_payload(
         }));
     }
 
+    if let Some(to_email) = send_to {
+        if !plausible_address(&to_email) {
+            return Ok(json!({ "success": false, "message": "收件邮箱格式不正确" }));
+        }
+        let delivery = config.into_delivery_config();
+        let message = compose_test_email(&delivery, &to_email);
+        return Ok(match send_smtp_email(delivery, message).await {
+            Ok(()) => json!({
+                "success": true,
+                "message": format!("测试邮件已被 SMTP 服务器接受，收件人 {to_email}。若收件箱没有，请查看垃圾邮件箱。"),
+            }),
+            Err(error) => json!({
+                "success": false,
+                "message": format!("发送失败：{}", translate_smtp_error(&smtp_gateway_error_message(&error))),
+            }),
+        });
+    }
+
     let result = probe_smtp_connection(config.into_delivery_config()).await;
     Ok(match result {
         Ok(()) => json!({ "success": true, "message": "SMTP 连接测试成功" }),
@@ -59,6 +88,53 @@ pub(crate) async fn build_admin_smtp_test_payload(
             json!({ "success": false, "message": translate_smtp_error(&smtp_gateway_error_message(&error)) })
         }
     })
+}
+
+/// Deliberately loose: the SMTP server is the authority; this only catches obvious typos.
+fn plausible_address(value: &str) -> bool {
+    value.len() <= 320
+        && !value
+            .chars()
+            .any(|c| c.is_whitespace() || c.is_control() || matches!(c, '<' | '>' | ','))
+        && value.split_once('@').is_some_and(|(local, domain)| {
+            !local.is_empty()
+                && domain.contains('.')
+                && !domain.starts_with('.')
+                && !domain.ends_with('.')
+        })
+}
+
+fn compose_test_email(config: &SmtpDeliveryConfig, to_email: &str) -> ComposedEmail {
+    let sent_at = chrono::Utc::now()
+        .format("%Y-%m-%d %H:%M:%S UTC")
+        .to_string();
+    let intro = "这是一封来自网关的测试邮件。收到它说明 SMTP 设置可以真正发信。";
+    let blocks = vec![
+        EmailBlock::Paragraph(intro.to_string()),
+        EmailBlock::Rows(vec![
+            ("发件人".into(), config.from_email.clone()),
+            (
+                "SMTP 服务器".into(),
+                format!("{}:{}", config.host, config.port),
+            ),
+            ("发送时间".into(), sent_at.clone()),
+        ]),
+    ];
+    ComposedEmail {
+        to_email: to_email.to_string(),
+        subject: format!("[{}] SMTP 测试邮件", config.from_name),
+        html_body: render_email_html(
+            &config.from_name,
+            "SMTP 测试邮件",
+            intro,
+            &blocks,
+            "此邮件由管理员在系统设置中触发，用于检查邮件发送。",
+        ),
+        text_body: format!(
+            "{intro}\n\n发件人：{}\nSMTP 服务器：{}:{}\n发送时间：{sent_at}\n",
+            config.from_email, config.host, config.port
+        ),
+    }
 }
 
 async fn resolve_admin_smtp_config(
@@ -277,6 +353,47 @@ fn translate_smtp_error(error: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_recipient_check_catches_typos_only() {
+        for good in ["a@b.co", "first.last+tag@sub.example.org"] {
+            assert!(plausible_address(good), "{good}");
+        }
+        for bad in [
+            "",
+            "plain",
+            "a@b",
+            "@b.co",
+            "a@.co",
+            "a@b.",
+            "a b@c.de",
+            "a@b.co,c@d.ee",
+            "<a@b.co>",
+            "a@b.co\r\nRCPT TO:<x@y.zz>",
+        ] {
+            assert!(!plausible_address(bad), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn test_email_names_the_server_and_renders_both_bodies() {
+        let config = SmtpDeliveryConfig {
+            host: "smtp.example.com".into(),
+            port: 587,
+            user: Some("u".into()),
+            password: Some("p".into()),
+            use_tls: true,
+            use_ssl: false,
+            from_email: "ops@example.com".into(),
+            from_name: "Arca".into(),
+        };
+        let email = compose_test_email(&config, "me@example.org");
+        assert_eq!(email.to_email, "me@example.org");
+        assert!(email.subject.contains("SMTP 测试邮件"));
+        assert!(email.text_body.contains("smtp.example.com:587"));
+        assert!(email.html_body.contains("ops@example.com"));
+        assert!(!email.html_body.contains("password"));
+    }
 
     #[test]
     fn reports_missing_python_required_fields() {

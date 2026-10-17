@@ -302,6 +302,11 @@ When a mention does not produce a mail, the gateway log says why: each skipped m
 `event_name=feedback_mention_email_skipped` with a `reason` (`smtp_not_configured`,
 `user_not_found`, `mentioned_self`, `user_inactive`, `not_an_administrator`, `no_email_address`,
 `already_notified`), a delivered one logs `feedback_mention_email_sent`, and a failed SMTP
-delivery logs a warning with the error. The admin SMTP test (`POST /api/admin/system/smtp/test`)
-only proves that the gateway can connect and log in, not that a given mention was mailed. The most
+delivery logs a warning with the error. The admin SMTP test (`POST /api/admin/system/smtp/test`) only
+proves that the gateway can connect and log in. Add `"send_to": "you@example.com"` to the body (the
+**发送测试邮件** button in 邮件配置) to deliver a real message through the same code the mentions use;
+a refusal such as `554 ...` from the receiving server is returned verbatim in `message`, which a
+login test can never show. Outgoing mail carries `Date` and `Message-ID` headers and folds non-ASCII
+subjects/sender names into RFC 2047 encoded words of at most 75 characters, because stricter
+receivers reject or junk messages without them. The most
 common reason is testing by mentioning yourself, which never sends a mail.

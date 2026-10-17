@@ -12,11 +12,29 @@
         description="配置 SMTP 服务用于发送验证码邮件"
       >
         <template #actions>
-          <div class="flex gap-2">
+          <div class="flex flex-wrap items-center gap-2">
+            <Input
+              v-model="testRecipient"
+              type="email"
+              class="h-8 w-52"
+              placeholder="测试邮件收件邮箱"
+              aria-label="测试邮件收件邮箱"
+              :disabled="sendTestLoading"
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              :disabled="sendTestLoading || !testRecipient.trim()"
+              title="真的发一封测试邮件；只有这样才能发现被服务器拒收的问题"
+              @click="handleSendTestMail"
+            >
+              {{ sendTestLoading ? '发送中...' : '发送测试邮件' }}
+            </Button>
             <Button
               size="sm"
               variant="outline"
               :disabled="testSmtpLoading"
+              title="只检查能否连接并登录，不会发信"
               @click="handleTestSmtp"
             >
               {{ testSmtpLoading ? '测试中...' : '测试连接' }}
@@ -486,6 +504,7 @@ import { PageHeader, PageContainer, CardSection } from '@/components/layout'
 import { useToast } from '@/composables/useToast'
 import { adminApi, type EmailTemplateInfo } from '@/api/admin'
 import { authApi } from '@/api/auth'
+import { useAuthStore } from '@/stores/auth'
 import { parseApiError } from '@/utils/errorParser'
 import { log } from '@/utils/logger'
 
@@ -509,6 +528,8 @@ interface EmailConfig {
 const smtpSaveLoading = ref(false)
 const emailVerificationSaveLoading = ref(false)
 const testSmtpLoading = ref(false)
+const sendTestLoading = ref(false)
+const testRecipient = ref('')
 const smtpPasswordIsSet = ref(false)
 const requireEmailVerification = ref(false) // 是否开启了邮箱验证
 const smtpConfigured = ref(false) // SMTP 是否已配置
@@ -593,7 +614,11 @@ const smtpEncryption = computed({
   }
 })
 
+const authStore = useAuthStore()
+
 onMounted(async () => {
+  // The most useful place to send a test mail is the administrator's own inbox.
+  testRecipient.value = authStore.user?.email ?? ''
   await Promise.all([
     loadEmailConfig(),
     loadEmailTemplates(),
@@ -843,6 +868,36 @@ async function saveSmtpConfig() {
     log.error('保存 SMTP 配置失败:', err)
   } finally {
     smtpSaveLoading.value = false
+  }
+}
+
+// 真的发一封测试邮件：连接测试只证明能登录，被收件服务器拒收（如 554）要发一封才能看到
+async function handleSendTestMail() {
+  const to = testRecipient.value.trim()
+  if (!to) return
+  sendTestLoading.value = true
+  try {
+    const result = await adminApi.testSmtpConnection({
+      smtp_host: emailConfig.value.smtp_host,
+      smtp_port: emailConfig.value.smtp_port,
+      smtp_user: emailConfig.value.smtp_user,
+      smtp_password: emailConfig.value.smtp_password || undefined,
+      smtp_use_tls: emailConfig.value.smtp_use_tls,
+      smtp_use_ssl: emailConfig.value.smtp_use_ssl,
+      smtp_from_email: emailConfig.value.smtp_from_email,
+      smtp_from_name: emailConfig.value.smtp_from_name,
+      send_to: to
+    })
+    if (result.success) {
+      success(result.message || '测试邮件已发送')
+    } else {
+      error(result.message || '未知错误', '测试邮件发送失败')
+    }
+  } catch (err: unknown) {
+    log.error('测试邮件发送失败:', err)
+    error(parseApiError(err, '未知错误'), '测试邮件发送失败')
+  } finally {
+    sendTestLoading.value = false
   }
 }
 
