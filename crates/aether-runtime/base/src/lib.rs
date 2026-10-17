@@ -2,6 +2,7 @@ pub mod admission;
 mod bootstrap;
 pub mod concurrency;
 mod config;
+mod env_alias;
 pub mod distributed;
 mod error;
 pub mod metrics;
@@ -19,6 +20,7 @@ pub use admission::{
 pub use bootstrap::init_service_runtime;
 pub use concurrency::{ConcurrencyError, ConcurrencyGate, ConcurrencyPermit, ConcurrencySnapshot};
 pub use config::ServiceRuntimeConfig;
+pub use env_alias::{apply_env_aliases, plan_env_aliases, EnvAliasPlan};
 pub use distributed::{
     DistributedConcurrencyError, DistributedConcurrencyGate, DistributedConcurrencyPermit,
     DistributedConcurrencySnapshot,

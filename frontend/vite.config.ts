@@ -13,7 +13,8 @@ function normalizeVersion(version: string): string {
 }
 
 function getGitVersion(): string {
-  const envVersion = process.env.AETHER_BUILD_VERSION || process.env.AETHER_VERSION
+  const envVersion = process.env.ARCA_BUILD_VERSION || process.env.ARCA_VERSION
+    || process.env.AETHER_BUILD_VERSION || process.env.AETHER_VERSION
   if (envVersion?.trim()) {
     const version = normalizeVersion(envVersion)
     if (version) {

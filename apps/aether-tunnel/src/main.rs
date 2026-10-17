@@ -53,8 +53,16 @@ fn build_command() -> clap::Command {
         .subcommand_negates_reqs(true)
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
+    // Must run before the runtime spawns worker threads.
+    aether_runtime::apply_env_aliases();
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(async_main())
+}
+
+async fn async_main() -> anyhow::Result<()> {
     rustls::crypto::ring::default_provider()
         .install_default()
         .map_err(|_| anyhow::anyhow!("Failed to install rustls CryptoProvider"))?;

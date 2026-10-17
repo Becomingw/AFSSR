@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# ARCA_* takes precedence over the legacy AETHER_* names.
+while IFS= read -r _arca_name; do
+    case "${_arca_name}" in
+        ARCA_*) export "AETHER_${_arca_name#ARCA_}=${!_arca_name}" ;;
+    esac
+done < <(compgen -e)
+unset _arca_name
 
 REPO="${AETHER_REPO:-fawney19/Aether}"
 SOURCE_REF="${AETHER_SOURCE_REF:-main}"

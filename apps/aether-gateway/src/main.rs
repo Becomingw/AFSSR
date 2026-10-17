@@ -2065,6 +2065,8 @@ fn validate_deployment_topology(
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Must precede clap parsing and the runtime's worker threads.
+    aether_runtime::apply_env_aliases();
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .thread_stack_size(GATEWAY_TOKIO_WORKER_STACK_SIZE_BYTES)

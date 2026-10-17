@@ -122,7 +122,7 @@ import os
 
 ws = create_connection(
     "wss://gateway.example/v1/responses",
-    header=[f"Authorization: Bearer {os.environ['AETHER_API_KEY']}"],
+    header=[f"Authorization: Bearer {os.environ['ARCA_API_KEY']}"],
 )
 ws.send(json.dumps({
     "type": "response.create",

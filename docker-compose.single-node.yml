@@ -72,18 +72,18 @@ services:
     env_file:
       - .env
     environment:
-      AETHER_DATABASE_DRIVER: postgres
+      ARCA_DATABASE_DRIVER: postgres
       DATABASE_URL: postgresql://postgres:${DB_PASSWORD:?set DB_PASSWORD in .env}@postgres:5432/aether
       REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@redis:6379/0
       TZ: Asia/Shanghai
-      AETHER_BASE_DIR: /opt/aether
-      AETHER_GATEWAY_DEPLOYMENT_TOPOLOGY: single-node
-      AETHER_UPDATE_STRATEGY: docker
-      AETHER_DOCKER_UPDATE_COMMAND: ${AETHER_DOCKER_UPDATE_COMMAND:-./update.sh}
-      AETHER_LOG_DESTINATION: stdout
-      AETHER_LOG_FORMAT: ${AETHER_LOG_FORMAT:-pretty}
+      ARCA_BASE_DIR: /opt/aether
+      ARCA_GATEWAY_DEPLOYMENT_TOPOLOGY: single-node
+      ARCA_UPDATE_STRATEGY: docker
+      ARCA_DOCKER_UPDATE_COMMAND: ${ARCA_DOCKER_UPDATE_COMMAND:-${AETHER_DOCKER_UPDATE_COMMAND:-./update.sh}}
+      ARCA_LOG_DESTINATION: stdout
+      ARCA_LOG_FORMAT: ${ARCA_LOG_FORMAT:-${AETHER_LOG_FORMAT:-pretty}}
       APP_PORT: ${APP_PORT:-8084}
-      AETHER_GATEWAY_AUTO_PREPARE_DATABASE: ${AETHER_GATEWAY_AUTO_PREPARE_DATABASE:-true}
+      ARCA_GATEWAY_AUTO_PREPARE_DATABASE: ${ARCA_GATEWAY_AUTO_PREPARE_DATABASE:-${AETHER_GATEWAY_AUTO_PREPARE_DATABASE:-true}}
     depends_on:
       postgres:
         condition: service_healthy

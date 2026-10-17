@@ -104,6 +104,7 @@ enum CliError {
 }
 
 fn main() {
+    aether_runtime::apply_env_aliases();
     if let Err(error) = run(Args::parse()) {
         eprintln!("{error}");
         std::process::exit(1);

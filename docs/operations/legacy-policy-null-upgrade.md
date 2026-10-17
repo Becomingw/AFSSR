@@ -28,7 +28,7 @@
 
 先备份数据库，部署包含此迁移的新网关二进制或镜像，并保留原来的数据库连接配置与密钥。仅重启不包含此迁移的旧版本不会修复数据。
 
-默认 `AETHER_GATEWAY_DATABASE_MODE=auto` 会在启动时执行挂起迁移，再进入正常服务。使用 `verify-only` 的部署需在相同数据库连接配置下先执行新版本的准备命令，再重启服务：
+默认 `ARCA_GATEWAY_DATABASE_MODE=auto` 会在启动时执行挂起迁移，再进入正常服务。使用 `verify-only` 的部署需在相同数据库连接配置下先执行新版本的准备命令，再重启服务：
 
 ```sh
 aether-gateway db prepare

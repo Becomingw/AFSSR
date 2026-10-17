@@ -98,7 +98,7 @@ aether-gateway copy --source-driver postgres --source-url "$SOURCE_DATABASE_URL"
 - 新增两个真实 PostgreSQL 回归，覆盖打开连接下四次停止/重启、数据保留、重复停止、关闭失败重试及析构清理。专项运行前后共享内存段清单未新增残留；未清除其他业务或历史进程的 IPC 资源。
 - 续轮全量回归进一步定位到迁移、回填测试各自复制的旧辅助器，同样在强杀后泄漏资源，导致后续网关测试无法初始化数据库。两份实现已合并到仅测试使用的 `postgres_test_support.rs`，采用相同的正常关闭与失败重试规则，另补两个回归；没有只清理环境而保留泄漏代码。
 - 用 `AETHER_REQUIRE_LOCAL_POSTGRES_TESTS=1` 强制迁移、回填和共用辅助器的真实数据库用例执行，生命周期筛选结果为 63 通过、0 失败、1 忽略；该忽略项为已在隔离数据库中单独通过的导入测试。此次完整生命周期运行前后 IPC 清单一致。
-- 辅助器支持 `AETHER_PG_CTL_BIN`，默认查找 `AETHER_POSTGRES_BIN` 同目录下的 `pg_ctl`；初始化失败也回收本次拥有的工作目录。
+- 辅助器支持 `ARCA_PG_CTL_BIN`，默认查找 `ARCA_POSTGRES_BIN` 同目录下的 `pg_ctl`；初始化失败也回收本次拥有的工作目录。
 
 ## 验证结果
 

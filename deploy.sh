@@ -6,6 +6,13 @@
 #   强制全部重建:  ./deploy.sh --force
 
 set -euo pipefail
+# ARCA_* takes precedence over the legacy AETHER_* names.
+while IFS= read -r _arca_name; do
+    case "${_arca_name}" in
+        ARCA_*) export "AETHER_${_arca_name#ARCA_}=${!_arca_name}" ;;
+    esac
+done < <(compgen -e)
+unset _arca_name
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 cd -- "${SCRIPT_DIR}"
 

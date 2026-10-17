@@ -41,7 +41,7 @@ TTL makes completion writes atomic and idempotent.
 
 All gateway instances must use the same Redis URL and key prefix. This allows a
 continuation request to land on another instance and allows gateway processes
-to restart without losing history. `AETHER_RUNTIME_BACKEND=memory` remains a
+to restart without losing history. `ARCA_RUNTIME_BACKEND=memory` remains a
 single-process development mode and cannot provide either guarantee; multi-node
 startup rejects it.
 

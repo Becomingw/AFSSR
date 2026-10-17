@@ -78,7 +78,7 @@ socket 交给原来的 SMTP/TLS 协议实现，不在阻塞任务中重新解析
 ### 6. 隧道供应商出口可显式委托代理解析
 
 新增默认关闭的 `upstream_proxy_remote_dns`（CLI `--upstream-proxy-remote-dns`，环境变量
-`AETHER_TUNNEL_UPSTREAM_PROXY_REMOTE_DNS`，setup 的 `Proxy Remote DNS` 开关）。
+`ARCA_TUNNEL_UPSTREAM_PROXY_REMOTE_DNS`，setup 的 `Proxy Remote DNS` 开关）。
 
 - 默认路径仍本地解析、执行 ACL、固定 IP，`socks5h://` 本身不改变既有安全策略。
 - 显式启用后，HTTP CONNECT 或 SOCKS5h 接收原始域名，不再预先查询隧道本机 DNS；
@@ -117,7 +117,7 @@ socket 交给原来的 SMTP/TLS 协议实现，不在阻塞任务中重新解析
 2. **隧道代理不等于网关直连代理。** 默认仍先本地解析并通过 ACL；只有显式启用
    `upstream_proxy_remote_dns` 才委托代理解析供应商域名。代理端点自身的域名仍需
    本地 DNS；本地解析完全不可用时，代理 URL 应使用可达 IP。
-3. 隧道默认 `AETHER_TUNNEL_ALLOW_PRIVATE_TARGETS=false` 仍会拒绝 Fake-IP。
+3. 隧道默认 `ARCA_TUNNEL_ALLOW_PRIVATE_TARGETS=false` 仍会拒绝 Fake-IP。
    该开关是扩大内网访问权限，不是建议普遍启用的 DNS 修复；应优先让隧道主机得到
    可路由的真实 DNS 答案，或配置受信任代理的显式远程 DNS 模式。
 4. 更新客户端支持自己的代理环境变量和 `NO_PROXY`；不能把这一点推广到供应商请求。
