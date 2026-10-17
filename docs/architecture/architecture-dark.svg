@@ -1,117 +1,106 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 420" width="760" height="420" font-family="'Inter', system-ui, -apple-system, sans-serif">
-  <defs>
-    <filter id="shadow-sm" x="-10%" y="-10%" width="120%" height="130%">
-      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity="0.5"/>
-    </filter>
-    <filter id="shadow-lg" x="-10%" y="-10%" width="120%" height="130%">
-      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-opacity="0.7"/>
-    </filter>
-    <clipPath id="gateway-clip">
-      <path d="M 0 0 h 760 v 420 H 0 Z M 74 177 v 39 h 12 v -39 Z" clip-rule="evenodd"/>
-    </clipPath>
-  </defs>
-
-  <!-- Background -->
-  <rect width="760" height="420" rx="24" fill="#121212"/>
-
-  <!-- === Labels placeholder, drawn at top layer === -->
-
-  <!-- Source pills -->
-  <rect x="138" y="24" width="100" height="36" rx="18" fill="#1a1a1c" stroke="#2a2a2c" filter="url(#shadow-sm)"/>
-  <circle cx="163" cy="42" r="3" fill="#cc7154"/>
-  <text x="195" y="46" font-size="11" font-weight="700" fill="#f3f4f6" text-anchor="middle">Claude</text>
-  <rect x="330" y="24" width="100" height="36" rx="18" fill="#1a1a1c" stroke="#2a2a2c" filter="url(#shadow-sm)"/>
-  <circle cx="355" cy="42" r="3" fill="#cc7154"/>
-  <text x="387" y="46" font-size="11" font-weight="700" fill="#f3f4f6" text-anchor="middle">OpenAI</text>
-  <rect x="522" y="24" width="100" height="36" rx="18" fill="#1a1a1c" stroke="#2a2a2c" filter="url(#shadow-sm)"/>
-  <circle cx="547" cy="42" r="3" fill="#cc7154"/>
-  <text x="579" y="46" font-size="11" font-weight="700" fill="#f3f4f6" text-anchor="middle">Gemini</text>
-
-  <!-- Output pills -->
-  <rect x="128" y="360" width="120" height="36" rx="18" fill="#1a1a1c" stroke="#2a2a2c" filter="url(#shadow-sm)"/>
-  <circle cx="153" cy="378" r="3" fill="#cc7154"/>
-  <text x="195" y="382" font-size="10" font-weight="700" fill="#f3f4f6" text-anchor="middle">Claude 响应</text>
-  <rect x="320" y="360" width="120" height="36" rx="18" fill="#1a1a1c" stroke="#2a2a2c" filter="url(#shadow-sm)"/>
-  <circle cx="345" cy="378" r="3" fill="#cc7154"/>
-  <text x="387" y="382" font-size="10" font-weight="700" fill="#f3f4f6" text-anchor="middle">OpenAI 响应</text>
-  <rect x="512" y="360" width="120" height="36" rx="18" fill="#1a1a1c" stroke="#2a2a2c" filter="url(#shadow-sm)"/>
-  <circle cx="537" cy="378" r="3" fill="#cc7154"/>
-  <text x="579" y="382" font-size="10" font-weight="700" fill="#f3f4f6" text-anchor="middle">Gemini 响应</text>
-
-  <!-- === Layer 2: ARCA GATEWAY box === -->
-  <rect x="80" y="78" width="600" height="240" rx="24" fill="#1a1a1c" filter="url(#shadow-lg)"/>
-  <rect x="80" y="78" width="600" height="240" rx="24" fill="none" stroke="rgba(204,113,84,0.4)" clip-path="url(#gateway-clip)"/>
-  <g transform="translate(80, 185)" font-size="7" font-weight="900" fill="#cc7154" text-anchor="middle">
-    <text x="0" y="0">A</text><text x="0" y="9">R</text><text x="0" y="18">C</text>
-    <text x="0" y="27">A</text>
-  </g>
-
-  <!-- Dashed box -->
-  <rect x="180" y="98" width="400" height="112" rx="16" fill="none" stroke="rgba(204,113,84,0.4)" stroke-width="1.5" stroke-dasharray="6 4"/>
-  <rect x="200" y="108" width="360" height="26" rx="12" fill="none" stroke="#2a2a2c"/>
-  <text x="380" y="125" font-size="10" font-weight="600" fill="#f3f4f6" text-anchor="middle">统一模型规范 / 协议聚合</text>
-  <rect x="200" y="140" width="85" height="26" rx="13" fill="rgba(204,113,84,0.12)"/>
-  <text x="242" y="157" font-size="10" font-weight="600" fill="#f3f4f6" text-anchor="middle">多端鉴权</text>
-  <rect x="290" y="140" width="85" height="26" rx="13" fill="rgba(204,113,84,0.12)"/>
-  <text x="332" y="157" font-size="10" font-weight="600" fill="#f3f4f6" text-anchor="middle">配额管控</text>
-  <rect x="380" y="140" width="85" height="26" rx="13" fill="rgba(204,113,84,0.12)"/>
-  <text x="422" y="157" font-size="10" font-weight="600" fill="#f3f4f6" text-anchor="middle">全局并发</text>
-  <rect x="470" y="140" width="85" height="26" rx="13" fill="rgba(204,113,84,0.12)"/>
-  <text x="512" y="157" font-size="10" font-weight="600" fill="#f3f4f6" text-anchor="middle">缓存亲和</text>
-  <rect x="200" y="172" width="360" height="28" rx="14" fill="none" stroke="#2a2a2c"/>
-  <text x="380" y="190" font-size="10" font-weight="600" fill="#f3f4f6" text-anchor="middle">智能调度 / 故障转移</text>
-
-  <!-- Engine cards -->
-  <rect x="103" y="250" width="170" height="28" rx="14" fill="rgba(204,113,84,0.12)" stroke="#2a2a2c"/>
-  <circle cx="163" cy="264" r="3" fill="#cc7154"/>
-  <text x="192" y="268" font-size="10" font-weight="700" fill="#f3f4f6" text-anchor="middle">格式转换</text>
-  <rect x="295" y="250" width="170" height="28" rx="14" fill="rgba(204,113,84,0.12)" stroke="#2a2a2c"/>
-  <circle cx="355" cy="264" r="3" fill="#cc7154"/>
-  <text x="384" y="268" font-size="10" font-weight="700" fill="#f3f4f6" text-anchor="middle">反向代理</text>
-  <rect x="487" y="250" width="170" height="28" rx="14" fill="rgba(204,113,84,0.12)" stroke="#2a2a2c"/>
-  <circle cx="547" cy="264" r="3" fill="#cc7154"/>
-  <text x="576" y="268" font-size="10" font-weight="700" fill="#f3f4f6" text-anchor="middle">原生直通</text>
-
-  <!-- === Layer 3: Track lines === -->
-  <g stroke="rgba(255,255,255,0.08)" stroke-width="1.5" fill="none" stroke-linecap="round">
-    <path id="f-in-1" d="M 188 60 L 188 66 C 188 72, 380 72, 380 78 L 380 98"/>
-    <path id="f-in-2" d="M 380 60 L 380 98"/>
-    <path id="f-in-3" d="M 572 60 L 572 66 C 572 72, 380 72, 380 78 L 380 98"/>
-    <path id="f-sL" d="M 380 210 C 380 230, 188 230, 188 250"/>
-    <path id="f-sM" d="M 380 210 L 380 250"/>
-    <path id="f-sR" d="M 380 210 C 380 230, 572 230, 572 250"/>
-    <path id="f-oL" d="M 188 278 L 188 284 C 188 302, 380 302, 380 318"/>
-    <path id="f-oM" d="M 380 278 L 380 318"/>
-    <path id="f-oR" d="M 572 278 L 572 284 C 572 302, 380 302, 380 318"/>
-    <path id="f-oL2" d="M 380 318 C 380 338, 188 338, 188 360"/>
-    <path id="f-oM2" d="M 380 318 L 380 360"/>
-    <path id="f-oR2" d="M 380 318 C 380 338, 572 338, 572 360"/>
-  </g>
-
-  <!-- Animated dots -->
-  <g>
-    <circle r="2.5" fill="#cc7154"><animateMotion dur="2.2s" repeatCount="indefinite"><mpath href="#f-in-1"/></animateMotion></circle>
-    <circle r="2.5" fill="#cc7154"><animateMotion dur="2.2s" repeatCount="indefinite"><mpath href="#f-in-3"/></animateMotion></circle>
-    <circle r="2.5" fill="#cc7154"><animateMotion dur="1.4s" repeatCount="indefinite"><mpath href="#f-sL"/></animateMotion></circle>
-    <circle r="2.5" fill="#cc7154"><animateMotion dur="1.4s" repeatCount="indefinite"><mpath href="#f-sR"/></animateMotion></circle>
-    <circle r="2.5" fill="#cc7154"><animateMotion dur="1.4s" repeatCount="indefinite"><mpath href="#f-oL"/></animateMotion></circle>
-    <circle r="2.5" fill="#cc7154"><animateMotion dur="1.4s" repeatCount="indefinite"><mpath href="#f-oR"/></animateMotion></circle>
-    <circle r="2.5" fill="#cc7154"><animateMotion dur="1.2s" repeatCount="indefinite"><mpath href="#f-oL2"/></animateMotion></circle>
-    <circle r="2.5" fill="#cc7154"><animateMotion dur="1.2s" repeatCount="indefinite"><mpath href="#f-oR2"/></animateMotion></circle>
-  </g>
-
-  <!-- === Layer 4: Junction dots === -->
-  <circle cx="380" cy="78" r="4" fill="#cc7154" stroke="#1e1e1e"/>
-  <circle cx="380" cy="210" r="4" fill="#cc7154" stroke="#1e1e1e"/>
-  <circle cx="380" cy="318" r="4" fill="#cc7154" stroke="#1e1e1e"/>
-
-  <!-- === Layer 5: SOURCES / OUTPUTS labels === -->
-  <g>
-    <circle cx="355" cy="12" r="2" fill="#6b7280"/>
-    <text x="365" y="15" font-size="9" font-weight="800" letter-spacing="0.2em" fill="#6b7280">SOURCES</text>
-  </g>
-  <g>
-    <circle cx="353" cy="346" r="2" fill="#6b7280"/>
-    <text x="363" y="349" font-size="9" font-weight="800" letter-spacing="0.2em" fill="#6b7280">OUTPUTS</text>
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 570" width="1200" height="570" font-family="Inter,system-ui,-apple-system,'Segoe UI','PingFang SC','Noto Sans SC','Microsoft YaHei',sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Arca architecture</title>
+<desc id="d">Clients using OpenAI, Claude and Gemini protocols connect to the Arca gateway, which authenticates, schedules, converts and records requests before sending them to official APIs, subscription pools and compatible endpoints.</desc>
+<defs><filter id="sh" x="-10%" y="-10%" width="120%" height="140%"><feDropShadow dx="0" dy="3" stdDeviation="5" flood-color="rgba(0,0,0,.35)"/></filter></defs>
+<rect x=".5" y=".5" width="1199" height="569" rx="22" fill="#151210" stroke="#2f2923"/>
+<text x="40" y="46" font-size="11" font-weight="600" letter-spacing="2.2" fill="#a1978a" text-anchor="start">CLIENTS · 客户端</text>
+<text x="600" y="46" font-size="11" font-weight="600" letter-spacing="2.2" fill="#a1978a" text-anchor="middle">GATEWAY · 网关</text>
+<text x="1160" y="46" font-size="11" font-weight="600" letter-spacing="2.2" fill="#a1978a" text-anchor="end">UPSTREAMS · 上游</text>
+<path d="M280 123.0 C330 123.0, 330 275.0, 380 275.0" fill="none" stroke="#4a4136" stroke-width="1.6"/>
+<path d="M280 199.0 C330 199.0, 330 275.0, 380 275.0" fill="none" stroke="#4a4136" stroke-width="1.6"/>
+<path d="M280 275.0 C330 275.0, 330 275.0, 380 275.0" fill="none" stroke="#4a4136" stroke-width="1.6"/>
+<path d="M280 351.0 C330 351.0, 330 275.0, 380 275.0" fill="none" stroke="#4a4136" stroke-width="1.6"/>
+<path d="M280 427.0 C330 427.0, 330 275.0, 380 275.0" fill="none" stroke="#4a4136" stroke-width="1.6"/>
+<path d="M820 275.0 C870 275.0, 870 128.0, 920 128.0" fill="none" stroke="#4a4136" stroke-width="1.6"/>
+<path d="M820 275.0 C870 275.0, 870 226.0, 920 226.0" fill="none" stroke="#4a4136" stroke-width="1.6"/>
+<path d="M820 275.0 C870 275.0, 870 324.0, 920 324.0" fill="none" stroke="#4a4136" stroke-width="1.6"/>
+<path d="M820 275.0 C870 275.0, 870 422.0, 920 422.0" fill="none" stroke="#4a4136" stroke-width="1.6"/>
+<rect x="380" y="66" width="440" height="418" rx="22" fill="#1b1713" stroke="#e08a68" stroke-opacity=".55" stroke-width="1.5" filter="url(#sh)"/>
+<circle cx="410" cy="100" r="5" fill="#e08a68"/>
+<text x="426" y="107" font-family="'Tiempos Text',Georgia,'Times New Roman',serif" font-size="22" font-weight="700" fill="#f3ede3">Arca Gateway</text>
+<text x="794" y="106" font-size="12" fill="#a1978a" text-anchor="end">Rust · 单二进制</text>
+<rect x="404" y="136" width="392" height="50" rx="12" fill="#201c17" stroke="#38322a"/>
+<circle cx="432" cy="161.0" r="12" fill="#3a2a22"/>
+<text x="432" y="165.5" font-size="12.5" font-weight="700" fill="#e08a68" text-anchor="middle">1</text>
+<text x="458" y="166.0" font-size="15" font-weight="650" fill="#f3ede3">鉴权与准入</text>
+<text x="776" y="165.5" font-size="12" fill="#a1978a" text-anchor="end">Authentication &amp; admission</text>
+<path d="M432 186 v12" stroke="#e08a68" stroke-opacity=".5" stroke-width="1.5"/>
+<rect x="404" y="198" width="392" height="50" rx="12" fill="#201c17" stroke="#38322a"/>
+<circle cx="432" cy="223.0" r="12" fill="#3a2a22"/>
+<text x="432" y="227.5" font-size="12.5" font-weight="700" fill="#e08a68" text-anchor="middle">2</text>
+<text x="458" y="228.0" font-size="15" font-weight="650" fill="#f3ede3">模型解析</text>
+<text x="776" y="227.5" font-size="12" fill="#a1978a" text-anchor="end">Model resolution</text>
+<path d="M432 248 v12" stroke="#e08a68" stroke-opacity=".5" stroke-width="1.5"/>
+<rect x="404" y="260" width="392" height="50" rx="12" fill="#201c17" stroke="#38322a"/>
+<circle cx="432" cy="285.0" r="12" fill="#3a2a22"/>
+<text x="432" y="289.5" font-size="12.5" font-weight="700" fill="#e08a68" text-anchor="middle">3</text>
+<text x="458" y="290.0" font-size="15" font-weight="650" fill="#f3ede3">调度与故障转移</text>
+<text x="776" y="289.5" font-size="12" fill="#a1978a" text-anchor="end">Scheduling &amp; failover</text>
+<path d="M432 310 v12" stroke="#e08a68" stroke-opacity=".5" stroke-width="1.5"/>
+<rect x="404" y="322" width="392" height="50" rx="12" fill="#201c17" stroke="#38322a"/>
+<circle cx="432" cy="347.0" r="12" fill="#3a2a22"/>
+<text x="432" y="351.5" font-size="12.5" font-weight="700" fill="#e08a68" text-anchor="middle">4</text>
+<text x="458" y="352.0" font-size="15" font-weight="650" fill="#f3ede3">协议转换</text>
+<text x="776" y="351.5" font-size="12" fill="#a1978a" text-anchor="end">OpenAI ⇄ Claude ⇄ Gemini</text>
+<path d="M432 372 v12" stroke="#e08a68" stroke-opacity=".5" stroke-width="1.5"/>
+<rect x="404" y="384" width="392" height="50" rx="12" fill="#201c17" stroke="#38322a"/>
+<circle cx="432" cy="409.0" r="12" fill="#3a2a22"/>
+<text x="432" y="413.5" font-size="12.5" font-weight="700" fill="#e08a68" text-anchor="middle">5</text>
+<text x="458" y="414.0" font-size="15" font-weight="650" fill="#f3ede3">用量与计费</text>
+<text x="776" y="413.5" font-size="12" fill="#a1978a" text-anchor="end">Usage, quota &amp; billing</text>
+<rect x="404" y="442" width="392" height="36" rx="10" fill="#3a2a22"/>
+<text x="600.0" y="465" font-size="12.5" fill="#e08a68" font-weight="600" text-anchor="middle">管理控制台 · Admin API · MCP · Prometheus 指标</text>
+<path d="M515 484 v18" stroke="#4a4136" stroke-width="1.6" stroke-dasharray="3 4"/>
+<rect x="440" y="502" width="150" height="32" rx="16" fill="#26211b" stroke="#38322a"/>
+<text x="515" y="523" font-size="12.5" font-weight="600" fill="#f3ede3" text-anchor="middle">PostgreSQL</text>
+<path d="M685 484 v18" stroke="#4a4136" stroke-width="1.6" stroke-dasharray="3 4"/>
+<rect x="610" y="502" width="150" height="32" rx="16" fill="#26211b" stroke="#38322a"/>
+<text x="685" y="523" font-size="12.5" font-weight="600" fill="#f3ede3" text-anchor="middle">Redis · 可选</text>
+<g>
+  <rect x="40" y="92.0" width="240" height="62" rx="14" fill="#201c17" stroke="#38322a" filter="url(#sh)"/>
+  <text x="60" y="120.0" font-size="15" font-weight="650" fill="#f3ede3">Claude Code</text>
+  <text x="60" y="140.0" font-size="12" fill="#a1978a">Claude Messages</text>
+</g>
+<g>
+  <rect x="40" y="168.0" width="240" height="62" rx="14" fill="#201c17" stroke="#38322a" filter="url(#sh)"/>
+  <text x="60" y="196.0" font-size="15" font-weight="650" fill="#f3ede3">Codex CLI</text>
+  <text x="60" y="216.0" font-size="12" fill="#a1978a">OpenAI Responses</text>
+</g>
+<g>
+  <rect x="40" y="244.0" width="240" height="62" rx="14" fill="#201c17" stroke="#38322a" filter="url(#sh)"/>
+  <text x="60" y="272.0" font-size="15" font-weight="650" fill="#f3ede3">Gemini CLI</text>
+  <text x="60" y="292.0" font-size="12" fill="#a1978a">Gemini generateContent</text>
+</g>
+<g>
+  <rect x="40" y="320.0" width="240" height="62" rx="14" fill="#201c17" stroke="#38322a" filter="url(#sh)"/>
+  <text x="60" y="348.0" font-size="15" font-weight="650" fill="#f3ede3">OpenCode / Cline</text>
+  <text x="60" y="368.0" font-size="12" fill="#a1978a">OpenAI Chat Completions</text>
+</g>
+<g>
+  <rect x="40" y="396.0" width="240" height="62" rx="14" fill="#201c17" stroke="#38322a" filter="url(#sh)"/>
+  <text x="60" y="424.0" font-size="15" font-weight="650" fill="#f3ede3">SDK · curl</text>
+  <text x="60" y="444.0" font-size="12" fill="#a1978a">任意兼容客户端</text>
+</g>
+<g>
+  <rect x="920" y="89.0" width="240" height="78" rx="14" fill="#201c17" stroke="#38322a" filter="url(#sh)"/>
+  <text x="940" y="125.0" font-size="15" font-weight="650" fill="#f3ede3">官方 API</text>
+  <text x="940" y="145.0" font-size="12" fill="#a1978a">OpenAI · Anthropic · Google</text>
+</g>
+<g>
+  <rect x="920" y="187.0" width="240" height="78" rx="14" fill="#201c17" stroke="#38322a" filter="url(#sh)"/>
+  <text x="940" y="223.0" font-size="15" font-weight="650" fill="#f3ede3">订阅账号池</text>
+  <text x="940" y="243.0" font-size="12" fill="#a1978a">Codex · Claude Code · Gemini CLI …</text>
+</g>
+<g>
+  <rect x="920" y="285.0" width="240" height="78" rx="14" fill="#201c17" stroke="#38322a" filter="url(#sh)"/>
+  <text x="940" y="321.0" font-size="15" font-weight="650" fill="#f3ede3">兼容端点</text>
+  <text x="940" y="341.0" font-size="12" fill="#a1978a">OpenAI / Claude / Gemini 兼容服务</text>
+</g>
+<g>
+  <rect x="920" y="383.0" width="240" height="78" rx="14" fill="#201c17" stroke="#38322a" filter="url(#sh)"/>
+  <text x="940" y="419.0" font-size="15" font-weight="650" fill="#f3ede3">Tunnel 代理节点</text>
+  <text x="940" y="439.0" font-size="12" fill="#a1978a">海外中转 · 可选</text>
+</g>
+<circle cx="380" cy="275.0" r="5" fill="#e08a68"/>
+<circle cx="820" cy="275.0" r="5" fill="#e08a68"/>
 </svg>
