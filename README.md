@@ -1,198 +1,170 @@
+<div align="center">
+
+<img src="frontend/public/arca.svg" width="96" height="96" alt="Arca">
+
 # Arca
 
-基于 [Aether](https://github.com/fawney19/Aether) 的下游修改版，由
-[Mengfei Wang / Becomingw](https://github.com/Becomingw) 维护。
-原始 Aether 及其贡献者的版权和署名保留，本仓库不是 Aether 官方版本。
+**自托管 AI 网关 —— 一个入口，统一接入 Claude、OpenAI、Gemini 与各类 CLI 客户端**
 
-- 完整源码包含后端、前端、隧道以及 Codex/Haiku/GLM 兼容修改和测试。
-- `haiku-compat6-20261013` 标签对应已部署并通过公网合成验收的源码；
-  `main` 还包含尚未部署的本地 GLM 历史兼容修改。
-- 继续使用原 [非商业许可证](LICENSE)，改名不改变许可条件。
-- 本仓库目前仅发布源码，没有发布 Arca 的预构建镜像。下方文档中指向上游 Aether
-  的克隆、安装脚本、镜像和更新地址不包含这里的修改，请先阅读 [Arca 版本说明](docs/ARCA.md)。
+[![License: Non-Commercial](https://img.shields.io/badge/license-non--commercial-orange)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-1.95-b7410e?logo=rust)](rust-toolchain.toml)
+[![Vue](https://img.shields.io/badge/vue-3-42b883?logo=vuedotjs&logoColor=white)](frontend/package.json)
+[![PostgreSQL](https://img.shields.io/badge/postgresql-required-336791?logo=postgresql&logoColor=white)](docker-compose.yml)
 
-## 使用文档（承自 Aether）
+[简体中文](README.md) · [English](README.en.md)
 
-<p align="center">
-  <img src="frontend/public/arca.svg" width="120" height="120" alt="Arca Logo">
-</p>
+[特性](#特性) · [架构](#架构) · [快速开始](#快速开始) · [文档](#文档) · [参与贡献](#参与贡献) · [许可证](#许可证与致谢)
 
-<h1 align="center">Arca</h1>
-
-<p align="center">
-  <strong>一站式 AI 基础设施平台</strong><br>
-  支持 Claude / OpenAI / Gemini 及其 CLI 客户端的统一接入、格式转换、正/反向代理, 致力于成为用户驱动AI服务的底座
-</p>
-<p align="center">
-  <a href="#简介">简介</a> •
-  <a href="#部署">部署</a> •
-  <a href="#api-文档">API 文档</a> •
-  <a href="#环境变量">环境变量</a> •
-  <a href="#qa">Q&A</a>
-</p>
-
+</div>
 
 ---
 
 ## 简介
 
-Arca 是一个自托管的 AI API 网关，为团队和个人提供多租户管理、智能负载均衡、成本配额控制和健康监控能力。通过统一的 API 入口，可以无缝对接 Claude、OpenAI、Gemini 等主流 AI 服务及其 CLI 工具。
+Arca 是一个用 Rust 编写的自托管 AI API 网关，附带 Vue 管理控制台。它把多家上游模型服务收拢到同一个入口之后，向下游提供统一的鉴权、协议转换、智能调度、配额与用量管理。
+
+- **对下游**：客户端继续使用熟悉的 OpenAI、Claude、Gemini 协议和 CLI 工具，无需改动。
+- **对上游**：官方 API、订阅账号池、第三方兼容服务可以混合接入，由网关负责选路、重试与故障转移。
+- **对运维**：一个 Rust 二进制同时提供 API 与前端静态资源，依赖 PostgreSQL，Redis 可选。
+
+> Arca 是 [Aether](https://github.com/fawney19/Aether) 的下游分支，由 [Becomingw](https://github.com/Becomingw) 维护，原作者的版权与署名予以保留。详见[许可证与致谢](#许可证与致谢)。
+
+## 特性
+
+| 方向 | 能力 |
+| --- | --- |
+| **统一接入** | 同时提供 OpenAI Chat / Responses / Realtime、Claude Messages、Gemini `generateContent` 等协议入口；支持 Embeddings、Rerank、图像、视频任务与 Gemini Files |
+| **协议转换** | 在 OpenAI、Claude、Gemini 之间双向转换请求与响应，覆盖流式输出、工具调用与推理内容；同协议请求原生直通，不做多余改写 |
+| **智能调度** | 按优先级、健康度与缓存亲和选择上游 Key；失败自动重试并切换候选；支持按模型限定可用的接口类型与端点 |
+| **账号池** | 对订阅类上游维护账号池，跟踪额度与健康状态，自动摘除不可用账号 |
+| **多租户与配额** | 用户、用户组、API Key 三级管理；模型授权、滚动/日历请求上限、共享月度成本预算；钱包、计费方案与支付网关 |
+| **管理控制台** | 提供商与端点、模型目录与映射、路由策略、用户与 Key、用量与成本分析、审计日志、IP 黑白名单、系统设置，中英文界面 |
+| **可观测** | 请求级用量与耗时记录、请求诊断、请求体查看、Prometheus 指标、缓存与性能分析 |
+| **安全** | 敏感数据加密存储、PII 脱敏与恢复、请求体与并发预算、出站 DNS/代理策略、LDAP 与 OAuth 登录 |
+| **集成** | 内置管理 MCP 端点（用户绑定的管理 Key，写操作需预览确认）；Linux 客户端一键接入 Codex CLI / Claude Code；可选的反向 Tunnel 代理节点 |
+
+## 架构
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/architecture/architecture-dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/architecture/architecture-light.svg">
-    <img src="docs/architecture/architecture-light.svg" width="680" alt="Arca Architecture">
+    <img src="docs/architecture/architecture-light.svg" width="680" alt="Arca 架构：多种客户端协议经网关统一鉴权、调度、转换后到达上游">
   </picture>
 </p>
 
-页面预览: https://becomingw.github.io/Arca/
+请求进入网关后依次经过：鉴权与准入 → 模型解析 → 候选选择与排序 → 协议转换（如需要）→ 上游执行与故障转移 → 用量记录。
 
-## 部署
+### 上游类型
 
-### Docker Compose
+官方 API 之外，网关内置以下固定提供商模板：`codex`、`claude_code`、`gemini_cli`、`antigravity`、`vertex_ai`、`kiro`、`chatgpt_web`、`grok`、`windsurf`、`opencode_go`，并支持任意 OpenAI / Claude / Gemini 兼容的自定义端点。
 
-Arca 目前没有发布预构建镜像，需要先自行构建（见 [Arca 版本说明](docs/ARCA.md) 的“Build Your Own Image”），再通过 `.env` 中的 `APP_IMAGE` 指定该镜像。
+### 仓库结构
+
+```text
+apps/
+  aether-gateway/   网关主程序：HTTP/WebSocket 入口、调度执行、管理 API、内置 MCP
+  aether-tunnel/    Tunnel 代理节点，部署在海外 VPS 上为网关中转出站流量
+crates/             领域库：协议格式、调度、数据访问、计费、用量、OAuth、运行时等
+frontend/           管理控制台（Vue 3 + TypeScript + Vite）
+deploy/             Compose 变体、验收脚本与兼容性模板
+docs/               协议、运维手册与审计文档
+```
+
+> 目录与 crate 名称仍保留继承自上游的 `aether-*` 前缀，这不影响使用；重命名会破坏已部署实例，暂不进行。
+
+## 快速开始
+
+### 前置条件
+
+Docker 与 Docker Compose；PostgreSQL 与 Redis 由仓库内的 Compose 文件一并拉起。
+
+### 1. 构建镜像
+
+Arca 目前**没有发布预构建镜像或 Release 产物**，需要自行构建：
 
 ```bash
-# 1. 克隆代码
 git clone https://github.com/Becomingw/Arca.git
 cd Arca
+docker build --build-arg AETHER_BUILD_VERSION=arca-dev \
+  -f Dockerfile.app.local -t arca:local .
+```
 
-# 2. 配置环境变量
+### 2. 配置
+
+```bash
 cp .env.example .env
-# .env 包含数据库、JWT 和数据加密密钥，先限制为仅当前用户可读写
-chmod 600 .env
-# 生成 JWT / 加密 / Postgres / Redis 独立随机密钥，并填入 .env
-./generate_keys.sh
-# 编辑 .env 设置 ADMIN_PASSWORD
+chmod 600 .env          # .env 包含数据库、JWT 与加密密钥
+./generate_keys.sh      # 生成 JWT / 加密 / Postgres / Redis 独立随机密钥并写入 .env
+# 编辑 .env：至少设置 ADMIN_PASSWORD，并设置 APP_IMAGE=arca:local
+```
 
-# 3. 在 .env 中设置自行构建的 APP_IMAGE，然后部署（PostgreSQL + Redis）
+### 3. 启动
+
+```bash
 docker compose up -d
 ```
 
-### 一键安装与 Nightly（上游 Aether 流程）
+服务默认监听 `8084` 端口。打开 `http://localhost:8084`，使用 `.env` 中的 `ADMIN_USERNAME` / `ADMIN_PASSWORD` 登录，然后在管理控制台依次添加提供商、模型与 API Key。
 
-> **注意**：`install.sh` 默认从上游 `fawney19/Aether` 下载制品，Nightly 也是上游发布的镜像与 Release，二者都**不包含 Arca 的修改**。Arca 发布自己的制品之前，请使用上面的自建镜像方式。以下命令保留为上游参考。
+升级现有部署时不要替换已生成的密钥。数据库结构会在启动时自动迁移，需要先检查时可使用 `make db-status`。
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/fawney19/Aether/main/install.sh | sudo bash -s -- --mode compose
-```
+### 本地开发
 
-原生 Linux systemd / macOS launchd 安装需先准备 PostgreSQL，将连接串通过 `DATABASE_URL` 传给安装进程，并选择 `--mode single-node`；不再自动创建本地数据库文件。
-
-#### Nightly（上游每日 main 构建）
-
-Nightly workflow 每天从 `main` 的固定 commit 构建并发布滚动的 GitHub Release `nightly`，同时推送多架构 GHCR 镜像 `ghcr.io/fawney19/aether:nightly`。Nightly 是预发布版本，适合验证最新代码，不保证与正式版相同的稳定性。滚动 Release 需要仓库保持关闭 GitHub Release immutability。
-
-安装最新 nightly（PostgreSQL + Redis）：
+依赖 Docker、Rust（版本见 [`rust-toolchain.toml`](rust-toolchain.toml)）、Node.js 与 make。首次启动前在 `.env` 中设置 `ADMIN_PASSWORD`。
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fawney19/Aether/main/install.sh | sudo bash -s -- --mode compose --channel nightly
+make dev            # 后端 + 前端 Vite dev server；缺少 Postgres/Redis 时自动拉起
+make dev-backend    # 仅后端
+make dev-frontend   # 仅前端
+make db-status      # 查看数据库迁移状态
+make db-prepare     # 预先执行迁移与回填
 ```
 
-Docker Compose 用户可在部署目录的 `.env` 中设置 `APP_IMAGE=ghcr.io/fawney19/aether:nightly`，然后运行 `./update.sh` 获取下一次 nightly。二进制部署请沿用已有 PostgreSQL 环境配置，并使用 `--mode single-node --channel nightly` 重新运行安装脚本升级；当前管理后台的在线更新列表只跟踪正式版/RC/Beta，不会自动提示下一次 nightly。
+## 文档
 
-## 本地开发
+| 主题 | 文档 |
+| --- | --- |
+| 配置与环境变量、S3 备份恢复 | [docs/configuration.md](docs/configuration.md) |
+| Arca 版本说明与自建镜像 | [docs/ARCA.md](docs/ARCA.md) |
+| Linux 客户端一键接入 | [docs/operations/linux-client-setup.md](docs/operations/linux-client-setup.md) |
+| 内部网关模式（用户/组授权） | [docs/operations/internal-gateway.md](docs/operations/internal-gateway.md) |
+| 管理 MCP | [docs/operations/agent-mcp.md](docs/operations/agent-mcp.md) |
+| 路由与故障转移 | [docs/operations/routing-failover.md](docs/operations/routing-failover.md) |
+| 模型兼容性测试 | [docs/operations/model-compatibility.md](docs/operations/model-compatibility.md) |
+| Responses WebSocket 模式 | [docs/WebSocket-Mode.md](docs/WebSocket-Mode.md) |
+| Embeddings / Rerank | [embeddings](docs/api/embeddings.md) · [rerank](docs/api/rerank.md) |
+| 格式转换契约与字段覆盖 | [passthrough 契约](docs/api/format-passthrough-contract.md) · [字段矩阵](docs/api/format-field-coverage-matrix.md) · [接口定义](docs/api/provider-interface-definitions.md) |
+| Redis 运行时手册 | [docs/operations/redis-runtime-runbook.md](docs/operations/redis-runtime-runbook.md) |
+| TLS 指纹采集 | [docs/operations/tls-fingerprint-capture.md](docs/operations/tls-fingerprint-capture.md) |
+| Tunnel 代理节点 | [apps/aether-tunnel/README.md](apps/aether-tunnel/README.md) |
+| 全部运维文档 | [docs/operations/](docs/operations/) |
 
-依赖 Docker、Rust toolchain、Node.js 和 make。
-首次启动前需要在 `.env` 中设置 `ADMIN_PASSWORD`，用于创建本地管理员。
+## 状态
 
-```bash
-make dev
-```
+- 项目仍在快速演进，行为与接口可能变化；升级前请阅读 [docs/ARCA.md](docs/ARCA.md) 中的版本说明。
+- 目前仅发布源码。部署流程、安装脚本与 Nightly 中指向上游 Aether 的部分不包含 Arca 的修改。
+- 配置项统一使用 `ARCA_` 前缀；旧的 `AETHER_*` / `AFSSR_*` 仍兼容，启动时会打印弃用警告。
 
-`make dev` 会同时启动后端 `aether-gateway` 和前端 `frontend` 的 Vite dev server。需要单独启动时可使用 `make dev-backend` 或 `make dev-frontend`。
-Postgres / Redis 本地依赖未就绪时，`make dev` 会自动执行 `docker compose up -d postgres redis`。
-`make dev` 会先完成后端编译，再开始计算服务健康检查超时。数据库 schema 和必要的派生数据准备也会在启动时自动完成；通常不需要手动区分 migration 与 backfill。升级不会主动重写或清除已有业务历史记录，新写入会直接遵循当前的数据持久化策略。排查或部署前预执行时可使用：
+## 参与贡献
 
-```bash
-make db-status
-make db-prepare
-```
+欢迎提交 Issue 与 Pull Request。开发环境、检查与测试命令见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-## Codex 远程协同
+## 许可证与致谢
 
-`aether-vscodex/` 是独立的 VS Code Codex 协同模块：同步模式跟随 VS Code 官方 Codex 面板当前会话且不另起进程；异步模式使用独立 app-server，让浏览器自行列出、恢复、新建和切换会话。两种模式都能从本机 URL 或 Aether 云端查看输出、发送消息和处理授权，模块内的 Vue 前端提供中英文界面。
+Arca 基于 [Aether](https://github.com/fawney19/Aether) 开发，原 Aether 及其贡献者的版权与署名保留，本仓库不是 Aether 官方版本。
 
-安装、云端配对和安全边界请参阅 [`aether-vscodex/README.md`](aether-vscodex/README.md)。
+本项目沿用原有的 [Aether 非商业开源许可证](LICENSE)：允许个人学习研究、教育机构、非盈利组织及企业内部非盈利性质的使用；**禁止用于盈利目的**，分发须使用相同许可条款，且不得再许可。更名不改变许可条件，也不授予商业使用权。
 
-## Arca Tunnel (可选)
+需要商业许可请联系原版权持有人（Aether 作者）：
 
-Arca Tunnel 是配套的正向代理节点，部署在海外 VPS 上，为墙内的 Arca 实例中转 API 流量。
-
-- Docker Compose 部署或下载预编译二进制直接运行
-- 提供 macOS/Linux 与 Windows 一键脚本，自动下载最新 `tunnel-v*` 制品并向现有 `aether-tunnel.toml` 追加 `[[servers]]`
-- 通过 `aether-tunnel setup` 完成交互式配置，自动注册为系统服务
-- 详细文档见 [apps/aether-tunnel/README.md](apps/aether-tunnel/README.md)
-
-## API 文档
-
-- Embeddings: [OpenAI compatible `POST /v1/embeddings`](docs/api/embeddings.md)
-- Rerank: [OpenAI/Jina compatible `POST /v1/rerank`](docs/api/rerank.md)
-- Responses WebSocket mode: [protocol and Arca behavior](docs/WebSocket-Mode.md)
-- WebSocket probes: [Codex](docs/operations/codex-responses-websocket-probe.md) · [OpenAI Responses](docs/operations/openai-responses-websocket-probe.md)
-
-## 环境变量
-
-> 配置项统一使用 `ARCA_` 前缀。旧的 `AETHER_*` / `AFSSR_*` 名称仍可使用，启动时会打印一次弃用警告；同名时 `ARCA_*` 优先。构建参数 `AETHER_BUILD_VERSION` / `AETHER_BUILD_TYPE` 与测试用的 `*_TEST_DATABASE_URL` 暂保持原名。
-
-- `APP_PORT`：`aether-gateway` 唯一监听端口，固定绑定 `0.0.0.0:${APP_PORT}`
-- `DATABASE_URL`：PostgreSQL 连接串，例如 `postgresql://USER:PASSWORD@HOST:5432/aether`
-- `ARCA_GATEWAY_DATA_POSTGRES_MIN_CONNECTIONS` / `ARCA_GATEWAY_DATA_POSTGRES_MAX_CONNECTIONS`：数据库连接池手动覆盖值；未配置时 PostgreSQL 按每核 `4` 条自动推导，总池范围为 `32-100`。该预算按进程计算，多实例部署应按数据库连接上限显式分配
-- `ARCA_GATEWAY_MAX_IN_FLIGHT_REQUESTS`：单实例请求并发上限；未配置时按 CPU 自动推导（基础范围 `512-65536`），低文件描述符预算时会进一步下调
-- `ARCA_GATEWAY_REQUEST_BODY_BUFFER_BUDGET_MB`：单实例同时读取和解压请求体的加权内存预算，默认 `256MB`
-- `ARCA_GATEWAY_REQUEST_BODY_READ_TIMEOUT_MS`：可选的请求体完整读取超时；默认或显式设为 `0` 时关闭，非零值限制在 `1000-600000ms`
-- `ARCA_MAX_REQUEST_BODY_MB`：单请求解压后请求体上限，默认 `256MB`；显式设为 `0` 表示不再收紧默认值，但仍受 `256MB` 安全硬上限约束
-- `ARCA_MAX_INTERNAL_BUFFERED_BODY_MB`：heartbeat、管理探测等内部整包响应体上限，默认 `64MB`；显式设为 `0` 表示不再收紧默认值，但仍受 `256MB` 安全硬上限约束
-- `ARCA_TUNNEL_NODE_STATUS_QUEUE_CAPACITY`：隧道节点状态上报队列容量，默认 `1024`；满载时拒绝新事件，避免控制面故障导致无界内存增长
-- `ARCA_TUNNEL_RELAY_ALLOW_PRIVATE_TARGETS`：跨网关 owner relay 解析到私有/保留地址时的显式运维开关，默认关闭；仅当多网关 relay URL 是受控的内网 HTTPS 地址时设置为 `true`。它不改变普通 provider 请求的 DNS/代理策略，也不允许明文 HTTP 非 loopback relay
-- `ARCA_TUNNEL_RELAY_PRIVATE_HOST_ALLOWLIST`：更窄的 owner relay 私网例外，填写逗号分隔的精确主机名（例如 `gateway-a.internal,gateway-b.internal`，忽略大小写和末尾点）；仅这些主机解析出的私有地址会被允许，并且请求仍使用解析后地址 pin。不要填写通配符或 `.internal` 这类后缀
-- `ARCA_INTERNAL_GATEWAY_AUTH_SECRET`：旧版 `/api/internal/gateway/*` 高权限控制面的独立 HMAC 密钥，至少 `32` 字节；未配置时该控制面返回 `404`。不要复用 JWT、数据加密或 tunnel relay 密钥，多节点必须使用同一值及共享 Redis 防重放
-- `ARCA_GATEWAY_SECURITY_CACHE_TTL_MS`：IP 黑白名单本地缓存时间，默认 `1000ms`，写操作会主动失效相关缓存
-- `ARCA_MAX_REDACTED_SYNC_RESPONSE_BODY_MB`：PII 恢复同步响应缓冲上限，默认 `64MB`；显式设为 `0` 表示不再收紧默认值，但仍受 `256MB` 安全硬上限约束
-- `REDIS_URL`：Redis 连接串；仅 Postgres + Redis 的 Docker Compose 部署需要配置
-- `ARCA_RUNTIME_BACKEND=memory|redis`：运行时缓存/协调后端。配置 Redis 时使用 `redis`，否则使用 `memory`；多节点部署和需要跨 gateway 重启恢复 OpenAI Responses continuation history 的部署必须使用共享 Redis
-- `ARCA_GATEWAY_DATABASE_MODE=auto|verify-only`：数据库启动策略，默认 `auto`，自动完成挂起的 schema migration 和 backfill；`verify-only` 仅检查并在数据库落后时拒绝启动
-- `ARCA_GATEWAY_AUTO_PREPARE_DATABASE`：旧版兼容开关；新配置请使用 `ARCA_GATEWAY_DATABASE_MODE`
-- `JWT_SECRET_KEY` / `ENCRYPTION_KEY`：认证和敏感数据加密所需密钥
-- `ARCA_BACKUP_ENCRYPTION_KEY`：推荐的 S3 备份独立加密密钥；缺省回退到 `ENCRYPTION_KEY`。新备份使用带 key ID 的 AES-256-GCM v2 envelope，轮换前必须保留旧密钥
-- `API_KEY_PREFIX`：用户和管理员新建 API Key 时使用的前缀，默认 `sk`
-- `ADMIN_USERNAME` / `ADMIN_PASSWORD` / `ADMIN_EMAIL`：首次启动时自举首个本地管理员；`install.sh` 会提示输入管理员密码
-- `CORS_ORIGINS` / `CORS_ALLOW_CREDENTIALS`：前端跨域来源控制；如果要跨域带登录 Cookie，`CORS_ORIGINS` 不能写 `*`
-- `RUST_LOG`：Rust 日志过滤，例如 `aether_gateway=info`、`aether_gateway=debug,sqlx=warn`
-- `DB_PASSWORD` / `REDIS_PASSWORD`：Docker Compose 后端密码，首次安装时分别随机生成；手工部署必须替换示例占位值，不要互相复用
-
-### S3 备份离线恢复
-
-先从 S3 下载完整的 `.json.zst.aes256gcm` 对象，再使用原始的完整 S3 object key 做认证解密。恢复工具只验证并输出本地 JSON，不会直接写数据库；数据库导入仍应在维护窗口通过管理端完成。
-
-```bash
-ARCA_BACKUP_ENCRYPTION_KEY='原备份密钥' \
-  cargo run -p aether-gateway --bin aether-backup-restore -- \
-  --input ./backup.json.zst.aes256gcm \
-  --object-key 'aether/backups/aether-data-backup-20260822-010000.json.zst.aes256gcm' \
-  --output ./restored-backup.json
-```
-
-工具默认拒绝覆盖，输出采用原子写并在 Unix 上设置为 `0600`；Unix 可用 `--overwrite` 原子替换，Windows 为避免非原子删除窗口会要求选择新输出路径。密钥不能作为命令行参数。可使用 `ARCA_BACKUP_ENCRYPTION_KEY`、兼容用 `ARCA_GATEWAY_DATA_ENCRYPTION_KEY` / `ENCRYPTION_KEY`、受保护的 `--key-file`，或 `ARCA_BACKUP_KEYRING_FILE`。Keyring JSON 格式为 `{"version":1,"keys":["当前或历史 v2 secret"],"legacy_v1":["旧 v1 secret"]}`；条目也可写成 `{"secret":"..."}`（兼容字段名 `key`）。也可由 `ARCA_BACKUP_HISTORICAL_KEYS_JSON` 提供同一结构。密钥文件必须是非符号链接的普通文件，Unix 下权限需为 `0600` 或更严格。
-
-默认限制密文为 `512MiB`、解压后 JSON 为 `1GiB`，可通过受限的 `--max-encrypted-mib` / `--max-json-mib` 调整。网关最多扫描同一备份前缀下 10,000 个对象，并且不会自动删除 S3 对象：`backup_s3_retention_count` 只用于报告超出保留数量的清理候选。旧明文备份在创建并验证加密副本后仍会保留，必须通过 bucket lifecycle 或支持版本条件的外部清理工具移除；启用 Versioning 时还需清理 noncurrent versions，Object Lock/retention 可能阻止物理删除。
-
----
-
-## 许可证
-
-本项目采用 [Aether 非商业开源许可证](LICENSE)。允许个人学习、教育研究、非盈利组织及企业内部非盈利性质的使用；禁止用于盈利目的。商业使用请联系获取商业许可。
-
-## 联系原作者（Aether，商业许可咨询）
+<details>
+<summary>原作者联系方式</summary>
 
 <p align="center">
-  <img src="docs/author/qq_qrcode.jpg" width="200" alt="QQ二维码">
+  <img src="docs/author/qq_qrcode.jpg" width="200" alt="QQ 二维码">
   &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="docs/author/qrcode_1770574997172.jpg" width="200" alt="QQ群二维码">
+  <img src="docs/author/qrcode_1770574997172.jpg" width="200" alt="QQ 群二维码">
 </p>
 
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=Becomingw/Arca&type=date&legend=top-left)](https://www.star-history.com/?repos=Becomingw%2FArca&type=date&legend=top-left)
+</details>
