@@ -233,3 +233,80 @@ columns = ["issue_id"]
 references_table = "feedback_issues"
 references_columns = ["id"]
 on_delete = "cascade"
+
+[table.feedback_notifications]
+domain = "feedback"
+order = 30
+primary_key = ["id"]
+
+[[table.feedback_notifications.columns]]
+name = "id"
+type = "int64"
+auto_increment = true
+
+[[table.feedback_notifications.columns]]
+name = "user_id"
+type = "text_id"
+length = 36
+
+[[table.feedback_notifications.columns]]
+name = "kind"
+type = "text"
+length = 16
+
+[[table.feedback_notifications.columns]]
+name = "issue_id"
+type = "text_id"
+length = 36
+
+[[table.feedback_notifications.columns]]
+name = "event_seq"
+type = "int64"
+
+[[table.feedback_notifications.columns]]
+name = "actor_id"
+type = "text_id"
+length = 36
+nullable = true
+
+[[table.feedback_notifications.columns]]
+name = "snippet"
+type = "long_text"
+
+[[table.feedback_notifications.columns]]
+name = "created_at"
+type = "unix_seconds"
+
+[[table.feedback_notifications.columns]]
+name = "read_at"
+type = "unix_seconds"
+nullable = true
+
+[[table.feedback_notifications.uniques]]
+name = "uq_feedback_notification"
+columns = ["user_id", "issue_id", "event_seq", "kind"]
+
+[[table.feedback_notifications.indexes]]
+name = "idx_feedback_notifications_user"
+columns = ["user_id", "id"]
+
+[[table.feedback_notifications.foreign_keys]]
+name = "fk_feedback_notifications_user_id"
+columns = ["user_id"]
+references_table = "users"
+references_columns = ["id"]
+on_delete = "cascade"
+
+[[table.feedback_notifications.foreign_keys]]
+name = "fk_feedback_notifications_issue_id"
+columns = ["issue_id"]
+references_table = "feedback_issues"
+references_columns = ["id"]
+on_delete = "cascade"
+
+[[table.feedback_notifications.foreign_keys]]
+name = "fk_feedback_notifications_actor_id"
+columns = ["actor_id"]
+references_table = "users"
+references_columns = ["id"]
+on_delete = "set_null"

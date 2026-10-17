@@ -217,6 +217,7 @@
                 @apply-update="handleApplySystemUpdate"
                 @rollback="handleRollback"
               />
+              <NotificationBell />
               <LanguageSwitcher />
               <ThemeModeButton />
               <button
@@ -403,6 +404,7 @@
             @apply-update="handleApplySystemUpdate"
             @rollback="handleRollback"
           />
+          <NotificationBell />
           <LanguageSwitcher />
           <!-- Theme Toggle -->
           <ThemeModeButton />
@@ -509,6 +511,7 @@ import AppShell from '@/components/layout/AppShell.vue'
 import SidebarNav from '@/components/layout/SidebarNav.vue'
 import HeaderLogo from '@/components/HeaderLogo.vue'
 import LanguageSwitcher from '@/components/common/LanguageSwitcher.vue'
+import NotificationBell from '@/components/common/NotificationBell.vue'
 import ThemeModeButton from '@/components/common/ThemeModeButton.vue'
 import UpdateDialog from '@/components/common/UpdateDialog.vue'
 import VersionButton from '@/components/common/VersionButton.vue'

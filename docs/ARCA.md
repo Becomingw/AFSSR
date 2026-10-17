@@ -95,7 +95,7 @@ for coverage, authentication, proxy configuration, limits and verification.
 
 ## User Feedback
 
-User feedback is an issue-style workflow with private ownership, shared administrator
+Discussion & feedback is an issue-style workflow: every topic and reply is public to logged-in users, anyone can be @mentioned (with an in-app notification; administrators also get e-mail), topics and replies can be edited and deleted, and administrators share
 replies, resolve/close/reopen actions and an append-only history. MCP exposes the
 same administrative workflow, with feedback-only key scopes, incremental polling,
 version checks and idempotent commands. See [Feedback operations](operations/feedback.md).

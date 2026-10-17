@@ -201,6 +201,28 @@ impl AppState {
             .map_err(|err| GatewayError::Internal(err.to_string()))
     }
 
+    pub(crate) async fn find_user_auth_by_username(
+        &self,
+        username: &str,
+    ) -> Result<Option<aether_data::repository::users::StoredUserAuthRecord>, GatewayError> {
+        #[cfg(test)]
+        if let Some(store) = self.auth_user_store.as_ref() {
+            if let Some(user) = store
+                .lock()
+                .expect("auth user store should lock")
+                .values()
+                .find(|user| user.username == username)
+                .cloned()
+            {
+                return Ok(Some(user));
+            }
+        }
+        self.data
+            .find_user_auth_by_username(username)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
     pub(crate) async fn find_user_auth_by_identifier(
         &self,
         identifier: &str,

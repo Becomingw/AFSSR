@@ -77,7 +77,7 @@ Arca is derived from [Aether](https://github.com/fawney19/Aether), with delibera
 
 ### Feedback-driven, agent-assisted operations
 
-- **User feedback**: an issue-style discussion with category, description, linked model or request, public or private visibility and an append-only history; users and administrators each have their own entry. See [feedback](docs/operations/feedback.md).
+- **Discussion & feedback**: issue-style topics with category, description, linked model or request and an append-only history. Everything is public to logged-in users, `@name` notifies anyone in the app (administrators also by e-mail), and a focus mode helps with long posts. See [feedback](docs/operations/feedback.md).
 - **Request diagnostics**: feedback can carry a request-diagnostics summary, which requires both feedback-write and monitoring-read permission. See [request diagnostics](docs/operations/request-diagnostics.md).
 - **Admin MCP**: a built-in `/mcp` endpoint covers users, grants, providers, models, routing, pools, statistics and health; writes are preview-only by default and execution needs a single-use confirmation ticket bound to the exact arguments. See [Agent MCP](docs/operations/agent-mcp.md).
 - **Bounded agents**: no arbitrary URL, SQL, shell or container commands; credential plaintext is never returned; logs and announcements are treated as untrusted data; feedback content is never execution authority.

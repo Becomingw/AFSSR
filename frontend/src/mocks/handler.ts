@@ -1671,6 +1671,16 @@ const mockHandlers: Record<string, (config: AxiosRequestConfig) => Promise<Axios
     return createMockResponse({ items: MOCK_ANNOUNCEMENTS.filter(a => a.is_active), total: MOCK_ANNOUNCEMENTS.filter(a => a.is_active).length, unread_count: 1 })
   },
 
+  'GET /api/feedback/notifications': async () => {
+    await delay()
+    return createMockResponse({ items: [], unread_count: 0, next_before: null })
+  },
+
+  'POST /api/feedback/notifications/read': async () => {
+    await delay()
+    return createMockResponse({ unread_count: 0 })
+  },
+
   'GET /api/announcements/users/me/unread-count': async () => {
     await delay()
     return createMockResponse({ unread_count: 1 })

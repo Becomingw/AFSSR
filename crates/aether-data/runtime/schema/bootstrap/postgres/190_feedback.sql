@@ -36,3 +36,16 @@ CREATE INDEX idx_feedback_activity ON feedback_issues(activity_seq);
 CREATE INDEX idx_feedback_public_activity ON feedback_issues(visibility,activity_seq);
 CREATE INDEX idx_feedback_pinned ON feedback_issues(pinned_at);
 CREATE INDEX idx_feedback_events_issue ON feedback_events(issue_id,seq);
+CREATE TABLE feedback_notifications (
+    id BIGSERIAL PRIMARY KEY,
+    user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind VARCHAR(16) NOT NULL CHECK (kind IN ('mention')),
+    issue_id VARCHAR(36) NOT NULL REFERENCES feedback_issues(id) ON DELETE CASCADE,
+    event_seq BIGINT NOT NULL,
+    actor_id VARCHAR(36) REFERENCES users(id) ON DELETE SET NULL,
+    snippet TEXT NOT NULL CHECK (octet_length(snippet) <= 2000),
+    created_at BIGINT NOT NULL,
+    read_at BIGINT,
+    CONSTRAINT uq_feedback_notification UNIQUE (user_id, issue_id, event_seq, kind)
+);
+CREATE INDEX idx_feedback_notifications_user ON feedback_notifications(user_id, id);

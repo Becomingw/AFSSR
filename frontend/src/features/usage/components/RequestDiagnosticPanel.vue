@@ -38,7 +38,7 @@
           :disabled="diagnostic.state === 'unknown'"
           @click="emit('feedback', diagnostic.request_id)"
         >
-          <MessagesSquare class="mr-2 h-4 w-4" />{{ admin ? '关联反馈' : '带入反馈' }}
+          <MessagesSquare class="mr-2 h-4 w-4" />{{ admin ? '关联主题' : '带入主题' }}
         </Button>
       </div>
     </div>

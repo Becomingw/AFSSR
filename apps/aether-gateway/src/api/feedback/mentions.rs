@@ -4,10 +4,13 @@
 use crate::email_delivery::{read_smtp_delivery_config, send_smtp_email, ComposedEmail};
 use crate::email_layout::{render_email_html, EmailBlock};
 use crate::AppState;
-use aether_data::repository::feedback::{extract_mentions, is_feedback_admin, FeedbackSummary};
+use aether_data::repository::feedback::{
+    extract_mentions, is_feedback_admin, FeedbackSummary, NewFeedbackNotification,
+    NOTIFICATION_SNIPPET_CHARS,
+};
 use std::collections::BTreeSet;
 
-const MAX_MENTIONS_PER_MESSAGE: usize = 10;
+const MAX_MENTIONS_PER_MESSAGE: usize = 20;
 const MAX_QUOTED_CHARS: usize = 3000;
 
 /// How the mentioning text was written; only used for the wording of the e-mail.
@@ -57,7 +60,7 @@ fn status_label(value: &str) -> &str {
 
 fn source_phrase(source: MentionSource) -> &'static str {
     match source {
-        MentionSource::Created => "在新建的反馈中",
+        MentionSource::Created => "在新发起的主题中",
         MentionSource::Reply => "在回复中",
         MentionSource::StatusComment => "在状态变更说明中",
     }
@@ -97,7 +100,7 @@ pub(super) fn build_mention_email(
     ];
     if let Some(link) = &link {
         blocks.push(EmailBlock::Button {
-            label: "查看反馈".into(),
+            label: "查看主题".into(),
             url: link.clone(),
         });
     }
@@ -108,17 +111,17 @@ pub(super) fn build_mention_email(
     );
     let html = render_email_html(
         app_name,
-        &format!("你在反馈 #{} 中被提到", issue.number),
+        &format!("你在主题 #{} 中被提到", issue.number),
         &intro,
         &blocks,
-        "你收到此邮件，是因为你是管理员并在反馈中被 @ 提到。此邮件由系统自动发送，请勿直接回复。",
+        "你收到此邮件，是因为你是管理员并在讨论与反馈中被 @ 提到。此邮件由系统自动发送，请勿直接回复。",
     );
     let mut text = format!(
         "{intro}\n\n主题：{title}\n编号：#{}\n\n{quoted}\n",
         issue.number
     );
     if let Some(link) = link {
-        text.push_str(&format!("\n查看反馈：{link}\n"));
+        text.push_str(&format!("\n查看主题：{link}\n"));
     }
     MentionEmail {
         subject,
@@ -137,7 +140,27 @@ fn skip_mention(issue: &FeedbackSummary, name: &str, reason: &'static str) {
     );
 }
 
-/// Best-effort: failures are logged and never affect the feedback mutation that triggered them.
+struct Recipient {
+    id: String,
+    name: String,
+    email: Option<String>,
+    is_admin: bool,
+}
+
+/// Only administrators with an address are mailed; everyone else only gets the in-app notification.
+fn email_decision(recipient: &Recipient) -> Result<(), &'static str> {
+    if !recipient.is_admin {
+        Err("email_is_admin_only")
+    } else if recipient.email.is_none() {
+        Err("no_email_address")
+    } else {
+        Ok(())
+    }
+}
+
+/// Anybody active can be mentioned. Everyone mentioned gets an in-app notification; only
+/// administrators additionally get an e-mail. Best-effort: failures are logged and never affect
+/// the feedback mutation that triggered them.
 pub(super) async fn notify_mentions(
     state: AppState,
     issue: FeedbackSummary,
@@ -150,6 +173,85 @@ pub(super) async fn notify_mentions(
         .take(MAX_MENTIONS_PER_MESSAGE)
         .collect();
     if names.is_empty() {
+        return;
+    }
+    let actor_name = match state.find_user_auth_by_id(&actor_id).await {
+        Ok(Some(user)) => user.username,
+        _ => "某位用户".to_string(),
+    };
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    let mut recipients: Vec<Recipient> = Vec::new();
+    for name in names {
+        let Ok(Some(user)) = state.find_user_auth_by_username(&name).await else {
+            skip_mention(&issue, &name, "user_not_found");
+            continue;
+        };
+        let is_admin = is_feedback_admin(&user.role);
+        let reason = if user.id == actor_id {
+            Some("mentioned_self")
+        } else if !user.is_active || user.is_deleted {
+            Some("user_inactive")
+        } else if issue.visibility != "public"
+            && !is_admin
+            && issue.owner_id.as_deref() != Some(user.id.as_str())
+        {
+            // Topics created before private ones were removed keep their old audience.
+            Some("cannot_view_topic")
+        } else if !seen.insert(user.id.clone()) {
+            Some("already_notified")
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            skip_mention(&issue, &name, reason);
+            continue;
+        }
+        recipients.push(Recipient {
+            id: user.id.clone(),
+            name,
+            email: user
+                .email
+                .as_deref()
+                .map(str::trim)
+                .filter(|email| !email.is_empty())
+                .map(str::to_owned),
+            is_admin,
+        });
+    }
+    if recipients.is_empty() {
+        return;
+    }
+
+    // In-app notifications for everybody mentioned.
+    if let Some(repository) = state.data.feedback_repository() {
+        let snippet = truncate_chars(&content, NOTIFICATION_SNIPPET_CHARS);
+        let items: Vec<NewFeedbackNotification> = recipients
+            .iter()
+            .map(|recipient| NewFeedbackNotification {
+                user_id: recipient.id.clone(),
+                issue_id: issue.id.clone(),
+                event_seq: issue.activity_seq,
+                actor_id: Some(actor_id.clone()),
+                snippet: snippet.clone(),
+            })
+            .collect();
+        if let Err(err) = repository.add_notifications(&items).await {
+            tracing::warn!(error = ?err, issue_id = %issue.id, "failed to store mention notifications");
+        }
+    }
+
+    // E-mail is reserved for administrators.
+    let mailable: Vec<&Recipient> = recipients
+        .iter()
+        .filter(|recipient| match email_decision(recipient) {
+            Ok(()) => true,
+            Err(reason) => {
+                skip_mention(&issue, &recipient.name, reason);
+                false
+            }
+        })
+        .collect();
+    if mailable.is_empty() {
         return;
     }
     let smtp = match read_smtp_delivery_config(&state).await {
@@ -168,35 +270,11 @@ pub(super) async fn notify_mentions(
             return;
         }
     };
-    let actor_name = match state.data.find_user_auth_by_id(&actor_id).await {
-        Ok(Some(user)) => user.username,
-        _ => "某位用户".to_string(),
-    };
     let base_url = public_base_url();
-    let mut notified: BTreeSet<String> = BTreeSet::new();
-    for name in names {
-        let Ok(Some(user)) = state.data.find_user_auth_by_username(&name).await else {
-            skip_mention(&issue, &name, "user_not_found");
+    for recipient in mailable {
+        let Some(to_email) = recipient.email.clone() else {
             continue;
         };
-        let email = user.email.as_deref().map(str::trim).unwrap_or_default();
-        let reason = if user.id == actor_id {
-            Some("mentioned_self")
-        } else if !user.is_active || user.is_deleted {
-            Some("user_inactive")
-        } else if !is_feedback_admin(&user.role) {
-            Some("not_an_administrator")
-        } else if email.is_empty() {
-            Some("no_email_address")
-        } else if !notified.insert(user.id.clone()) {
-            Some("already_notified")
-        } else {
-            None
-        };
-        if let Some(reason) = reason {
-            skip_mention(&issue, &name, reason);
-            continue;
-        }
         let message = build_mention_email(
             &smtp.from_name,
             &actor_name,
@@ -208,7 +286,7 @@ pub(super) async fn notify_mentions(
         if let Err(err) = send_smtp_email(
             smtp.clone(),
             ComposedEmail {
-                to_email: email.to_string(),
+                to_email,
                 subject: message.subject,
                 html_body: message.html,
                 text_body: message.text,
@@ -216,12 +294,12 @@ pub(super) async fn notify_mentions(
         )
         .await
         {
-            tracing::warn!(error = ?err, issue_id = %issue.id, mentioned = %user.id, "failed to send feedback mention e-mail");
+            tracing::warn!(error = ?err, issue_id = %issue.id, mentioned = %recipient.id, "failed to send feedback mention e-mail");
         } else {
             tracing::info!(
                 event_name = "feedback_mention_email_sent",
                 issue_id = %issue.id,
-                mentioned = %user.id,
+                mentioned = %recipient.id,
                 "feedback mention e-mail sent"
             );
         }
@@ -288,8 +366,31 @@ mod tests {
             "hi",
             None,
         );
-        assert!(!email.html.contains("查看反馈"));
-        assert!(!email.text.contains("查看反馈"));
+        assert!(!email.html.contains("查看主题"));
+        assert!(!email.text.contains("查看主题"));
+    }
+
+    #[test]
+    fn only_administrators_with_an_address_are_mailed() {
+        let recipient = |is_admin: bool, email: Option<&str>| Recipient {
+            id: "u".into(),
+            name: "n".into(),
+            email: email.map(str::to_owned),
+            is_admin,
+        };
+        assert_eq!(email_decision(&recipient(true, Some("a@b.co"))), Ok(()));
+        assert_eq!(
+            email_decision(&recipient(false, Some("a@b.co"))),
+            Err("email_is_admin_only")
+        );
+        assert_eq!(
+            email_decision(&recipient(true, None)),
+            Err("no_email_address")
+        );
+        assert_eq!(
+            email_decision(&recipient(false, None)),
+            Err("email_is_admin_only")
+        );
     }
 
     #[test]

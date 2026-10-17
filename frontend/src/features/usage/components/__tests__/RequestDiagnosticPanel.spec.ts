@@ -21,7 +21,7 @@ describe('safe request diagnosis', () => {
   it('is explicit and presents missing/running evidence as unknown, never successful', async () => {
     expect(mocks.get).not.toHaveBeenCalled(); read(); await flush()
     expect(root.textContent).toContain('最终结果未知'); expect(root.textContent).toContain('未知')
-    const feedback = [...root.querySelectorAll('button')].find(b => b.textContent?.includes('带入反馈'))!
+    const feedback = [...root.querySelectorAll('button')].find(b => b.textContent?.includes('带入主题'))!
     expect(feedback.disabled).toBe(true); expect(mocks.feedback).not.toHaveBeenCalled()
     props.requestId = 'req-2'; await flush(); expect(root.textContent).not.toContain('最终结果未知')
     mocks.get.mockResolvedValue({ ...result, request_id: 'req-2', state: 'in_progress' }); read(); await flush()
@@ -37,7 +37,7 @@ describe('safe request diagnosis', () => {
   })
   it('hands off only the request ID after an explicit feedback action', async () => {
     mocks.get.mockResolvedValue({ ...result, state: 'failed' }); read(); await flush()
-    const button = [...root.querySelectorAll('button')].find(b => b.textContent?.includes('带入反馈'))!; button.click()
+    const button = [...root.querySelectorAll('button')].find(b => b.textContent?.includes('带入主题'))!; button.click()
     expect(mocks.feedback).toHaveBeenCalledWith('req-1')
     expect(mocks.get).toHaveBeenCalledWith(false, 'req-1', expect.any(AbortSignal))
   })

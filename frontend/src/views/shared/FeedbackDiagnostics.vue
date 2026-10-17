@@ -18,7 +18,7 @@
         variant="outline"
         @click="emit('create')"
       >
-        带入新反馈
+        带入新主题
       </Button>
     </div>
   </details>

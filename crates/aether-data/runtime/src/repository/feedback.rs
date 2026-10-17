@@ -15,6 +15,34 @@ struct Store {
     events: Vec<FeedbackEvent>,
     commands: HashMap<(String, String), (String, FeedbackMutation)>,
     seq: i64,
+    notifications: Vec<StoredNotification>,
+    notification_seq: i64,
+}
+struct StoredNotification {
+    id: i64,
+    user_id: String,
+    issue_id: String,
+    event_seq: i64,
+    actor_id: Option<String>,
+    snippet: String,
+    created_at: i64,
+    read_at: Option<i64>,
+}
+impl Store {
+    /// Unread notifications of issues that still exist.
+    fn unread_for(&self, user_id: &str) -> i64 {
+        self.notifications
+            .iter()
+            .filter(|n| {
+                n.user_id == user_id && n.read_at.is_none() && self.issue_exists(&n.issue_id)
+            })
+            .count() as i64
+    }
+    fn issue_exists(&self, issue_id: &str) -> bool {
+        self.issues
+            .get(issue_id)
+            .is_some_and(|issue| issue.summary.deleted_at.is_none())
+    }
 }
 impl std::fmt::Debug for InMemoryFeedbackRepository {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -118,6 +146,116 @@ impl FeedbackRepository for InMemoryFeedbackRepository {
             .values()
             .find(|issue| issue.summary.number == number && issue.summary.deleted_at.is_none())
             .map(|issue| issue.summary.id.clone()))
+    }
+    async fn add_notifications(
+        &self,
+        items: &[NewFeedbackNotification],
+    ) -> Result<(), FeedbackError> {
+        let mut store = self.inner.lock().map_err(|_| FeedbackError::Unavailable)?;
+        let now = chrono::Utc::now().timestamp();
+        for item in items {
+            if store.notifications.iter().any(|n| {
+                n.user_id == item.user_id
+                    && n.issue_id == item.issue_id
+                    && n.event_seq == item.event_seq
+            }) {
+                continue;
+            }
+            store.notification_seq += 1;
+            let id = store.notification_seq;
+            store.notifications.push(StoredNotification {
+                id,
+                user_id: item.user_id.clone(),
+                issue_id: item.issue_id.clone(),
+                event_seq: item.event_seq,
+                actor_id: item.actor_id.clone(),
+                snippet: item.snippet.chars().take(500).collect(),
+                created_at: now,
+                read_at: None,
+            });
+        }
+        // Keep only the newest MAX_NOTIFICATIONS_PER_USER per user.
+        let users: std::collections::HashSet<String> =
+            items.iter().map(|i| i.user_id.clone()).collect();
+        for user in users {
+            let mut mine: Vec<i64> = store
+                .notifications
+                .iter()
+                .filter(|n| n.user_id == user)
+                .map(|n| n.id)
+                .collect();
+            mine.sort_unstable_by(|a, b| b.cmp(a));
+            if let Some(&cutoff) = mine.get(MAX_NOTIFICATIONS_PER_USER) {
+                store
+                    .notifications
+                    .retain(|n| n.user_id != user || n.id > cutoff);
+            }
+        }
+        Ok(())
+    }
+    async fn list_notifications(
+        &self,
+        user_id: &str,
+        unread_only: bool,
+        before: Option<i64>,
+        limit: usize,
+    ) -> Result<NotificationPage, FeedbackError> {
+        let store = self.inner.lock().map_err(|_| FeedbackError::Unavailable)?;
+        let limit = limit.clamp(1, 100);
+        let mut rows: Vec<&StoredNotification> = store
+            .notifications
+            .iter()
+            .filter(|n| {
+                n.user_id == user_id
+                    && store.issue_exists(&n.issue_id)
+                    && (!unread_only || n.read_at.is_none())
+                    && before.is_none_or(|b| n.id < b)
+            })
+            .collect();
+        rows.sort_by_key(|n| std::cmp::Reverse(n.id));
+        let has_more = rows.len() > limit;
+        let items: Vec<FeedbackNotification> = rows
+            .into_iter()
+            .take(limit)
+            .map(|n| {
+                let issue = &store.issues[&n.issue_id];
+                FeedbackNotification {
+                    id: n.id,
+                    kind: "mention".into(),
+                    issue_id: n.issue_id.clone(),
+                    issue_number: issue.summary.number,
+                    issue_title: issue.summary.title.clone(),
+                    event_seq: n.event_seq,
+                    actor_username: n.actor_id.clone(),
+                    snippet: n.snippet.clone(),
+                    created_at: n.created_at,
+                    read_at: n.read_at,
+                }
+            })
+            .collect();
+        let next_before = has_more.then(|| items.last().map(|n| n.id)).flatten();
+        Ok(NotificationPage {
+            items,
+            unread_count: store.unread_for(user_id),
+            next_before,
+        })
+    }
+    async fn mark_notifications_read(
+        &self,
+        user_id: &str,
+        ids: Option<&[i64]>,
+    ) -> Result<i64, FeedbackError> {
+        let mut store = self.inner.lock().map_err(|_| FeedbackError::Unavailable)?;
+        let now = chrono::Utc::now().timestamp();
+        for n in store.notifications.iter_mut() {
+            if n.user_id == user_id
+                && n.read_at.is_none()
+                && ids.is_none_or(|ids| ids.contains(&n.id))
+            {
+                n.read_at = Some(now);
+            }
+        }
+        Ok(store.unread_for(user_id))
     }
     async fn create(
         &self,
@@ -682,6 +820,144 @@ mod tests {
             .unwrap()
             .issue;
         assert!(next.summary.number > number);
+    }
+
+    fn mention(user: &str, issue: &str, seq: i64) -> NewFeedbackNotification {
+        NewFeedbackNotification {
+            user_id: user.into(),
+            issue_id: issue.into(),
+            event_seq: seq,
+            actor_id: Some("author".into()),
+            snippet: format!("mentioned at {seq}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn notifications_are_per_user_idempotent_ordered_and_read_state_is_private() {
+        let r = InMemoryFeedbackRepository::default();
+        let issue = r
+            .create("author", "user", &create_input())
+            .await
+            .unwrap()
+            .issue;
+        let id = issue.summary.id.clone();
+        r.add_notifications(&[mention("bob", &id, 1), mention("carol", &id, 1)])
+            .await
+            .unwrap();
+        // The same (user, issue, event) twice is one notification; a later event is another.
+        r.add_notifications(&[mention("bob", &id, 1), mention("bob", &id, 2)])
+            .await
+            .unwrap();
+        let page = r.list_notifications("bob", false, None, 20).await.unwrap();
+        assert_eq!(page.unread_count, 2);
+        assert_eq!(
+            page.items.iter().map(|n| n.event_seq).collect::<Vec<_>>(),
+            vec![2, 1],
+            "newest first"
+        );
+        assert_eq!(page.items[0].issue_number, issue.summary.number);
+        assert_eq!(page.items[0].issue_title, issue.summary.title);
+        assert_eq!(
+            r.list_notifications("dave", false, None, 20)
+                .await
+                .unwrap()
+                .items
+                .len(),
+            0
+        );
+
+        // Paging walks back through older ones.
+        let first = r.list_notifications("bob", false, None, 1).await.unwrap();
+        assert_eq!(first.items.len(), 1);
+        let older = r
+            .list_notifications("bob", false, first.next_before, 1)
+            .await
+            .unwrap();
+        assert_eq!(older.items[0].event_seq, 1);
+        assert_eq!(older.next_before, None);
+
+        // Reading is per user and per id.
+        let bobs = page.items[0].id;
+        assert_eq!(
+            r.mark_notifications_read("carol", Some(&[bobs]))
+                .await
+                .unwrap(),
+            1,
+            "carol cannot read bob's"
+        );
+        assert_eq!(
+            r.list_notifications("bob", false, None, 20)
+                .await
+                .unwrap()
+                .unread_count,
+            2
+        );
+        assert_eq!(
+            r.mark_notifications_read("bob", Some(&[bobs]))
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            r.list_notifications("bob", true, None, 20)
+                .await
+                .unwrap()
+                .items
+                .len(),
+            1
+        );
+        assert_eq!(r.mark_notifications_read("bob", None).await.unwrap(), 0);
+        assert_eq!(
+            r.list_notifications("bob", false, None, 20)
+                .await
+                .unwrap()
+                .items
+                .len(),
+            2,
+            "read ones stay"
+        );
+    }
+
+    #[tokio::test]
+    async fn notifications_keep_only_the_newest_per_user_and_ignore_deleted_topics() {
+        let r = InMemoryFeedbackRepository::default();
+        let issue = r
+            .create("author", "user", &create_input())
+            .await
+            .unwrap()
+            .issue;
+        let id = issue.summary.id.clone();
+        let many: Vec<_> = (1..=(MAX_NOTIFICATIONS_PER_USER as i64 + 5))
+            .map(|seq| mention("bob", &id, seq))
+            .collect();
+        r.add_notifications(&many).await.unwrap();
+        let mut seen = 0;
+        let mut before = None;
+        let mut newest = 0;
+        loop {
+            let page = r
+                .list_notifications("bob", false, before, 100)
+                .await
+                .unwrap();
+            if before.is_none() {
+                newest = page.items[0].event_seq;
+            }
+            seen += page.items.len();
+            before = page.next_before;
+            if before.is_none() {
+                break;
+            }
+        }
+        assert_eq!(seen, MAX_NOTIFICATIONS_PER_USER);
+        assert_eq!(newest, MAX_NOTIFICATIONS_PER_USER as i64 + 5);
+
+        // Deleting the topic hides its notifications and removes them from the unread count.
+        let delete = cmd(1, serde_json::json!({"action":"delete_issue"}));
+        r.command(&id, "author", "user", true, &delete)
+            .await
+            .unwrap();
+        let page = r.list_notifications("bob", false, None, 100).await.unwrap();
+        assert_eq!((page.items.len(), page.unread_count), (0, 0));
     }
 
     #[tokio::test]

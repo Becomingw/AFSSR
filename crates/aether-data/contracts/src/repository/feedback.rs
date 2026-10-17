@@ -86,6 +86,40 @@ pub struct FeedbackDetail {
     pub next_event_cursor: Option<i64>,
     pub has_more: bool,
 }
+/// An in-app notification. Only `mention` exists today: somebody wrote `@you` in a topic or reply.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FeedbackNotification {
+    pub id: i64,
+    pub kind: String,
+    pub issue_id: String,
+    pub issue_number: i64,
+    pub issue_title: String,
+    /// Event that carries the mention (`activity_seq` of the issue when it was written).
+    pub event_seq: i64,
+    pub actor_username: Option<String>,
+    pub snippet: String,
+    pub created_at: i64,
+    pub read_at: Option<i64>,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewFeedbackNotification {
+    pub user_id: String,
+    pub issue_id: String,
+    pub event_seq: i64,
+    pub actor_id: Option<String>,
+    pub snippet: String,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NotificationPage {
+    pub items: Vec<FeedbackNotification>,
+    pub unread_count: i64,
+    /// Pass as `before` to read the next (older) page.
+    pub next_before: Option<i64>,
+}
+/// Notifications kept per user; older ones are dropped when new ones arrive.
+pub const MAX_NOTIFICATIONS_PER_USER: usize = 200;
+pub const NOTIFICATION_SNIPPET_CHARS: usize = 200;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateFeedback {
@@ -405,6 +439,28 @@ pub trait FeedbackRepository: Send + Sync + std::fmt::Debug {
     /// Resolves a human-friendly issue number (`#N`) to the issue id. No visibility is checked
     /// here: callers must read the issue through `detail`, which enforces it.
     async fn id_for_number(&self, number: i64) -> Result<Option<String>, FeedbackError>;
+    /// Records mention notifications (best effort for callers). Repeating the same
+    /// (user, issue, event) is ignored, and each user keeps only the newest
+    /// `MAX_NOTIFICATIONS_PER_USER`.
+    async fn add_notifications(
+        &self,
+        items: &[NewFeedbackNotification],
+    ) -> Result<(), FeedbackError>;
+    /// Newest first. Notifications of deleted issues are not returned or counted.
+    async fn list_notifications(
+        &self,
+        user_id: &str,
+        unread_only: bool,
+        before: Option<i64>,
+        limit: usize,
+    ) -> Result<NotificationPage, FeedbackError>;
+    /// Marks the given notifications (or all, with `None`) of this user as read and returns what
+    /// is still unread. Other users' notifications are never touched.
+    async fn mark_notifications_read(
+        &self,
+        user_id: &str,
+        ids: Option<&[i64]>,
+    ) -> Result<i64, FeedbackError>;
     async fn create(
         &self,
         owner: &str,

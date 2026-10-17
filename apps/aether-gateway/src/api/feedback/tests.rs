@@ -96,7 +96,8 @@ async fn feedback_http_owner_isolation_admin_replies_and_full_lifecycle() {
         .json()
         .await
         .unwrap();
-    assert_eq!(list["total"], 0);
+    // Everything is public now: another user sees the topic, but cannot manage its lifecycle.
+    assert_eq!(list["total"], 1);
     assert_eq!(
         client
             .get(format!("{url}/api/feedback/{id}"))
@@ -105,19 +106,20 @@ async fn feedback_http_owner_isolation_admin_replies_and_full_lifecycle() {
             .await
             .unwrap()
             .status(),
-        StatusCode::NOT_FOUND
+        StatusCode::OK
     );
     let command = json!({"action":"reply","content":"Synthetic reply","expected_version":1,"client_request_id":uuid::Uuid::new_v4().to_string()});
+    let others_resolve = json!({"action":"set_status","status":"resolved","comment":"not mine to close","expected_version":1,"client_request_id":uuid::Uuid::new_v4().to_string()});
     assert_eq!(
         client
             .post(format!("{url}/api/feedback/{id}/commands"))
             .headers(other.clone())
-            .json(&command)
+            .json(&others_resolve)
             .send()
             .await
             .unwrap()
             .status(),
-        StatusCode::NOT_FOUND
+        StatusCode::FORBIDDEN
     );
     assert_eq!(
         client
@@ -317,7 +319,7 @@ async fn feedback_http_user_and_actual_admin_create_as_themselves_on_authorized_
         assert_eq!(response.status(), StatusCode::CREATED, "{role}");
         let data: Value = response.json().await.unwrap();
         assert_eq!(data["issue"]["owner_id"], *owner_id);
-        assert_eq!(data["issue"]["visibility"], "private");
+        assert_eq!(data["issue"]["visibility"], "public");
         let detail = repo
             .detail(data["issue"]["id"].as_str().unwrap(), None, 0, 100)
             .await
@@ -429,7 +431,7 @@ async fn feedback_http_user_and_actual_admin_create_as_themselves_on_authorized_
             assert_eq!(response.status(), StatusCode::CREATED);
             let data: Value = response.json().await.unwrap();
             assert_eq!(data["issue"]["owner_id"], *owner_id);
-            assert_eq!(data["issue"]["visibility"], "private");
+            assert_eq!(data["issue"]["visibility"], "public");
             assert!(data["issue"]["description"]
                 .as_str()
                 .unwrap()
@@ -474,271 +476,138 @@ fn feedback_scope_is_narrow_and_new_scope_is_not_inherited_by_legacy_keys() {
 }
 
 #[tokio::test]
-async fn feedback_http_public_participation_private_event_projection_and_owner_final_solution() {
+async fn feedback_http_everything_is_public_and_private_requests_are_rejected() {
     let state = AppState::new().unwrap().with_data_state_for_tests(
         crate::data::GatewayDataState::disabled()
             .with_feedback_repository_for_tests(Arc::new(InMemoryFeedbackRepository::default())),
     );
-    let (_, owner) = user(&state, "user", "public-owner").await;
-    let (_, participant) = user(&state, "user", "participant").await;
-    let (_, spectator) = user(&state, "user", "spectator").await;
-    let (_, admin) = user(&state, "service_admin", "actual-admin").await;
+    let (_, owner) = user(&state, "user", "owner").await;
+    let (_, other) = user(&state, "user", "other").await;
+    let (_, admin) = user(&state, "admin", "root").await;
     let (url, task) = server(state).await;
     let client = reqwest::Client::builder().no_proxy().build().unwrap();
-    let private: Value = client
-        .post(format!("{url}/api/feedback"))
-        .headers(owner.clone())
-        .json(&input())
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    assert_eq!(private["issue"]["visibility"], "private");
-    let private_id = private["issue"]["id"].as_str().unwrap();
-    let mut submission = input();
-    submission["visibility"] = json!("public");
-    let public: Value = client
-        .post(format!("{url}/api/feedback"))
-        .headers(owner.clone())
-        .json(&submission)
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    assert_eq!(public["issue"]["visibility"], "public");
-    let id = public["issue"]["id"].as_str().unwrap();
-    assert_eq!(
-        client
-            .get(format!("{url}/api/feedback/{id}"))
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        StatusCode::UNAUTHORIZED
-    );
-    let list: Value = client
-        .get(format!("{url}/api/feedback"))
-        .headers(participant.clone())
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    assert_eq!(list["total"], 1);
-    assert_eq!(list["items"][0]["id"], id);
-    assert_eq!(
-        client
-            .get(format!("{url}/api/feedback/{private_id}"))
-            .headers(participant.clone())
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        StatusCode::NOT_FOUND
-    );
-    assert_eq!(
-        client
-            .get(format!("{url}/api/feedback?owner_id=any"))
-            .headers(participant.clone())
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        StatusCode::FORBIDDEN
-    );
-    let command = |version: i64, action: &str, content: &str, status: &str, visibility: &str| {
-        let mut value = json!({"expected_version":version,"client_request_id":uuid::Uuid::new_v4().to_string(),"action":action,"visibility":visibility});
-        if action == "reply" {
-            value["content"] = json!(content);
-        } else {
-            value["status"] = json!(status);
-            value["comment"] = json!(content);
+    let post = |path: String, headers: &HeaderMap, body: Value| {
+        let client = client.clone();
+        let headers = headers.clone();
+        async move {
+            let response = client
+                .post(path)
+                .headers(headers)
+                .json(&body)
+                .send()
+                .await
+                .unwrap();
+            (response.status(), response.json::<Value>().await.unwrap())
         }
-        value
     };
-    let reply = command(1, "reply", "private participant body", "", "private");
+    let get = |path: String, headers: &HeaderMap| {
+        let client = client.clone();
+        let headers = headers.clone();
+        async move {
+            let response = client.get(path).headers(headers).send().await.unwrap();
+            (response.status(), response.json::<Value>().await.unwrap())
+        }
+    };
+    let command = |version: i64, extra: Value| {
+        let mut body = json!({"expected_version":version,"client_request_id":uuid::Uuid::new_v4().to_string()});
+        body.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        body
+    };
+
+    // A topic created without any visibility is public; asking for a private one is refused.
+    let (status, created) = post(format!("{url}/api/feedback"), &owner, input()).await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(created["issue"]["visibility"], "public");
+    let id = created["issue"]["id"].as_str().unwrap().to_string();
+    let mut private = input();
+    private["visibility"] = json!("private");
+    let (status, refused) = post(format!("{url}/api/feedback"), &owner, private).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+    let mut explicit = input();
+    explicit["visibility"] = json!("public");
     assert_eq!(
-        client
-            .post(format!("{url}/api/feedback/{id}/commands"))
-            .headers(participant.clone())
-            .json(&reply)
-            .send()
+        post(format!("{url}/api/feedback"), &owner, explicit)
             .await
-            .unwrap()
-            .status(),
-        StatusCode::OK
+            .0,
+        StatusCode::CREATED
     );
-    let hidden: Value = client
-        .get(format!(
-            "{url}/api/feedback/{id}?after_event={}&limit=1",
-            public["issue"]["activity_seq"]
-        ))
-        .headers(spectator.clone())
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    assert!(hidden["events"].as_array().unwrap().is_empty());
-    assert!(
-        hidden["next_event_cursor"].as_i64().unwrap()
-            > public["issue"]["activity_seq"].as_i64().unwrap()
-    );
-    for headers in [&owner, &participant, &admin] {
-        let detail: Value = client
-            .get(format!("{url}/api/feedback/{id}"))
-            .headers(headers.clone())
-            .send()
-            .await
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
-        assert!(detail.to_string().contains("private participant body"));
-    }
-    let visible = command(2, "reply", "public participant body", "", "public");
-    assert_eq!(
-        client
-            .post(format!("{url}/api/feedback/{id}/commands"))
-            .headers(participant.clone())
-            .json(&visible)
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        StatusCode::OK
-    );
-    for status in ["resolved", "closed", "open"] {
-        let forbidden = command(3, "set_status", "Not authorized", status, "public");
-        assert_eq!(
-            client
-                .post(format!("{url}/api/feedback/{id}/commands"))
-                .headers(participant.clone())
-                .json(&forbidden)
-                .send()
-                .await
-                .unwrap()
-                .status(),
-            StatusCode::FORBIDDEN
-        );
-    }
-    for comment in ["", "  "] {
-        let invalid = command(3, "set_status", comment, "resolved", "private");
-        assert_eq!(
-            client
-                .post(format!("{url}/api/feedback/{id}/commands"))
-                .headers(owner.clone())
-                .json(&invalid)
-                .send()
-                .await
-                .unwrap()
-                .status(),
-            StatusCode::BAD_REQUEST
-        );
-    }
-    let solve = command(
-        3,
-        "set_status",
-        "final private solution",
-        "resolved",
-        "private",
-    );
-    assert_eq!(
-        client
-            .post(format!("{url}/api/feedback/{id}/commands"))
-            .headers(owner.clone())
-            .json(&solve)
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        StatusCode::OK
-    );
-    let detail: Value = client
-        .get(format!("{url}/api/feedback/{id}"))
-        .headers(spectator.clone())
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    assert_eq!(detail["issue"]["status"], "resolved");
-    assert!(!detail.to_string().contains("private participant body"));
-    assert!(!detail.to_string().contains("final private solution"));
-    assert!(detail.to_string().contains("public participant body"));
-    let status = detail["events"]
+
+    // Anybody logged in reads it and takes part; nobody can make a reply private.
+    let commands = format!("{url}/api/feedback/{id}/commands");
+    let (status, _) = get(format!("{url}/api/feedback/{id}"), &other).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, refused) = post(
+        commands.clone(),
+        &other,
+        command(
+            1,
+            json!({"action":"reply","content":"psst","visibility":"private"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+    let (status, replied) = post(
+        commands.clone(),
+        &other,
+        command(1, json!({"action":"reply","content":"Visible to everyone"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{replied}");
+    let (_, detail) = get(format!("{url}/api/feedback/{id}"), &owner).await;
+    let reply = detail["events"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|e| e["kind"] == "status")
+        .find(|e| e["kind"] == "reply")
         .unwrap();
-    assert_eq!(status["visibility"], "private");
-    assert!(status["content"].is_null());
-    let close = command(4, "set_status", "Closed", "closed", "private");
-    assert_eq!(
-        client
-            .post(format!("{url}/api/feedback/{id}/commands"))
-            .headers(owner.clone())
-            .json(&close)
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        StatusCode::FORBIDDEN
+    assert_eq!(reply["visibility"], "public");
+    assert_eq!(reply["content"], "Visible to everyone");
+
+    // Lifecycle rules are unchanged: the owner resolves with a public solution, only an
+    // administrator closes.
+    let version = replied["issue"]["version"].as_i64().unwrap();
+    let (status, _) = post(
+        commands.clone(),
+        &other,
+        command(
+            version,
+            json!({"action":"set_status","status":"resolved","comment":"not yours"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, resolved) = post(
+        commands.clone(),
+        &owner,
+        command(
+            version,
+            json!({"action":"set_status","status":"resolved","comment":"Final solution for all"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resolved}");
+    let (_, seen_by_other) = get(format!("{url}/api/feedback/{id}"), &other).await;
+    assert!(
+        seen_by_other.to_string().contains("Final solution for all"),
+        "solutions are public too"
     );
-    assert_eq!(
-        client
-            .post(format!("{url}/api/admin/feedback/{id}/commands"))
-            .headers(admin.clone())
-            .json(&close)
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        StatusCode::OK
-    );
-    let reopen = command(5, "set_status", "Reopening", "open", "public");
-    assert_eq!(
-        client
-            .post(format!("{url}/api/feedback/{id}/commands"))
-            .headers(owner.clone())
-            .json(&reopen)
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        StatusCode::OK
-    );
-    // Explicit public events never bypass the enclosing private issue's access check.
-    let public_private_reply = command(1, "reply", "not globally readable", "", "public");
-    assert_eq!(
-        client
-            .post(format!("{url}/api/admin/feedback/{private_id}/commands"))
-            .headers(admin)
-            .json(&public_private_reply)
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        StatusCode::OK
-    );
-    assert_eq!(
-        client
-            .get(format!("{url}/api/feedback/{private_id}"))
-            .headers(spectator)
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        StatusCode::NOT_FOUND
-    );
+    let version = resolved["issue"]["version"].as_i64().unwrap();
+    let (status, _) = post(
+        commands.clone(),
+        &owner,
+        command(version, json!({"action":"set_status","status":"closed"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, closed) = post(
+        format!("{url}/api/admin/feedback/{id}/commands"),
+        &admin,
+        command(version, json!({"action":"set_status","status":"closed"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{closed}");
     task.abort();
 }
 
@@ -755,7 +624,7 @@ async fn feedback_http_numbers_pinning_and_mentionable_administrators() {
     let (url, task) = server(state).await;
     let client = reqwest::Client::builder().no_proxy().build().unwrap();
 
-    // The first issue is #1 and can be opened by number; private issues stay hidden from others.
+    // The first topic is #1 and can be opened by number, by anybody; unknown numbers are 404.
     let created: Value = client
         .post(format!("{url}/api/feedback"))
         .headers(owner.clone())
@@ -768,28 +637,27 @@ async fn feedback_http_numbers_pinning_and_mentionable_administrators() {
         .unwrap();
     assert_eq!(created["issue"]["number"], 1);
     let id = created["issue"]["id"].as_str().unwrap().to_string();
-    let by_number = client
-        .get(format!("{url}/api/feedback/1"))
-        .headers(owner.clone())
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(by_number.status(), StatusCode::OK);
-    let by_number: Value = by_number.json().await.unwrap();
-    assert_eq!(by_number["issue"]["id"], id);
-    for number in ["1", "999"] {
-        assert_eq!(
-            client
-                .get(format!("{url}/api/feedback/{number}"))
-                .headers(stranger.clone())
-                .send()
-                .await
-                .unwrap()
-                .status(),
-            StatusCode::NOT_FOUND,
-            "number {number} must not reveal a private issue or whether it exists"
-        );
+    for headers in [&owner, &stranger] {
+        let by_number = client
+            .get(format!("{url}/api/feedback/1"))
+            .headers(headers.clone())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(by_number.status(), StatusCode::OK);
+        let by_number: Value = by_number.json().await.unwrap();
+        assert_eq!(by_number["issue"]["id"], id);
     }
+    assert_eq!(
+        client
+            .get(format!("{url}/api/feedback/999"))
+            .headers(stranger.clone())
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
 
     // Only administrators can pin, and the pin is visible in the list and history.
     let pin = |expected_version: i64, pinned: bool| json!({"action":"set_pinned","pinned":pinned,"expected_version":expected_version,"client_request_id":uuid::Uuid::new_v4().to_string()});
@@ -852,17 +720,20 @@ async fn feedback_http_numbers_pinning_and_mentionable_administrators() {
 }
 
 #[test]
-fn mentionable_names_are_active_administrators_sorted_and_deduplicated() {
+fn mentionable_names_are_all_active_users_sorted_and_deduplicated() {
     let users = [
-        ("root", "admin", true),
-        ("alice", "user", true),
-        ("Zed", "service_admin", true),
-        ("gone", "admin", false),
-        ("auditor", "audit_admin", true),
-        ("ROOT", "user_admin", true),
-        ("guest", "super", true),
+        ("root", true),
+        ("alice", true),
+        ("Zed", true),
+        ("gone", false),
+        ("ROOT", true),
+        ("bob", true),
     ];
-    assert_eq!(mentionable_names(users), vec!["auditor", "root", "Zed"]);
+    assert_eq!(
+        mentionable_names(users),
+        vec!["alice", "bob", "root", "Zed"],
+        "everybody active can be mentioned; disabled users cannot"
+    );
 }
 
 #[tokio::test]
@@ -1023,5 +894,173 @@ async fn feedback_http_owner_and_admin_edit_and_delete_issues_and_replies() {
             assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
         }
     }
+    task.abort();
+}
+
+#[tokio::test]
+async fn feedback_http_mentions_notify_everyone_but_only_administrators_get_e_mail() {
+    let state = AppState::new().unwrap().with_data_state_for_tests(
+        crate::data::GatewayDataState::disabled()
+            .with_feedback_repository_for_tests(Arc::new(InMemoryFeedbackRepository::default())),
+    );
+    let (_, author) = user(&state, "user", "author").await;
+    let (_, friend) = user(&state, "user", "friend").await;
+    let (_, stranger) = user(&state, "user", "stranger").await;
+    let (url, task) = server(state).await;
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let notifications = |headers: HeaderMap, query: &str| {
+        let client = client.clone();
+        let url = format!("{url}/api/feedback/notifications{query}");
+        async move {
+            let response = client.get(url).headers(headers).send().await.unwrap();
+            (response.status(), response.json::<Value>().await.unwrap())
+        }
+    };
+    // Mentioning is asynchronous (best effort), so give the background task a moment.
+    let wait_for = |headers: HeaderMap, expected: usize| {
+        let notifications = &notifications;
+        async move {
+            for _ in 0..50 {
+                let (_, page) = notifications(headers.clone(), "").await;
+                if page["items"].as_array().unwrap().len() >= expected {
+                    return page;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            panic!("notification never arrived");
+        }
+    };
+
+    let mut topic = input();
+    topic["description"] =
+        json!("Hello @friend, can you look? (also @nobody-here and me@example.com)");
+    let created: Value = client
+        .post(format!("{url}/api/feedback"))
+        .headers(author.clone())
+        .json(&topic)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let id = created["issue"]["id"].as_str().unwrap().to_string();
+
+    let page = wait_for(friend.clone(), 1).await;
+    assert_eq!(page["unread_count"], 1);
+    let item = &page["items"][0];
+    assert_eq!(item["kind"], "mention");
+    assert_eq!(item["issue_id"], id);
+    assert_eq!(item["issue_number"], 1);
+    assert!(item["snippet"].as_str().unwrap().contains("can you look"));
+    assert!(item["read_at"].is_null());
+    // Unknown names, e-mail addresses and the author themself get nothing; nor does a bystander.
+    assert_eq!(
+        notifications(stranger.clone(), "").await.1["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+    assert_eq!(
+        notifications(author.clone(), "").await.1["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+
+    // Reading is per user: marking my notification read does not touch anybody else's.
+    let notification_id = item["id"].as_i64().unwrap();
+    let mark = |headers: HeaderMap, body: Value| {
+        let client = client.clone();
+        let url = format!("{url}/api/feedback/notifications/read");
+        async move {
+            let response = client
+                .post(url)
+                .headers(headers)
+                .json(&body)
+                .send()
+                .await
+                .unwrap();
+            (response.status(), response.json::<Value>().await.unwrap())
+        }
+    };
+    let (status, _) = mark(stranger.clone(), json!({"ids":[notification_id]})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        notifications(friend.clone(), "").await.1["unread_count"],
+        1,
+        "someone else cannot mark mine"
+    );
+    for bad in [
+        json!({}),
+        json!({"ids":[]}),
+        json!({"ids":[0]}),
+        json!({"all":true,"ids":[1]}),
+        json!({"x":1}),
+    ] {
+        assert_eq!(mark(friend.clone(), bad).await.0, StatusCode::BAD_REQUEST);
+    }
+    let (status, left) = mark(friend.clone(), json!({"ids":[notification_id]})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(left["unread_count"], 0);
+    let (_, unread) = notifications(friend.clone(), "?unread=1").await;
+    assert_eq!(unread["items"].as_array().unwrap().len(), 0);
+    assert_eq!(
+        notifications(friend.clone(), "").await.1["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1,
+        "read ones stay listed"
+    );
+
+    // A reply that mentions someone notifies them too; "all" marks everything read.
+    let (_, reply) = {
+        let response = client
+            .post(format!("{url}/api/feedback/{id}/commands"))
+            .headers(stranger.clone())
+            .json(&json!({"action":"reply","content":"cc @friend and @author","expected_version":1,"client_request_id":uuid::Uuid::new_v4().to_string()}))
+            .send()
+            .await
+            .unwrap();
+        (response.status(), response.json::<Value>().await.unwrap())
+    };
+    assert_eq!(reply["issue"]["version"], 2);
+    let page = wait_for(friend.clone(), 2).await;
+    assert_eq!(page["unread_count"], 1);
+    assert_eq!(
+        wait_for(author.clone(), 1).await["items"][0]["issue_number"],
+        1
+    );
+    let (_, left) = mark(friend.clone(), json!({"all":true})).await;
+    assert_eq!(left["unread_count"], 0);
+
+    // Deleting the topic removes its notifications from view.
+    let (status, _) = {
+        let response = client
+            .post(format!("{url}/api/feedback/{id}/commands"))
+            .headers(author.clone())
+            .json(&json!({"action":"delete_issue","expected_version":2,"client_request_id":uuid::Uuid::new_v4().to_string()}))
+            .send()
+            .await
+            .unwrap();
+        (response.status(), response.json::<Value>().await.unwrap())
+    };
+    assert_eq!(status, StatusCode::OK);
+    let (_, after) = notifications(author.clone(), "").await;
+    assert_eq!(after["items"].as_array().unwrap().len(), 0);
+    assert_eq!(after["unread_count"], 0);
+
+    assert_eq!(
+        client
+            .get(format!("{url}/api/feedback/notifications"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
     task.abort();
 }

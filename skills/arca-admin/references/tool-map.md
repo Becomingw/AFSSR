@@ -20,7 +20,7 @@ Impact decides the approval you need: **Read** is free; **Change** needs preview
 | `arca_request_diagnostics` | `GET /api/admin/monitoring/diagnostics/{request_id}` | Read | Read allowlisted request stage evidence and a safe diagnostic summary. |
 | `arca_leaderboard_overview` | `GET /api/admin/stats/leaderboard/overview` | Read | Read internal usage rankings, model popularity, estimated active minutes, hourly leaders, early birds (first success from 06:00) and night owls ... |
 | `arca_feedback_list` | `GET /api/admin/feedback` | Read | List all user feedback issues. |
-| `arca_feedback_get` | `GET /api/admin/feedback/{issue_id}` | Read | Read a feedback issue including visibility(public/private, default private), current version and authorized event history. |
+| `arca_feedback_get` | `GET /api/admin/feedback/{issue_id}` | Read | Read a feedback issue including visibility(public; topics created before private ones were removed may still be private), current version and authorized event history. |
 | `arca_feedback_create` | `POST /api/admin/feedback` | Change | Create feedback owned by the current authenticated administrator, never a caller-supplied owner. |
 | `arca_feedback_command` | `POST /api/admin/feedback/{issue_id}/commands` | Change | Reply or resolve/close/reopen with current actual administrator authority and feedback write scope. |
 

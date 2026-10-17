@@ -2,7 +2,7 @@ import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { canAccessAdminRole } from '@/config/adminRoles'
-import { listFeedback, getFeedback, createFeedback, commandFeedback, listMentionableAdmins, type FeedbackAction, type FeedbackCategory, type FeedbackDetail, type FeedbackSummary, type FeedbackVisibility } from '@/api/feedback'
+import { listFeedback, getFeedback, createFeedback, commandFeedback, listMentionableAdmins, type FeedbackAction, type FeedbackCategory, type FeedbackDetail, type FeedbackSummary } from '@/api/feedback'
 
 export function useFeedback() {
   const route = useRoute(), router = useRouter(), auth = useAuthStore()
@@ -15,14 +15,14 @@ export function useFeedback() {
   const items = ref<FeedbackSummary[]>([]), detail = ref<FeedbackDetail>()
   const loading = ref(false), detailLoading = ref(false), busy = ref(false), creating = ref(false), closing = ref(false)
   const error = ref(''), notice = ref(''), draftError = ref(''), replyText = ref(''), replyingTo = ref('')
-  const replyVisibility = ref<FeedbackVisibility>('private')
   const replyInput = ref<{ focus: () => void } | null>(null)
   const mentionable = ref<string[]>([])
-  const draft = reactive({ title: '', description: '', category: 'bug' as FeedbackCategory, model: '', request_id: '', visibility: 'private' as FeedbackVisibility })
+  const draft = reactive({ title: '', description: '', category: 'bug' as FeedbackCategory, model: '', request_id: '' })
   const diagnosticId = ref(''), includeDiagnostics = ref(false), attachReply = ref(false)
   const currentUserId = computed(() => auth.user?.id ?? '')
   const canManageIssue = computed(() => Boolean(detail.value && (manager.value || (auth.user?.id && detail.value.issue.owner_id === auth.user.id))))
-  const publicIssue = computed(() => detail.value?.issue.visibility === 'public')
+  // Only topics from before private ones were removed can still be private.
+  const legacyPrivate = computed(() => detail.value?.issue.visibility === 'private')
   function createFromDiagnostic() { if (canCreate.value) { draft.request_id = diagnosticId.value.trim(); includeDiagnostics.value = true; creating.value = true } }
   watch(() => route.query?.request_id, (id) => {
     if (typeof id !== 'string' || !/^[a-zA-Z0-9_.-]{1,128}$/.test(id)) return
@@ -40,8 +40,8 @@ export function useFeedback() {
   }
   function problem(reason: unknown) {
     const code = (reason as { response?: { status?: number } })?.response?.status
-    if (code === 409) return '反馈已被更新，请刷新详情后重试；未覆盖其他人的修改'
-    if (code === 404) return '反馈不存在或你没有查看权限'
+    if (code === 409) return '主题已被更新，请刷新详情后重试；未覆盖其他人的修改'
+    if (code === 404) return '主题不存在或你没有查看权限'
     if (code === 403) return '你没有执行此操作的权限'
     return '操作失败，请检查网络或访问权限后重试'
   }
@@ -57,7 +57,7 @@ export function useFeedback() {
     const generation = ++detailGeneration, id = selectedId.value
     detail.value = undefined; closing.value = false
     if (displayedId !== id) {
-      replyText.value = ''; replyVisibility.value = 'private'; replyingTo.value = ''; attachReply.value = false
+      replyText.value = ''; replyingTo.value = ''; attachReply.value = false
       displayedId = id
     }
     if (!id) { detailLoading.value = false; return }
@@ -72,9 +72,8 @@ export function useFeedback() {
   function filterChanged() { page.value = 0; void loadList() }
   async function openIssue(id: string) { if (!busy.value) await router.push(`${base.value}/${encodeURIComponent(id)}`) }
   async function showList() { if (!busy.value) await router.push(base.value) }
-  async function replyTo(author: string, visibility: FeedbackVisibility) {
+  async function replyTo(author: string) {
     replyingTo.value = author
-    if (visibility !== 'public') replyVisibility.value = 'private'
     if (!replyText.value) replyText.value = `@${author} `
     await nextTick(); replyInput.value?.focus()
   }
@@ -92,21 +91,21 @@ export function useFeedback() {
   }
   async function submit() {
     if (!canCreate.value || busy.value) return
-    const payload = { title: draft.title.trim(), description: draft.description.trim(), category: draft.category, model: draft.model.trim() || undefined, request_id: draft.request_id.trim() || undefined, visibility: draft.visibility, include_diagnostics: includeDiagnostics.value && Boolean(draft.request_id.trim()) }
+    const payload = { title: draft.title.trim(), description: draft.description.trim(), category: draft.category, model: draft.model.trim() || undefined, request_id: draft.request_id.trim() || undefined, include_diagnostics: includeDiagnostics.value && Boolean(draft.request_id.trim()) }
     if (!payload.title || !payload.description) { draftError.value = '请填写标题和问题描述'; return }
     if (new TextEncoder().encode(payload.description).length > 20000) { draftError.value = '描述最多 20,000 字节'; return }
     busy.value = true; draftError.value = ''; notice.value = ''
     try {
       const result = await createFeedback({ ...payload, client_request_id: commandId(payload) }, admin.value)
-      creating.value = false; Object.assign(draft, { title: '', description: '', category: 'bug', model: '', request_id: '', visibility: 'private' })
-      pending = undefined; page.value = 0; status.value = ''; category.value = ''; search.value = ''; notice.value = '反馈已提交'
+      creating.value = false; Object.assign(draft, { title: '', description: '', category: 'bug', model: '', request_id: '' })
+      pending = undefined; page.value = 0; status.value = ''; category.value = ''; search.value = ''; notice.value = '主题已发起'
       await router.push(`${base.value}/${result.issue.id}`); await loadList()
     } catch (reason) { draftError.value = problem(reason) }
     finally { busy.value = false }
   }
   const NOTICES: Record<FeedbackAction['action'], string> = {
-    reply: '回复已发送', set_status: '状态已更新', set_pinned: '状态已更新', edit_issue: '反馈已更新',
-    delete_issue: '反馈已删除', edit_reply: '回复已更新', delete_reply: '回复已删除',
+    reply: '回复已发送', set_status: '状态已更新', set_pinned: '状态已更新', edit_issue: '主题已更新',
+    delete_issue: '主题已删除', edit_reply: '回复已更新', delete_reply: '回复已删除',
   }
   function textOf(action: FeedbackAction) {
     if (action.action === 'reply' || action.action === 'edit_reply') return action.content
@@ -126,7 +125,7 @@ export function useFeedback() {
     if (!detail.value || busy.value || detailLoading.value) return false
     if (new TextEncoder().encode(textOf(action)).length > 20000) { error.value = '内容最多 20,000 字节'; return false }
     const id = selectedId.value
-    const value = { ...action, expected_version: detail.value.issue.version, visibility: publicIssue.value ? replyVisibility.value : 'private' as FeedbackVisibility, ...(action.action === 'reply' && attachReply.value && diagnosticId.value.trim() ? { diagnostic_request_id: diagnosticId.value.trim() } : {}) }
+    const value = { ...action, expected_version: detail.value.issue.version, ...(action.action === 'reply' && attachReply.value && diagnosticId.value.trim() ? { diagnostic_request_id: diagnosticId.value.trim() } : {}) }
     busy.value = true; error.value = ''; notice.value = ''
     let committed = false
     try {
@@ -143,7 +142,7 @@ export function useFeedback() {
         detail.value.issue = result.issue; closing.value = false
         patchReply(action, Math.floor(Date.now() / 1000))
         if (action.action === 'reply' || (action.action === 'set_status' && action.comment?.trim())) {
-          replyText.value = ''; replyingTo.value = ''; replyVisibility.value = 'private'; attachReply.value = false
+          replyText.value = ''; replyingTo.value = ''; attachReply.value = false
         }
         const after = detail.value.has_more ? result.issue.activity_seq - 1 : Math.max(detail.value.next_event_cursor || 0, ...detail.value.events.map(event => event.seq), 0)
         const latest = await getFeedback(admin.value, id, after)
@@ -177,5 +176,5 @@ export function useFeedback() {
   watch(() => [selectedId.value, admin.value], () => { void loadDetail() })
   watch(admin, () => { items.value = []; total.value = 0; page.value = 0; void loadList(); void loadMentionable() })
   onMounted(() => { void refresh(); void loadMentionable() })
-  return { admin, manager, canCreate, selectedId, status, category, search, page, total, items, detail, loading, detailLoading, busy, creating, closing, error, notice, draftError, replyText, replyingTo, replyVisibility, replyInput, mentionable, base, togglePin, draft, diagnosticId, includeDiagnostics, attachReply, canManageIssue, currentUserId, editIssue, deleteIssue, editReply, deleteReply, publicIssue, createFromDiagnostic, loadList, refresh, filterChanged, openIssue, showList, replyTo, moreEvents, submit, reply, resolve, reopen, closeIssue }
+  return { admin, manager, canCreate, selectedId, status, category, search, page, total, items, detail, loading, detailLoading, busy, creating, closing, error, notice, draftError, replyText, replyingTo, replyInput, mentionable, base, togglePin, draft, diagnosticId, includeDiagnostics, attachReply, canManageIssue, currentUserId, editIssue, deleteIssue, editReply, deleteReply, legacyPrivate, createFromDiagnostic, loadList, refresh, filterChanged, openIssue, showList, replyTo, moreEvents, submit, reply, resolve, reopen, closeIssue }
 }

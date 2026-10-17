@@ -56,3 +56,21 @@ CREATE INDEX IF NOT EXISTS idx_feedback_events_issue ON public.feedback_events U
 ALTER TABLE ONLY public.feedback_events ADD CONSTRAINT fk_feedback_events_actor_id FOREIGN KEY (actor_id) REFERENCES public.users(id) ON DELETE SET NULL;
 ALTER TABLE ONLY public.feedback_events ADD CONSTRAINT fk_feedback_events_issue_id FOREIGN KEY (issue_id) REFERENCES public.feedback_issues(id) ON DELETE CASCADE;
 
+CREATE TABLE IF NOT EXISTS public.feedback_notifications (
+    id bigserial NOT NULL,
+    user_id character varying(36) NOT NULL,
+    kind character varying(16) NOT NULL,
+    issue_id character varying(36) NOT NULL,
+    event_seq bigint NOT NULL,
+    actor_id character varying(36),
+    snippet text NOT NULL,
+    created_at bigint NOT NULL,
+    read_at bigint
+);
+
+ALTER TABLE ONLY public.feedback_notifications ADD CONSTRAINT feedback_notifications_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.feedback_notifications ADD CONSTRAINT uq_feedback_notification UNIQUE (user_id, issue_id, event_seq, kind);
+CREATE INDEX IF NOT EXISTS idx_feedback_notifications_user ON public.feedback_notifications USING btree (user_id, id);
+ALTER TABLE ONLY public.feedback_notifications ADD CONSTRAINT fk_feedback_notifications_user_id FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.feedback_notifications ADD CONSTRAINT fk_feedback_notifications_issue_id FOREIGN KEY (issue_id) REFERENCES public.feedback_issues(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.feedback_notifications ADD CONSTRAINT fk_feedback_notifications_actor_id FOREIGN KEY (actor_id) REFERENCES public.users(id) ON DELETE SET NULL;

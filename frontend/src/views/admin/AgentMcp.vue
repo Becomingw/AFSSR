@@ -194,7 +194,7 @@
         ><option value="role">当前角色权限</option><option
           value="feedback"
           :disabled="!config?.read_permissions.includes('admin:feedback:read')"
-        >仅用户反馈</option></select></label>
+        >仅讨论与反馈</option></select></label>
         <div class="space-y-2">
           <label
             for="mcp-key-days"

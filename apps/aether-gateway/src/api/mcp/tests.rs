@@ -1312,7 +1312,7 @@ async fn mcp_feedback_create_is_scoped_confirmed_self_owned_and_diagnostic_safe(
     assert_eq!(schema["properties"]["body"]["additionalProperties"], false);
     assert_eq!(
         schema["properties"]["body"]["properties"]["visibility"]["default"],
-        "private"
+        "public"
     );
     assert_eq!(schema["properties"]["dry_run"]["default"], true);
     let new_body = || json!({"title":"MCP creation","description":"Synthetic only","category":"bug","client_request_id":uuid::Uuid::new_v4().to_string()});
@@ -1388,7 +1388,7 @@ async fn mcp_feedback_create_is_scoped_confirmed_self_owned_and_diagnostic_safe(
         assert_eq!(result["executed"], true);
         assert!(result["trace_id"].is_string());
         assert_eq!(result["data"]["issue"]["owner_id"], p.user_id);
-        assert_eq!(result["data"]["issue"]["visibility"], "private");
+        assert_eq!(result["data"]["issue"]["visibility"], "public");
         let detail = repo
             .detail(
                 result["data"]["issue"]["id"].as_str().unwrap(),
@@ -1488,12 +1488,12 @@ async fn mcp_feedback_create_is_scoped_confirmed_self_owned_and_diagnostic_safe(
         .as_mut()
         .unwrap()
         .push("admin:monitoring:read".into());
-    for visibility in ["private", "public"] {
+    for explicit in [false, true] {
         let mut body = new_body();
         body["request_id"] = json!("fixture-request");
         body["include_diagnostics"] = json!(true);
-        if visibility == "public" {
-            body["visibility"] = json!(visibility);
+        if explicit {
+            body["visibility"] = json!("public");
         }
         let args = json!({"body":body});
         let preview =
@@ -1506,7 +1506,10 @@ async fn mcp_feedback_create_is_scoped_confirmed_self_owned_and_diagnostic_safe(
                 .await;
         assert_eq!(result["status"], 201, "{result}");
         assert_eq!(result["data"]["issue"]["owner_id"], p.user_id);
-        assert_eq!(result["data"]["issue"]["visibility"], visibility);
+        assert_eq!(
+            result["data"]["issue"]["visibility"], "public",
+            "explicit {explicit}"
+        );
         assert!(result["data"]["issue"]["description"]
             .as_str()
             .unwrap()
@@ -1522,11 +1525,8 @@ async fn mcp_feedback_create_is_scoped_confirmed_self_owned_and_diagnostic_safe(
                 100,
             )
             .await;
-        if visibility == "private" {
-            assert!(matches!(viewed, Err(FeedbackError::NotFound)));
-        } else {
-            assert!(viewed.is_ok());
-        }
+        // Public either way, so any logged-in viewer can read what the agent filed.
+        assert!(viewed.is_ok(), "explicit {explicit}");
     }
     let mut invalid_bodies = vec![];
     for field in ["title", "description", "category", "client_request_id"] {
@@ -1606,7 +1606,7 @@ async fn mcp_feedback_visibility_final_solution_and_diagnostic_sharing_use_repos
     let tool = op.tool();
     assert_eq!(
         tool.input_schema["properties"]["body"]["properties"]["visibility"]["default"],
-        "private"
+        "public"
     );
     assert_eq!(
         tool.input_schema["properties"]["body"]["allOf"][0]["then"]["required"],
@@ -1644,7 +1644,11 @@ async fn mcp_feedback_visibility_final_solution_and_diagnostic_sharing_use_repos
             .iter()
             .filter(|e| e.kind == "reply")
             .collect();
-        assert_eq!(replies.len(), usize::from(visibility.is_some()));
+        assert_eq!(
+            replies.len() as i64,
+            version - 1,
+            "every reply is public now"
+        );
         if let Some(reply) = replies.first() {
             assert_eq!(reply.visibility, "public");
             assert!(reply

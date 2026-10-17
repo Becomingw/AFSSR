@@ -102,7 +102,7 @@ export function buildNavigation(options: {
         title: t('nav.group.account'),
         items: [
           { name: '个人资料', href: '/dashboard/settings', icon: UserRound },
-          { name: '反馈讨论', href: '/dashboard/feedback', icon: MessagesSquare },
+          { name: '讨论与反馈', href: '/dashboard/feedback', icon: MessagesSquare },
           { name: t('nav.usageStats'), href: '/dashboard/usage', icon: BarChart3 },
         ]
       }
@@ -110,7 +110,7 @@ export function buildNavigation(options: {
   }
 
   const systemItems: NavItem[] = [
-    { name: '用户反馈', href: '/admin/feedback', icon: MessagesSquare },
+    { name: '讨论与反馈', href: '/admin/feedback', icon: MessagesSquare },
     { name: 'Agent MCP', href: '/admin/mcp', icon: Bot },
     { name: '模型兼容性', href: '/admin/compatibility', icon: SlidersHorizontal },
     { name: t('nav.announcements'), href: '/admin/announcements', icon: Megaphone },

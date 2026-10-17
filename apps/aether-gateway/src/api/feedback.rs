@@ -20,11 +20,26 @@ pub(crate) fn mount_feedback_routes(router: Router<AppState>) -> Router<AppState
             .route("/api/feedback", get(user_request).post(user_request))
             .route("/api/feedback/{id}", get(user_request))
             .route(
+                "/api/feedback/notifications/read",
+                axum::routing::post(user_request),
+            )
+            .route(
                 "/api/feedback/{id}/commands",
                 axum::routing::post(user_request),
             )
             .layer(DefaultBodyLimit::max(64 * 1024)),
     )
+}
+
+/// Topics and replies are always public now. A client that still asks for a private one is told so
+/// instead of silently publishing what it believed to be private.
+fn reject_private(value: &serde_json::Value) -> Option<Response> {
+    (value.get("visibility").and_then(serde_json::Value::as_str) == Some("private")).then(|| {
+        error(
+            StatusCode::BAD_REQUEST,
+            "Private topics and replies no longer exist; everything is public. Omit visibility or send \"public\".",
+        )
+    })
 }
 
 fn error(status: StatusCode, detail: &str) -> Response {
@@ -200,16 +215,20 @@ async fn dispatch(
         suffix.split('/').collect()
     };
     let mentionable = parts == ["mentionable"];
+    let notifications = parts == ["notifications"];
+    let notifications_read = parts == ["notifications", "read"];
     let numbered = parts.first().is_some_and(|id| {
         !id.is_empty() && id.len() <= 9 && id.chars().all(|c| c.is_ascii_digit())
     });
     if parts.len() > 2
         || (!mentionable
+            && !notifications
+            && !notifications_read
             && !numbered
             && parts
                 .first()
                 .is_some_and(|id| uuid::Uuid::parse_str(id).is_err()))
-        || (parts.len() == 2 && parts[1] != "commands")
+        || (parts.len() == 2 && parts[1] != "commands" && !notifications_read)
     {
         return error(StatusCode::NOT_FOUND, "Feedback route not found");
     }
@@ -220,7 +239,13 @@ async fn dispatch(
         );
     };
     if method == Method::GET && mentionable {
-        return list_mentionable_admins(state).await;
+        return list_mentionable_users(state).await;
+    }
+    if (notifications && method != Method::GET) || (notifications_read && method != Method::POST) {
+        return error(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "Feedback method not allowed",
+        );
     }
     // `#12` style numbers resolve to the issue id; visibility is still enforced by the repository.
     let issue_id: String = match parts.first() {
@@ -243,6 +268,8 @@ async fn dispatch(
             "limit",
             "owner_id",
             "after_event",
+            "unread",
+            "before",
         ]
         .contains(&k.as_ref())
             || query.insert(k.into_owned(), v.into_owned()).is_some()
@@ -265,6 +292,56 @@ async fn dispatch(
         Ok(v) if (1..=100).contains(&v) => v as usize,
         _ => return error(StatusCode::BAD_REQUEST, "limit must be 1-100"),
     };
+    if notifications {
+        let before = if query.contains_key("before") {
+            match integer("before", 0) {
+                Ok(v) if v > 0 => Some(v),
+                _ => return error(StatusCode::BAD_REQUEST, "Invalid notification cursor"),
+            }
+        } else {
+            None
+        };
+        let unread_only = matches!(query.get("unread").map(String::as_str), Some("1" | "true"));
+        return match repository
+            .list_notifications(user, unread_only, before, limit)
+            .await
+        {
+            Ok(page) => response(StatusCode::OK, serde_json::to_value(page).unwrap()),
+            Err(e) => store_error(e),
+        };
+    }
+    if notifications_read {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct MarkRead {
+            ids: Option<Vec<i64>>,
+            all: Option<bool>,
+        }
+        let Ok(input) = serde_json::from_slice::<MarkRead>(body) else {
+            return error(StatusCode::BAD_REQUEST, "Invalid notification request");
+        };
+        let ids = match (input.all, input.ids) {
+            (Some(true), None) => None,
+            (None | Some(false), Some(ids))
+                if !ids.is_empty() && ids.len() <= 100 && ids.iter().all(|id| *id > 0) =>
+            {
+                Some(ids)
+            }
+            _ => {
+                return error(
+                    StatusCode::BAD_REQUEST,
+                    "Send either all:true or 1-100 positive ids",
+                )
+            }
+        };
+        return match repository
+            .mark_notifications_read(user, ids.as_deref())
+            .await
+        {
+            Ok(unread_count) => response(StatusCode::OK, json!({ "unread_count": unread_count })),
+            Err(e) => store_error(e),
+        };
+    }
     if method == Method::GET && parts.is_empty() {
         let offset = match integer("skip", 0) {
             Ok(v) if (0..=1_000_000).contains(&v) => v as usize,
@@ -341,6 +418,9 @@ async fn dispatch(
             Ok(value) => value,
             Err(_) => return error(StatusCode::BAD_REQUEST, "Invalid feedback submission"),
         };
+        if let Some(rejected) = reject_private(&value) {
+            return rejected;
+        }
         let include = match value
             .as_object_mut()
             .and_then(|v| v.remove("include_diagnostics"))
@@ -358,6 +438,7 @@ async fn dispatch(
             Ok(input) => input,
             Err(_) => return error(StatusCode::BAD_REQUEST, "Invalid feedback submission"),
         };
+        input.visibility = "public".into();
         input.title = input.title.trim().to_owned();
         input.description = input.description.trim().to_owned();
         mention_text = Some(input.description.clone());
@@ -388,6 +469,9 @@ async fn dispatch(
             Ok(value) => value,
             Err(_) => return error(StatusCode::BAD_REQUEST, "Invalid feedback command"),
         };
+        if let Some(rejected) = reject_private(&value) {
+            return rejected;
+        }
         let diagnostic = value
             .as_object_mut()
             .and_then(|v| v.remove("diagnostic_request_id"));
@@ -395,6 +479,7 @@ async fn dispatch(
             Ok(input) => input,
             Err(_) => return error(StatusCode::BAD_REQUEST, "Invalid feedback command"),
         };
+        input.visibility = "public".into();
         if let Some(diagnostic) = diagnostic {
             let (Some(id), FeedbackAction::Reply { content }) =
                 (diagnostic.as_str(), &mut input.action)
@@ -486,24 +571,27 @@ async fn dispatch(
 
 /// Administrator usernames that can be `@`-mentioned: active administrators only, sorted,
 /// case-insensitively de-duplicated. Only usernames are exposed, never e-mail addresses or ids.
-fn mentionable_names<'a>(users: impl IntoIterator<Item = (&'a str, &'a str, bool)>) -> Vec<String> {
+/// Anybody can be mentioned, so the list is every active user (usernames only, never e-mails).
+const MAX_MENTIONABLE: usize = 500;
+fn mentionable_names<'a>(users: impl IntoIterator<Item = (&'a str, bool)>) -> Vec<String> {
     let mut names: Vec<String> = users
         .into_iter()
-        .filter(|(_, role, active)| *active && is_feedback_admin(role))
-        .map(|(username, _, _)| username.to_string())
+        .filter(|(_, active)| *active)
+        .map(|(username, _)| username.to_string())
         .collect();
     names.sort_by_key(|name| name.to_lowercase());
     names.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+    names.truncate(MAX_MENTIONABLE);
     names
 }
 
-async fn list_mentionable_admins(state: &AppState) -> Response {
+async fn list_mentionable_users(state: &AppState) -> Response {
     match state.data.list_export_users().await {
         Ok(users) => {
             let names = mentionable_names(
                 users
                     .iter()
-                    .map(|user| (user.username.as_str(), user.role.as_str(), user.is_active)),
+                    .map(|user| (user.username.as_str(), user.is_active)),
             );
             response(StatusCode::OK, json!({ "items": names }))
         }

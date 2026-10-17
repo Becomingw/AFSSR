@@ -1963,6 +1963,7 @@ fn pending_migrations_from_applied_skips_versions_already_applied() {
             20261016000000,
             20261017000000,
             20261018000000,
+            20261019000000,
         ]
     );
 }
@@ -2415,6 +2416,210 @@ async fn feedback_edit_delete_migration_adds_columns_and_event_kinds_idempotentl
             .is_err(),
         "other kinds stay rejected"
     );
+}
+
+#[tokio::test]
+async fn feedback_notifications_migration_is_idempotent_and_cascades() {
+    let Some(server) = ManagedPostgresServer::try_start()
+        .await
+        .expect("postgres test should start or skip")
+    else {
+        return;
+    };
+    let pool = PgPool::connect(server.database_url())
+        .await
+        .expect("pool should connect");
+    sqlx::raw_sql(
+        "CREATE TABLE users(id VARCHAR(36) PRIMARY KEY, username VARCHAR(200) NOT NULL);
+         CREATE TABLE feedback_issues(id VARCHAR(36) PRIMARY KEY, title VARCHAR(200) NOT NULL);
+         INSERT INTO users VALUES ('u1','alice'),('u2','bob');
+         INSERT INTO feedback_issues VALUES ('i1','topic');",
+    )
+    .execute(&pool)
+    .await
+    .expect("fixture should be created");
+    let migration = POSTGRES_MIGRATOR
+        .iter()
+        .find(|migration| migration.version == 20261019000000)
+        .expect("feedback notifications migration should be registered");
+    for _ in 0..2 {
+        sqlx::raw_sql(&migration.sql)
+            .execute(&pool)
+            .await
+            .expect("feedback notifications migration should apply (and re-apply)");
+    }
+    sqlx::query("INSERT INTO feedback_notifications(user_id,kind,issue_id,event_seq,actor_id,snippet,created_at) VALUES('u1','mention','i1',1,'u2','hi',1)")
+        .execute(&pool)
+        .await
+        .expect("a notification can be stored");
+    assert!(
+        sqlx::query("INSERT INTO feedback_notifications(user_id,kind,issue_id,event_seq,actor_id,snippet,created_at) VALUES('u1','mention','i1',1,'u2','again',2)")
+            .execute(&pool)
+            .await
+            .is_err(),
+        "the same mention is stored once"
+    );
+    assert!(
+        sqlx::query("INSERT INTO feedback_notifications(user_id,kind,issue_id,event_seq,snippet,created_at) VALUES('u1','bogus','i1',2,'x',1)")
+            .execute(&pool)
+            .await
+            .is_err(),
+        "unknown kinds are rejected"
+    );
+    // Removing the topic or the recipient takes their notifications along; removing the actor does not.
+    sqlx::query("DELETE FROM users WHERE id='u2'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let actor: Option<String> = sqlx::query_scalar("SELECT actor_id FROM feedback_notifications")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(actor, None);
+    sqlx::query("DELETE FROM feedback_issues WHERE id='i1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM feedback_notifications")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(left, 0);
+}
+
+#[tokio::test]
+async fn feedback_notifications_work_on_postgres() {
+    use aether_data_contracts::repository::feedback::{
+        CreateFeedback, FeedbackRepository, NewFeedbackNotification,
+    };
+    use aether_data_postgres::PostgresFeedbackRepository;
+
+    let Some(server) = ManagedPostgresServer::try_start()
+        .await
+        .expect("postgres test should start or skip")
+    else {
+        return;
+    };
+    let pool = PgPool::connect(server.database_url())
+        .await
+        .expect("pool should connect");
+    prepare_and_apply_clean_postgres_database(&pool).await;
+    query("INSERT INTO public.users (id, username, email_verified) VALUES ('n-author','n-author',TRUE),('n-bob','n-bob',TRUE),('n-carol','n-carol',TRUE)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let repo = PostgresFeedbackRepository::new(pool.clone());
+    let issue = repo
+        .create(
+            "n-author",
+            "user",
+            &CreateFeedback {
+                visibility: "public".into(),
+                title: "Needs a look".into(),
+                description: "body".into(),
+                category: "bug".into(),
+                model: None,
+                request_id: None,
+                client_request_id: uuid::Uuid::new_v4().to_string(),
+            },
+        )
+        .await
+        .unwrap()
+        .issue;
+    let id = issue.summary.id.clone();
+    let mention = |user: &str, seq: i64| NewFeedbackNotification {
+        user_id: user.into(),
+        issue_id: id.clone(),
+        event_seq: seq,
+        actor_id: Some("n-author".into()),
+        snippet: format!("at {seq}"),
+    };
+    repo.add_notifications(&[mention("n-bob", 1), mention("n-carol", 1)])
+        .await
+        .unwrap();
+    repo.add_notifications(&[mention("n-bob", 1), mention("n-bob", 2)])
+        .await
+        .unwrap();
+    let page = repo
+        .list_notifications("n-bob", false, None, 20)
+        .await
+        .unwrap();
+    assert_eq!(page.unread_count, 2);
+    assert_eq!(
+        page.items.iter().map(|n| n.event_seq).collect::<Vec<_>>(),
+        vec![2, 1]
+    );
+    assert_eq!(page.items[0].issue_number, issue.summary.number);
+    assert_eq!(page.items[0].issue_title, "Needs a look");
+    assert_eq!(page.items[0].actor_username.as_deref(), Some("n-author"));
+    let first = repo
+        .list_notifications("n-bob", false, None, 1)
+        .await
+        .unwrap();
+    let older = repo
+        .list_notifications("n-bob", false, first.next_before, 1)
+        .await
+        .unwrap();
+    assert_eq!(older.items[0].event_seq, 1);
+    assert_eq!(older.next_before, None);
+
+    let newest = page.items[0].id;
+    assert_eq!(
+        repo.mark_notifications_read("n-carol", Some(&[newest]))
+            .await
+            .unwrap(),
+        1,
+        "carol cannot mark bob's notification"
+    );
+    assert_eq!(
+        repo.mark_notifications_read("n-bob", Some(&[newest]))
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        repo.list_notifications("n-bob", true, None, 20)
+            .await
+            .unwrap()
+            .items
+            .len(),
+        1
+    );
+    assert_eq!(
+        repo.mark_notifications_read("n-bob", None).await.unwrap(),
+        0
+    );
+
+    // Pruning keeps the newest 200 per user.
+    let many: Vec<_> = (10..(10 + 205)).map(|seq| mention("n-bob", seq)).collect();
+    repo.add_notifications(&many).await.unwrap();
+    let total: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM feedback_notifications WHERE user_id='n-bob'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(total, 200);
+    let newest_kept: i64 = sqlx::query_scalar(
+        "SELECT MAX(event_seq) FROM feedback_notifications WHERE user_id='n-bob'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(newest_kept, 10 + 204);
+
+    // A deleted topic disappears from the list and the unread count.
+    let delete: aether_data_contracts::repository::feedback::FeedbackCommand = serde_json::from_value(
+        serde_json::json!({"expected_version": issue.summary.version, "client_request_id": uuid::Uuid::new_v4().to_string(), "action": "delete_issue"}),
+    )
+    .unwrap();
+    repo.command(&id, "n-author", "user", true, &delete)
+        .await
+        .unwrap();
+    let page = repo
+        .list_notifications("n-bob", false, None, 20)
+        .await
+        .unwrap();
+    assert_eq!((page.items.len(), page.unread_count), (0, 0));
 }
 
 #[tokio::test]

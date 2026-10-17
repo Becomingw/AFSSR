@@ -33,6 +33,15 @@ async fn issue_tx(
         .map_err(|_| FeedbackError::Unavailable)
 }
 
+/// Unread notifications of issues that still exist.
+async fn unread_count(pool: &PgPool, user_id: &str) -> Result<i64, FeedbackError> {
+    sqlx::query_scalar("SELECT COUNT(*) FROM feedback_notifications n JOIN feedback_issues i ON i.id=n.issue_id AND i.deleted_at IS NULL WHERE n.user_id=$1 AND n.read_at IS NULL")
+        .bind(user_id)
+        .fetch_one(pool)
+        .await
+        .map_err(unavailable)
+}
+
 /// Loads (and locks) a reply of the issue; anything that is not a reply is treated as absent.
 async fn load_reply(
     tx: &mut sqlx::Transaction<'_, Postgres>,
@@ -152,6 +161,100 @@ impl FeedbackRepository for PostgresFeedbackRepository {
             .fetch_optional(&self.pool)
             .await
             .map_err(unavailable)
+    }
+    async fn add_notifications(
+        &self,
+        items: &[NewFeedbackNotification],
+    ) -> Result<(), FeedbackError> {
+        if items.is_empty() {
+            return Ok(());
+        }
+        let now = chrono::Utc::now().timestamp();
+        let mut tx = self.pool.begin().await.map_err(unavailable)?;
+        let mut users: Vec<&str> = Vec::new();
+        for item in items {
+            let snippet: String = item.snippet.chars().take(500).collect();
+            sqlx::query("INSERT INTO feedback_notifications(user_id,kind,issue_id,event_seq,actor_id,snippet,created_at) VALUES($1,'mention',$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING")
+                .bind(&item.user_id)
+                .bind(&item.issue_id)
+                .bind(item.event_seq)
+                .bind(&item.actor_id)
+                .bind(snippet)
+                .bind(now)
+                .execute(&mut *tx)
+                .await
+                .map_err(unavailable)?;
+            if !users.contains(&item.user_id.as_str()) {
+                users.push(&item.user_id);
+            }
+        }
+        for user in users {
+            sqlx::query("DELETE FROM feedback_notifications WHERE user_id=$1 AND id NOT IN (SELECT id FROM feedback_notifications WHERE user_id=$1 ORDER BY id DESC LIMIT $2)")
+                .bind(user)
+                .bind(MAX_NOTIFICATIONS_PER_USER as i64)
+                .execute(&mut *tx)
+                .await
+                .map_err(unavailable)?;
+        }
+        tx.commit().await.map_err(unavailable)
+    }
+    async fn list_notifications(
+        &self,
+        user_id: &str,
+        unread_only: bool,
+        before: Option<i64>,
+        limit: usize,
+    ) -> Result<NotificationPage, FeedbackError> {
+        let limit = limit.clamp(1, 100);
+        let rows = sqlx::query("SELECT n.id,n.kind,n.issue_id,i.number AS issue_number,i.title AS issue_title,n.event_seq,a.username AS actor_username,n.snippet,n.created_at,n.read_at FROM feedback_notifications n JOIN feedback_issues i ON i.id=n.issue_id AND i.deleted_at IS NULL LEFT JOIN users a ON a.id=n.actor_id WHERE n.user_id=$1 AND ($2 IS FALSE OR n.read_at IS NULL) AND ($3::bigint IS NULL OR n.id<$3) ORDER BY n.id DESC LIMIT $4")
+            .bind(user_id)
+            .bind(unread_only)
+            .bind(before)
+            .bind(limit as i64 + 1)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(unavailable)?;
+        let has_more = rows.len() > limit;
+        let items: Vec<FeedbackNotification> = rows
+            .iter()
+            .take(limit)
+            .map(|row| {
+                Ok(FeedbackNotification {
+                    id: row.try_get("id").map_err(unavailable)?,
+                    kind: row.try_get("kind").map_err(unavailable)?,
+                    issue_id: row.try_get("issue_id").map_err(unavailable)?,
+                    issue_number: row.try_get("issue_number").map_err(unavailable)?,
+                    issue_title: row.try_get("issue_title").map_err(unavailable)?,
+                    event_seq: row.try_get("event_seq").map_err(unavailable)?,
+                    actor_username: row.try_get("actor_username").map_err(unavailable)?,
+                    snippet: row.try_get("snippet").map_err(unavailable)?,
+                    created_at: row.try_get("created_at").map_err(unavailable)?,
+                    read_at: row.try_get("read_at").map_err(unavailable)?,
+                })
+            })
+            .collect::<Result<_, FeedbackError>>()?;
+        let next_before = has_more.then(|| items.last().map(|n| n.id)).flatten();
+        let unread_count = unread_count(&self.pool, user_id).await?;
+        Ok(NotificationPage {
+            items,
+            unread_count,
+            next_before,
+        })
+    }
+    async fn mark_notifications_read(
+        &self,
+        user_id: &str,
+        ids: Option<&[i64]>,
+    ) -> Result<i64, FeedbackError> {
+        let now = chrono::Utc::now().timestamp();
+        sqlx::query("UPDATE feedback_notifications SET read_at=$3 WHERE user_id=$1 AND read_at IS NULL AND ($2::bigint[] IS NULL OR id=ANY($2))")
+            .bind(user_id)
+            .bind(ids.map(<[i64]>::to_vec))
+            .bind(now)
+            .execute(&self.pool)
+            .await
+            .map_err(unavailable)?;
+        unread_count(&self.pool, user_id).await
     }
     async fn create(
         &self,

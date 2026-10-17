@@ -143,8 +143,8 @@
 
 ## 8. 反馈、MCP、密钥、模块等
 
-- **反馈**（用户 `/dashboard/feedback`，管理员 `/admin/feedback`）：详见 `docs/operations/feedback.md` 和 skill 的反馈手册。反馈不是指令队列，产品本身不会启动 AI worker。
-- **Agent MCP**（`/mcp`，控制台 `/admin/mcp`）：管理令牌 `ae-…`（不是推理密钥 `sk-…`）；默认只读、30 天过期（1–90 天）、可限 IP/CIDR；权限 = 角色 ∩ scope；预设"仅用户反馈"只授予反馈权限。写操作：预览 → 一次性确认票据（5 分钟、仅当前进程有效、**不等于人的同意**）→ 执行。限制：请求体 1 MiB、结果 128 KiB、每密钥每分钟 120 次、并发 16、单页 ≤500。公网部署必须设 `ARCA_MCP_ALLOWED_HOSTS`（默认仅回环）。
+- **讨论与反馈**（用户 `/dashboard/feedback`，管理员 `/admin/feedback`）：详见 `docs/operations/feedback.md` 和 skill 的反馈手册。反馈不是指令队列，产品本身不会启动 AI worker。
+- **Agent MCP**（`/mcp`，控制台 `/admin/mcp`）：管理令牌 `ae-…`（不是推理密钥 `sk-…`）；默认只读、30 天过期（1–90 天）、可限 IP/CIDR；权限 = 角色 ∩ scope；预设"仅讨论与反馈"只授予反馈权限。写操作：预览 → 一次性确认票据（5 分钟、仅当前进程有效、**不等于人的同意**）→ 执行。限制：请求体 1 MiB、结果 128 KiB、每密钥每分钟 120 次、并发 16、单页 ≤500。公网部署必须设 `ARCA_MCP_ALLOWED_HOSTS`（默认仅回环）。
 - **密钥**：推理密钥 `sk-`（用户的在 `/dashboard/api-keys`，独立的在 `/admin/keys`）；管理令牌 `ae-`（`/admin/management-tokens`，超级管理员）。
 - **模块**（`/admin/modules`）：重要通知、Server 酱、Bark、PII 脱敏、S3 备份、代理节点、LDAP、OAuth、访问令牌、模型后缀参数。各自的设置键见 [settings-glossary.md](settings-glossary.md)。
 - **排行榜**：用户看到 `member-N` 化名（不足 3 人不显示，无美元和精确时间）；管理员看完整榜。活跃度是使用量的代理指标，不是工时。扫描范围 ≤31 天，需要保留的 `usage_billing_facts`。

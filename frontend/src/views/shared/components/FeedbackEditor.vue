@@ -20,7 +20,7 @@
       >
         预览
       </button>
-      <span class="editor-hint">支持 Markdown 与图片链接 · <b>@</b>管理员 · <b>#</b>编号引用其他反馈</span>
+      <span class="editor-hint">支持 Markdown 与图片链接 · <b>@</b>提醒任何人 · <b>#</b>编号引用其他主题</span>
     </div>
     <textarea
       v-show="!preview"
@@ -42,7 +42,7 @@
       v-if="open && !preview"
       class="mention-list"
       role="listbox"
-      aria-label="可提及的管理员"
+      aria-label="可提及的用户"
     >
       <li
         v-for="(name, index) in suggestions"

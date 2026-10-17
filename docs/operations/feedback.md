@@ -1,8 +1,10 @@
-# User Feedback and Agent Handoff
+# Discussion and Feedback (User Feedback and Agent Handoff)
 
-Feedback is a persistent issue/discussion workflow, not an instruction queue that
-automatically executes user-supplied text. The UI lives at `/dashboard/feedback`
-for users and `/admin/feedback` for administrators. Each issue stores a category,
+**讨论与反馈** is a persistent topic/discussion workflow, not an instruction queue that
+automatically executes user-supplied text. In the console each item is a **主题** (topic); the API
+and code keep the names `feedback` and `issue`. The UI lives at `/dashboard/feedback`
+for users and `/admin/feedback` for administrators. **Everything is public**: every topic and every
+reply is visible to all logged-in users (see *Visibility*). Each issue stores a category,
 description, optional model/request references, visibility, current status/version and an
 append-only history of replies and state changes. Text is rendered as Markdown (see below);
 attachments and HTML execution are not exposed. Issues and replies can be edited and deleted
@@ -12,8 +14,8 @@ by the people allowed to (see *Editing and deleting*).
 
 | Actor | Submit | Read/Reply | Resolve/Reopen | Close |
 | --- | --- | --- | --- | --- |
-| Ordinary owner | Yes | Own private issues + all public issues | Own issues; resolve requires final solution | Never |
-| Other ordinary participant | Yes | All public issues, comment only | Never on another owner's issue | Never |
+| Ordinary owner | Yes | All topics and replies | Own topics; resolve requires final solution | Never |
+| Other ordinary participant | Yes | All topics, reply only | Never on another owner's topic | Never |
 | Audit administrator | Yes, as self | All issues/events | All issues; resolve requires final solution | All issues, including resolved |
 | User/benefits administrator | Yes, as self | All issues/events | All issues; resolve requires final solution | All issues, including resolved |
 | Service administrator | Yes, as self | All issues/events | All issues; resolve requires final solution | All issues, including resolved |
@@ -25,7 +27,6 @@ Authorization always uses the current logged-in user or the user bound to a
 management key. Client-supplied owner/actor/role fields are rejected. Users
 cannot use the administrative `owner_id` filter (403). Viewer identity is a
 separate trusted repository field, never an owner filter supplied by the client.
-Another owner's private issue returns 404, even if it contains a public reply.
 Disabled users and revoked sessions/keys cannot participate.
 
 Statuses are `open`, `resolved`, and `closed`. Owners and any of the four actual
@@ -42,21 +43,25 @@ without deleting the support history. Deleting an issue or reply hides it but ke
 *Editing and deleting*); retention must be covered by the operator's database/privacy policy and
 the feature provides no permanent-purge API.
 
-## Privacy Contract
+## Visibility
 
-Issues and event bodies independently use `visibility:"public"|"private"`, always
-defaulting to `private`. All existing issues and replies remain private after the
-additive migration. Issue visibility is fixed at creation in this wire version;
-a command's flat `visibility` controls only its reply or status-comment content.
-It never changes the enclosing issue or inherits a public issue's visibility.
+Private topics and private replies were removed: **every topic, reply, status comment and
+final solution is public** to all logged-in users, so nothing should contain keys, passwords or
+private conversations. Anything attached to a reply or a new topic, including a request's safe
+diagnostic summary, is public as well; the console says so next to the opt-in.
 
-Authenticated ordinary users can see their own private issues and **all** public
-issues. Private reply events are visible only to their author, the issue owner,
-and actual administrators, after issue access is checked. Public replies never
-grant access to a private issue. Status events remain visible to public issue
-viewers, but private status-comment `content` is replaced with `null` for viewers
-other than its author, the owner or an actual administrator. Do not infer that a
-visible status transition has a public final-solution body.
+- The API no longer takes a visibility choice. Omitting `visibility` (or sending `"public"`)
+  creates public content; sending `"private"` is rejected with 400 rather than silently publishing
+  what the caller believed to be private. The MCP schema only offers `public`.
+- **Content from before the change keeps its old audience.** Existing private topics and replies are
+  not published retroactively: a legacy private topic is still visible only to its owner and to
+  administrators, its private replies only to their author, the owner and administrators, and the
+  console marks it **历史私密**. Replying there stays possible for those who can see it. To publish
+  legacy content on purpose, update the `visibility` columns of `feedback_issues` and
+  `feedback_events` in the database.
+- Viewer identity is still a separate trusted repository field, never an owner filter supplied by
+  the client; users cannot use the administrative `owner_id` filter (403). Disabled users and revoked
+  sessions/keys cannot participate.
 
 ## HTTP API
 
@@ -76,7 +81,7 @@ POST /api/admin/feedback/{issue_id}/commands
 ```
 
 Creation accepts `title`, `description`, `category`, optional `model`/`request_id`,
-and a stable `client_request_id` UUID, plus optional `visibility` (default private).
+and a stable `client_request_id` UUID. Everything is public (see *Visibility*).
 Ordinary users and all four actual administrators may create through their own
 session on `/api/feedback`. `/api/admin/feedback` creation is administrator-only,
 requires `admin:feedback:write` for management keys, and retains the audit
@@ -98,15 +103,13 @@ Commands require `expected_version` from a preceding read and a new UUID:
   "expected_version": 4,
   "client_request_id": "00000000-0000-4000-8000-000000000001",
   "action": "reply",
-  "visibility": "private",
   "content": "Synthetic test passed; evidence: request ID ..."
 }
 ```
 
 For transitions use `action:"set_status"`, `status:"resolved"` (or `closed`/`open`),
-and `comment` (required and nonblank for resolved, otherwise optional). Use flat
-`visibility:"public"` only when intentionally publishing that comment/reply.
-Do not send reply-only fields on a status command.
+and `comment` (required and nonblank for resolved, otherwise optional; it is public like everything
+else). Do not send reply-only fields on a status command.
 
 Administrators can pin an issue to the top of the list with `action:"set_pinned"` and
 `pinned:true` (or `false` to release it). It requires the current `expected_version`, bumps
@@ -188,15 +191,15 @@ the event kind check.
 The embedded MCP has these administrative tools:
 
 - `arca_feedback_create`: creates an issue owned by the current administrator;
-  feedback write scope and exact preview/confirmation are required, visibility
-  defaults private. Required body: title, description, category, client_request_id.
+  feedback write scope and exact preview/confirmation are required; the topic is public.
+  Required body: title, description, category, client_request_id.
 - `arca_feedback_list`: lists issues, including an incremental polling cursor.
 - `arca_feedback_get`: reads the issue, visibility, version and authorized history.
 - `arca_feedback_command`: replies, resolves with a required final solution,
-  closes or reopens under the same actual-role/domain checks and flat visibility.
+  closes or reopens under the same actual-role/domain checks. Replies are public.
 
 All writes retain MCP preview/confirmation, user-role checks and key scopes.
-In **Agent MCP**, select **仅用户反馈** to issue a key with only feedback scopes.
+In **Agent MCP**, select **仅讨论与反馈** to issue a key with only feedback scopes.
 Read-only issuance remains the default; select read/write only when the worker
 should reply or update statuses. Feedback-only keys do not authorize provider,
 model, user-account or server changes. Existing implicit legacy token scopes are
@@ -219,8 +222,9 @@ Suggested worker contract:
    or state change. On 409 reread and reconsider; do not overwrite newer activity.
    Resolve only after verification, including a nonblank final solution in the
    status command's `comment`; a preceding reply does not replace this requirement.
-   Replies/status comments default private. Never copy administrator-visible
-   private event text into a public reply without explicit authorization.
+   Everything you write is public. Topics from before private ones were removed may
+   still be private: never copy their text into a new public reply without explicit
+   authorization.
 5. Persist the polling checkpoint only after every item has been handled or
    durably queued for retry. Persist command UUIDs across worker restarts.
 
@@ -272,11 +276,9 @@ MCP likewise requires monitoring read for request references/diagnostic inclusio
 using existing management diagnostic access. Session `/api/feedback` creation
 continues to validate request ownership, even for administrators; switching to
 an administrator role does not bypass that session-path ownership check.
-Public diagnostic sharing requires an explicit `visibility:"public"` on the
-creation or reply. Ownership checks for user request references and monitoring
-read checks for administrator attachments are unchanged. A diagnostic attached
-to a reply on a public issue remains a private event unless explicitly public;
-safe diagnostic projection is not itself permission to publish it.
+A diagnostic attached to a topic or reply is public like the rest of it (the opt-in says
+so), so attach it only when it is fine to show every logged-in user. Ownership checks for user
+request references and monitoring read checks for administrator attachments are unchanged.
 
 ## Markdown, references and mentions
 
@@ -288,19 +290,43 @@ stored content stays the Markdown source, so the API, MCP and e-mails see exactl
 
 Every issue has a human-friendly number. `#12` in any text links to issue 12, and the API and
 console accept the number wherever an issue id is expected (`GET /api/feedback/12`). Numbers
-never bypass visibility: a private issue of someone else still answers 404.
+answer 404 for unknown or deleted topics (and for legacy private ones the viewer may not see).
 
-`@username` mentions an administrator (the editor suggests names from
-`GET /api/feedback/mentionable`, which returns usernames only). When a new issue or a reply
-mentions an active administrator who has an e-mail address, the gateway sends that administrator
-an e-mail with the issue subject, number and the mentioning text, plus a link when
-`ARCA_PUBLIC_BASE_URL` is configured. Mails are best-effort: they need working SMTP
-settings, never block or fail the feedback request, are sent once per administrator and message,
-and are never sent to the author themself or to non-administrators.
+`@username` mentions **anyone** (the editor suggests names from `GET /api/feedback/mentionable`, which
+returns the usernames of all active users and nothing else; up to 500). Every mentioned active user
+gets an **in-app notification**; only **administrators** with an e-mail address additionally get an
+e-mail with the topic subject, number and the mentioning text, plus a link when
+`ARCA_PUBLIC_BASE_URL` is configured. Mails are best-effort: they need working SMTP settings, never
+block or fail the request, and are sent once per administrator and message. Nobody is notified about
+their own mention, an unknown name, or (for legacy private topics) a topic they cannot see.
+Editing a message never notifies anyone.
+
+### Notifications
+
+The bell in the console header shows the unread count (polled every minute) and lists mentions,
+newest first. Opening one marks it read and goes to the topic.
+
+```text
+GET  /api/feedback/notifications?unread=1&before=<id>&limit=20
+POST /api/feedback/notifications/read     {"ids":[1,2]}  or  {"all":true}
+```
+
+Both use the user session of any role and only ever return or change the caller's own
+notifications. The list returns `{items, unread_count, next_before}`; an item carries the topic
+number and current title, who mentioned you and a 200-character snippet. Notifications of deleted
+topics are neither listed nor counted, repeated mentions of one user in one message are a single
+notification, and each user keeps the newest 200. Migration `20261019000000_feedback_notifications.sql`
+adds the `feedback_notifications` table.
+
+### Writing a topic
+
+The new-topic form has a **专注模式** button: a full-screen layer with a large title field and
+editor (Markdown preview, `@` and `#` suggestions all work) that keeps the same draft as the form.
+`Esc` or **返回表单** leaves it; **发起主题** submits from there. The reply box is unchanged.
 
 When a mention does not produce a mail, the gateway log says why: each skipped mention logs
 `event_name=feedback_mention_email_skipped` with a `reason` (`smtp_not_configured`,
-`user_not_found`, `mentioned_self`, `user_inactive`, `not_an_administrator`, `no_email_address`,
+`user_not_found`, `mentioned_self`, `user_inactive`, `email_is_admin_only`, `no_email_address`,
 `already_notified`), a delivered one logs `feedback_mention_email_sent`, and a failed SMTP
 delivery logs a warning with the error. The admin SMTP test (`POST /api/admin/system/smtp/test`) only
 proves that the gateway can connect and log in. Add `"send_to": "you@example.com"` to the body (the
@@ -308,5 +334,5 @@ proves that the gateway can connect and log in. Add `"send_to": "you@example.com
 a refusal such as `554 ...` from the receiving server is returned verbatim in `message`, which a
 login test can never show. Outgoing mail carries `Date` and `Message-ID` headers and folds non-ASCII
 subjects/sender names into RFC 2047 encoded words of at most 75 characters, because stricter
-receivers reject or junk messages without them. The most
-common reason is testing by mentioning yourself, which never sends a mail.
+receivers reject or junk messages without them. Mentioning yourself never sends anything, and
+non-administrators are never mailed (they only get the in-app notification).

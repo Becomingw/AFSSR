@@ -30,25 +30,20 @@
           <span
             v-if="entry.kind === 'pin'"
             class="event-status"
-          >{{ entry.pinned ? '置顶了此反馈' : '取消了置顶' }}</span>
+          >{{ entry.pinned ? '置顶了此主题' : '取消了置顶' }}</span>
           <span
             v-else-if="entry.kind === 'issue_edit'"
             class="event-status"
-          >编辑了反馈（{{ editedFields(entry.raw) }}）</span>
+          >编辑了主题（{{ editedFields(entry.raw) }}）</span>
           <span
             v-else-if="entry.kind === 'status'"
             class="event-status"
           >{{ feedbackStatusLabel(entry.from_status || 'open') }} → {{ feedbackStatusLabel(entry.to_status || 'open') }}</span>
           <span
-            v-else
+            v-else-if="entry.visibility === 'private'"
             class="comment-visibility"
-          ><Globe
-            v-if="entry.visibility === 'public'"
-            :size="12"
-          /><Lock
-            v-else
-            :size="12"
-          />{{ entry.visibility === 'public' ? '公开' : '私密' }}</span>
+            title="取消私密之前发布的内容，仍只有相关人员能看到"
+          ><Lock :size="12" />历史私密</span>
           <time :datetime="new Date(entry.created_at * 1000).toISOString()">{{ feedbackDate(entry.created_at) }}</time>
           <span
             v-if="entry.edited_at"
@@ -62,7 +57,7 @@
               class="reply-action"
               :aria-label="`回复 ${entry.author}`"
               title="回复"
-              @click="emit('reply', entry.author, entry.visibility)"
+              @click="emit('reply', entry.author)"
             >
               <Reply :size="15" />
             </button>
@@ -70,7 +65,7 @@
               v-if="canEdit(entry)"
               type="button"
               class="reply-action"
-              :aria-label="entry.key === 'opening' ? '编辑反馈' : `编辑 ${entry.author} 的回复`"
+              :aria-label="entry.key === 'opening' ? '编辑主题' : `编辑 ${entry.author} 的回复`"
               title="编辑"
               :disabled="busy"
               @click="startEdit(entry)"
@@ -116,7 +111,7 @@
         <form
           v-if="editing === entry.key"
           class="entry-edit"
-          :aria-label="entry.key === 'opening' ? '编辑反馈' : '编辑回复'"
+          :aria-label="entry.key === 'opening' ? '编辑主题' : '编辑回复'"
           @submit.prevent="saveEdit(entry)"
         >
           <template v-if="entry.key === 'opening'">
@@ -124,13 +119,13 @@
               v-model="draftTitle"
               type="text"
               maxlength="200"
-              aria-label="反馈标题"
+              aria-label="主题标题"
               :disabled="busy"
               required
             ></label>
             <label>类型<select
               v-model="draftCategory"
-              aria-label="反馈类型"
+              aria-label="主题类型"
               :disabled="busy"
             ><option
               v-for="option in feedbackCategories"
@@ -140,7 +135,7 @@
           </template>
           <FeedbackEditor
             v-model="draftText"
-            :aria-label="entry.key === 'opening' ? '反馈描述' : '回复内容'"
+            :aria-label="entry.key === 'opening' ? '主题内容' : '回复内容'"
             :maxlength="20000"
             :disabled="busy"
             :issue-base="issueBase"
@@ -202,11 +197,11 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { CheckCircle2, CircleX, Globe, Lock, Pencil, Pin, PinOff, Reply, RotateCcw, Trash2 } from 'lucide-vue-next'
+import { CheckCircle2, CircleX, Lock, Pencil, Pin, PinOff, Reply, RotateCcw, Trash2 } from 'lucide-vue-next'
 import FeedbackMarkdown from './components/FeedbackMarkdown.vue'
 import FeedbackEditor from './components/FeedbackEditor.vue'
 import { adminRoleLabel } from '@/config/adminRoles'
-import type { FeedbackCategory, FeedbackEvent, FeedbackSummary, FeedbackVisibility } from '@/api/feedback'
+import type { FeedbackCategory, FeedbackEvent, FeedbackSummary } from '@/api/feedback'
 import { feedbackCategories, feedbackDate, feedbackStatusLabel } from './feedback-view'
 
 /** What the timeline can ask the page to do; each resolves to whether the change was committed. */
@@ -226,7 +221,7 @@ const props = defineProps<{
   busy?: boolean
   actions?: DiscussionActions
 }>()
-const emit = defineEmits<{ reply: [author: string, visibility: FeedbackVisibility] }>()
+const emit = defineEmits<{ reply: [author: string] }>()
 
 // Markers only exist for incremental readers; they are not part of the conversation.
 const HIDDEN = new Set(['created', 'issue_delete', 'reply_edit', 'reply_delete'])
