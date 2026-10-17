@@ -39,6 +39,14 @@ not captured customer traffic. Format library rejections become `unsupported`
 where classified as unsupported; other conversion or assertion failures become
 `failed`, with fixed readable, non-payload reasons.
 
+## Real-Client Evidence
+
+Real client evidence comes from a separate, local suite: `tests/client_e2e/run.py` launches the
+actual Codex CLI and Claude Code headless against a disposable gateway and a scripted mock upstream,
+across every upstream format, and checks tool loops, cancellation, forwarded request shape and
+usage accounting. It is not wired into the workbench, so the `real_client` case above stays
+`not_tested`. See `tests/client_e2e/README.md` for the matrix and its limits.
+
 ## Permissions And API
 
 All four administrator roles may read. Only `service_admin` and `admin` (the
