@@ -1,6 +1,11 @@
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Net.Http
 
+# ARCA_* takes precedence over the legacy AETHER_* names.
+Get-ChildItem Env: | Where-Object { $_.Name -like 'ARCA_*' } | ForEach-Object {
+  Set-Item -Path ("Env:AETHER_" + $_.Name.Substring(5)) -Value $_.Value
+}
+
 $Repo = if ($env:AETHER_TUNNEL_RELEASE_REPO) { $env:AETHER_TUNNEL_RELEASE_REPO } else { 'fawney19/Aether' }
 $ReleaseTag = $env:AETHER_TUNNEL_RELEASE_TAG
 $InstallDir = $env:AETHER_TUNNEL_INSTALL_DIR

@@ -6,9 +6,9 @@
     <filter id="shadow-lg" x="-10%" y="-10%" width="120%" height="130%">
       <feDropShadow dx="0" dy="6" stdDeviation="10" flood-opacity="0.06"/>
     </filter>
-    <!-- Clip path: full area minus AETHER label zone -->
+    <!-- Clip path: full area minus ARCA label zone -->
     <clipPath id="gateway-clip">
-      <path d="M 0 0 h 760 v 420 H 0 Z M 74 169 v 54 h 12 v -54 Z" clip-rule="evenodd"/>
+      <path d="M 0 0 h 760 v 420 H 0 Z M 74 177 v 39 h 12 v -39 Z" clip-rule="evenodd"/>
     </clipPath>
   </defs>
 
@@ -39,12 +39,12 @@
   <circle cx="537" cy="378" r="3" fill="#cc7154"/>
   <text x="579" y="382" font-size="10" font-weight="700" fill="#1f2937" text-anchor="middle">Gemini 响应</text>
 
-  <!-- === Layer 2: AETHER GATEWAY box (z-20) === -->
+  <!-- === Layer 2: ARCA GATEWAY box (z-20) === -->
   <rect x="80" y="78" width="600" height="240" rx="24" fill="#ffffff" filter="url(#shadow-lg)"/>
   <rect x="80" y="78" width="600" height="240" rx="24" fill="none" stroke="rgba(204,113,84,0.25)" clip-path="url(#gateway-clip)"/>
-  <g transform="translate(80, 176)" font-size="7" font-weight="900" fill="#cc7154" text-anchor="middle">
-    <text x="0" y="0">A</text><text x="0" y="9">E</text><text x="0" y="18">T</text>
-    <text x="0" y="27">H</text><text x="0" y="36">E</text><text x="0" y="45">R</text>
+  <g transform="translate(80, 185)" font-size="7" font-weight="900" fill="#cc7154" text-anchor="middle">
+    <text x="0" y="0">A</text><text x="0" y="9">R</text><text x="0" y="18">C</text>
+    <text x="0" y="27">A</text>
   </g>
 
   <!-- Dashed box -->

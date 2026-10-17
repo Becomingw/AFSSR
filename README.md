@@ -50,12 +50,14 @@ Arca 是一个自托管的 AI API 网关，为团队和个人提供多租户管�
 
 ## 部署
 
-### Docker Compose（推荐：预构建镜像）
+### Docker Compose
+
+Arca 目前没有发布预构建镜像，需要先自行构建（见 [Arca 版本说明](docs/ARCA.md) 的“Build Your Own Image”），再通过 `.env` 中的 `APP_IMAGE` 指定该镜像。
 
 ```bash
 # 1. 克隆代码
-git clone https://github.com/fawney19/Aether.git
-cd Aether
+git clone https://github.com/Becomingw/Arca.git
+cd Arca
 
 # 2. 配置环境变量
 cp .env.example .env
@@ -65,21 +67,21 @@ chmod 600 .env
 ./generate_keys.sh
 # 编辑 .env 设置 ADMIN_PASSWORD
 
-# 3. Docker 部署 / 更新（PostgreSQL + Redis）
-docker compose pull && docker compose up -d
+# 3. 在 .env 中设置自行构建的 APP_IMAGE，然后部署（PostgreSQL + Redis）
+docker compose up -d
 ```
 
-### 一键安装（PostgreSQL + Redis）
+### 一键安装与 Nightly（上游 Aether 流程）
+
+> **注意**：`install.sh` 默认从上游 `fawney19/Aether` 下载制品，Nightly 也是上游发布的镜像与 Release，二者都**不包含 Arca 的修改**。Arca 发布自己的制品之前，请使用上面的自建镜像方式。以下命令保留为上游参考。
 
 ```bash
-git clone https://github.com/fawney19/Aether.git
-cd Aether
 curl -fsSL https://raw.githubusercontent.com/fawney19/Aether/main/install.sh | sudo bash -s -- --mode compose
 ```
 
 原生 Linux systemd / macOS launchd 安装需先准备 PostgreSQL，将连接串通过 `DATABASE_URL` 传给安装进程，并选择 `--mode single-node`；不再自动创建本地数据库文件。
 
-### Nightly（每日 main 构建）
+#### Nightly（上游每日 main 构建）
 
 Nightly workflow 每天从 `main` 的固定 commit 构建并发布滚动的 GitHub Release `nightly`，同时推送多架构 GHCR 镜像 `ghcr.io/fawney19/aether:nightly`。Nightly 是预发布版本，适合验证最新代码，不保证与正式版相同的稳定性。滚动 Release 需要仓库保持关闭 GitHub Release immutability。
 

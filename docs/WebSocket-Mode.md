@@ -26,7 +26,7 @@ WebSocket mode is compatible with both Zero Data Retention (ZDR) and `store=fals
 Configure an active `openai:realtime` provider endpoint, then connect to:
 
 ```text
-wss://<aether-host>/v1/realtime?model=<authorized-global-model>
+wss://<arca-host>/v1/realtime?model=<authorized-global-model>
 ```
 
 Arca authenticates and plans the request before returning the downstream
@@ -117,13 +117,13 @@ setting both avoids a client-version-dependent fallback to the OpenAI origin:
 
 ```toml
 model_provider = "aether"
-experimental_realtime_webrtc_call_base_url = "https://<aether-host>/v1"
-experimental_realtime_ws_base_url = "https://<aether-host>/v1"
+experimental_realtime_webrtc_call_base_url = "https://<arca-host>/v1"
+experimental_realtime_ws_base_url = "https://<arca-host>/v1"
 experimental_realtime_ws_model = "<authorized-global-live-alias>"
 
 [model_providers.aether]
 name = "Arca"
-base_url = "https://<aether-host>/v1"
+base_url = "https://<arca-host>/v1"
 wire_api = "responses"
 ```
 

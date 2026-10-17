@@ -70,7 +70,7 @@ prerequisite rather than tunnel support.
 The gateway exposes WebSocket mode at the same public Responses path:
 
 ```text
-wss://<aether-gateway>/v1/responses
+wss://<arca-gateway>/v1/responses
 ```
 
 It is disabled by default per provider. In **添加提供商** or **编辑提供商**,

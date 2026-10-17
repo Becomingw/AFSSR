@@ -2,6 +2,12 @@
 set -eu
 umask 077
 
+# ARCA_* takes precedence over the legacy AETHER_* names.
+for _arca_suffix in $(env | sed -n 's/^ARCA_\([A-Za-z0-9_]*\)=.*/\1/p'); do
+  eval "export AETHER_${_arca_suffix}=\"\${ARCA_${_arca_suffix}}\""
+done
+unset _arca_suffix
+
 REPO="${AETHER_TUNNEL_RELEASE_REPO:-fawney19/Aether}"
 TAG="${AETHER_TUNNEL_RELEASE_TAG:-}"
 INSTALL_DIR="${AETHER_TUNNEL_INSTALL_DIR:-}"

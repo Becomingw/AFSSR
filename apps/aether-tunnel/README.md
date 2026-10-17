@@ -1,8 +1,8 @@
 # aether-tunnel
 
-Aether Tunnel 代理节点，部署在海外 VPS 上，通过 WebSocket 隧道为 Aether 实例中转 API 流量。
+Arca Tunnel 代理节点，部署在海外 VPS 上，通过 WebSocket 隧道为 Arca 实例中转 API 流量。
 
-Tunnel 模式下代理节点**无需对外监听端口**，仅需出站连接到 Aether 服务器。
+Tunnel 模式下代理节点**无需对外监听端口**，仅需出站连接到 Arca 服务器。
 
 ## 流式传输与升级注意事项
 
@@ -59,22 +59,22 @@ irm https://raw.githubusercontent.com/fawney19/Aether/main/apps/aether-tunnel/in
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fawney19/Aether/main/apps/aether-tunnel/install.sh | \
-  AETHER_TUNNEL_AETHER_URL="https://aether.example.com" \
-  AETHER_TUNNEL_MANAGEMENT_TOKEN="ae_xxx" \
-  AETHER_TUNNEL_NODE_NAME="jp-proxy-01" \
-  AETHER_TUNNEL_SECURITY="off" \
+  ARCA_TUNNEL_AETHER_URL="https://arca.example.com" \
+  ARCA_TUNNEL_MANAGEMENT_TOKEN="ae_xxx" \
+  ARCA_TUNNEL_NODE_NAME="jp-proxy-01" \
+  ARCA_TUNNEL_SECURITY="off" \
   sh
 ```
 
 ```powershell
-$env:AETHER_TUNNEL_AETHER_URL = "https://aether.example.com"
-$env:AETHER_TUNNEL_MANAGEMENT_TOKEN = "ae_xxx"
-$env:AETHER_TUNNEL_NODE_NAME = "jp-proxy-01"
-$env:AETHER_TUNNEL_SECURITY = "off"
+$env:ARCA_TUNNEL_AETHER_URL = "https://arca.example.com"
+$env:ARCA_TUNNEL_MANAGEMENT_TOKEN = "ae_xxx"
+$env:ARCA_TUNNEL_NODE_NAME = "jp-proxy-01"
+$env:ARCA_TUNNEL_SECURITY = "off"
 irm https://raw.githubusercontent.com/fawney19/Aether/main/apps/aether-tunnel/install.ps1 | iex
 ```
 
-可选变量：`AETHER_TUNNEL_RELEASE_TAG` 固定安装某个 `tunnel-v*` tag，`AETHER_TUNNEL_CONFIG` 指定配置文件路径，`AETHER_TUNNEL_INSTALL_DIR` 指定二进制安装目录。
+可选变量：`ARCA_TUNNEL_RELEASE_TAG` 固定安装某个 `tunnel-v*` tag，`ARCA_TUNNEL_CONFIG` 指定配置文件路径，`ARCA_TUNNEL_INSTALL_DIR` 指定二进制安装目录。
 
 ```bash
 # 1. 注册 root 系统服务前，先把二进制和凭据配置放入 root 管理的路径
@@ -118,8 +118,8 @@ Linux/macOS 可运行 `sudo aether-tunnel upgrade [version]`。自更新只接�
 配置按以下优先级加载（高优先级覆盖低优先级）：
 
 1. CLI 参数
-2. 环境变量（`AETHER_TUNNEL_*`）
-3. 配置文件（`aether-tunnel.toml`，或通过 `AETHER_TUNNEL_CONFIG` 指定路径）
+2. 环境变量（`ARCA_TUNNEL_*`（旧的 `AETHER_TUNNEL_*` 仍兼容））
+3. 配置文件（`aether-tunnel.toml`，或通过 `ARCA_TUNNEL_CONFIG` 指定路径）
 
 ### 参数一览
 
@@ -127,56 +127,56 @@ Linux/macOS 可运行 `sudo aether-tunnel upgrade [version]`。自更新只接�
 
 | 参数 | 环境变量 | 默认值 | 说明 |
 |------|----------|--------|------|
-| `--aether-url` | `AETHER_TUNNEL_AETHER_URL` | **必填** | Aether 服务器地址 |
-| `--management-token` | `AETHER_TUNNEL_MANAGEMENT_TOKEN` | **必填** | 管理员 Token（`ae_xxx` 格式） |
-| `--node-name` | `AETHER_TUNNEL_NODE_NAME` | **必填** | 节点名称标识 |
-| `--tunnel-security` | `AETHER_TUNNEL_SECURITY` | `off` | Aether ↔ tunnel 通道安全模式；支持 `off` / `non_tls_required`；在 `[[servers]]` 中省略该字段且 `http://` 提供 key 时会自动按 `non_tls_required` 生效 |
-| `--tunnel-encryption-key` | `AETHER_TUNNEL_ENCRYPTION_KEY` | 空 | secure tunnel 使用的长期 PSK（base64 32-byte），每个 `[[servers]]` 节点独立配置 |
-| `--public-ip` | `AETHER_TUNNEL_PUBLIC_IP` | 自动检测 | 公网 IP |
-| `--node-region` | `AETHER_TUNNEL_NODE_REGION` | 自动检测 | 地区标识 |
-| `--heartbeat-interval` | `AETHER_TUNNEL_HEARTBEAT_INTERVAL` | `5` | 心跳间隔（秒） |
-| `--allowed-ports` | `AETHER_TUNNEL_ALLOWED_PORTS` | `80,443,8080,8443` | 允许代理的目标端口 |
-| `--allow-private-targets` | `AETHER_TUNNEL_ALLOW_PRIVATE_TARGETS` | `false` | 默认拦截 private/reserved 目标地址；仅在明确需要访问内网服务时设为 `true`，通过后仍受 `allowed_ports` 限制 |
+| `--aether-url` | `ARCA_TUNNEL_AETHER_URL` | **必填** | Arca 服务器地址 |
+| `--management-token` | `ARCA_TUNNEL_MANAGEMENT_TOKEN` | **必填** | 管理员 Token（`ae_xxx` 格式） |
+| `--node-name` | `ARCA_TUNNEL_NODE_NAME` | **必填** | 节点名称标识 |
+| `--tunnel-security` | `ARCA_TUNNEL_SECURITY` | `off` | Arca ↔ tunnel 通道安全模式；支持 `off` / `non_tls_required`；在 `[[servers]]` 中省略该字段且 `http://` 提供 key 时会自动按 `non_tls_required` 生效 |
+| `--tunnel-encryption-key` | `ARCA_TUNNEL_ENCRYPTION_KEY` | 空 | secure tunnel 使用的长期 PSK（base64 32-byte），每个 `[[servers]]` 节点独立配置 |
+| `--public-ip` | `ARCA_TUNNEL_PUBLIC_IP` | 自动检测 | 公网 IP |
+| `--node-region` | `ARCA_TUNNEL_NODE_REGION` | 自动检测 | 地区标识 |
+| `--heartbeat-interval` | `ARCA_TUNNEL_HEARTBEAT_INTERVAL` | `5` | 心跳间隔（秒） |
+| `--allowed-ports` | `ARCA_TUNNEL_ALLOWED_PORTS` | `80,443,8080,8443` | 允许代理的目标端口 |
+| `--allow-private-targets` | `ARCA_TUNNEL_ALLOW_PRIVATE_TARGETS` | `false` | 默认拦截 private/reserved 目标地址；仅在明确需要访问内网服务时设为 `true`，通过后仍受 `allowed_ports` 限制 |
 
 #### Tunnel 连接
 
 | 参数 | 环境变量 | 默认值 | 说明 |
 |------|----------|--------|------|
-| `--tunnel-connections` | `AETHER_TUNNEL_CONNECTIONS` | 自动（硬件估算） | 最小连接池大小；显式设置后默认固定为该值 |
-| `--tunnel-connections-max` | `AETHER_TUNNEL_CONNECTIONS_MAX` | 自动（硬件估算） | 连接池自动扩容上限；大于 `tunnel_connections` 时启用 autoscale |
-| `--tunnel-max-streams` | `AETHER_TUNNEL_MAX_STREAMS` | 自动（硬件估算） | 单连接最大并发 stream 数 |
-| `--tunnel-profile` | `AETHER_TUNNEL_PROFILE` | `standard` | 自动连接池档位：`lite=2`、`standard=4`、`throughput=8+autoscale` |
-| `--tunnel-stream-initial-window-bytes` | `AETHER_TUNNEL_STREAM_INITIAL_WINDOW_BYTES` | `4194304` | v3 stream 初始流控窗口 |
-| `--tunnel-drain-deadline-ms` | `AETHER_TUNNEL_DRAIN_DEADLINE_MS` | `30000` | v3 GOAWAY/drain 优雅退出期限 |
-| `--tunnel-ping-interval-ms` | `AETHER_TUNNEL_PING_INTERVAL_MS` | `10000` | WebSocket ping 周期（毫秒） |
-| `--tunnel-connect-timeout-ms` | `AETHER_TUNNEL_CONNECT_TIMEOUT_MS` | `3000` | tunnel 建连超时（毫秒） |
-| `--tunnel-ipv4-only` | `AETHER_TUNNEL_IPV4_ONLY` | `false` | 仅使用 IPv4 地址建立直连 WebSocket tunnel；配置 `aether_outbound_proxy_url` 时仅限制代理端点解析 |
-| `--tunnel-ipv6-only` | `AETHER_TUNNEL_IPV6_ONLY` | `false` | 仅使用 IPv6 地址建立直连 WebSocket tunnel；配置 `aether_outbound_proxy_url` 时仅限制代理端点解析 |
-| `--tunnel-stale-timeout-ms` | `AETHER_TUNNEL_STALE_TIMEOUT_MS` | `30000` | 无入站数据断连阈值（毫秒） |
-| `--tunnel-scale-check-interval-ms` | `AETHER_TUNNEL_SCALE_CHECK_INTERVAL_MS` | `1000` | autoscale 采样周期（毫秒） |
-| `--tunnel-scale-up-threshold-percent` | `AETHER_TUNNEL_SCALE_UP_THRESHOLD_PERCENT` | `50` | 单 tunnel 占用率超过该值时扩容 |
-| `--tunnel-scale-down-threshold-percent` | `AETHER_TUNNEL_SCALE_DOWN_THRESHOLD_PERCENT` | `35` | 单 tunnel 占用率持续低于该值时允许缩容 |
-| `--tunnel-scale-down-grace-secs` | `AETHER_TUNNEL_SCALE_DOWN_GRACE_SECS` | `15` | 低负载持续时间达到该值后才回收次级 tunnel |
-| `--tunnel-tcp-keepalive-secs` | `AETHER_TUNNEL_TCP_KEEPALIVE_SECS` | `30` | TCP keepalive 初始延迟（秒） |
-| `--tunnel-tcp-nodelay` | `AETHER_TUNNEL_TCP_NODELAY` | `true` | 禁用 Nagle 算法 |
-| `--tunnel-reconnect-base-ms` | `AETHER_TUNNEL_RECONNECT_BASE_MS` | `50` | 指数退避基础延迟（毫秒） |
-| `--tunnel-reconnect-max-ms` | `AETHER_TUNNEL_RECONNECT_MAX_MS` | `250` | 指数退避上限（毫秒） |
+| `--tunnel-connections` | `ARCA_TUNNEL_CONNECTIONS` | 自动（硬件估算） | 最小连接池大小；显式设置后默认固定为该值 |
+| `--tunnel-connections-max` | `ARCA_TUNNEL_CONNECTIONS_MAX` | 自动（硬件估算） | 连接池自动扩容上限；大于 `tunnel_connections` 时启用 autoscale |
+| `--tunnel-max-streams` | `ARCA_TUNNEL_MAX_STREAMS` | 自动（硬件估算） | 单连接最大并发 stream 数 |
+| `--tunnel-profile` | `ARCA_TUNNEL_PROFILE` | `standard` | 自动连接池档位：`lite=2`、`standard=4`、`throughput=8+autoscale` |
+| `--tunnel-stream-initial-window-bytes` | `ARCA_TUNNEL_STREAM_INITIAL_WINDOW_BYTES` | `4194304` | v3 stream 初始流控窗口 |
+| `--tunnel-drain-deadline-ms` | `ARCA_TUNNEL_DRAIN_DEADLINE_MS` | `30000` | v3 GOAWAY/drain 优雅退出期限 |
+| `--tunnel-ping-interval-ms` | `ARCA_TUNNEL_PING_INTERVAL_MS` | `10000` | WebSocket ping 周期（毫秒） |
+| `--tunnel-connect-timeout-ms` | `ARCA_TUNNEL_CONNECT_TIMEOUT_MS` | `3000` | tunnel 建连超时（毫秒） |
+| `--tunnel-ipv4-only` | `ARCA_TUNNEL_IPV4_ONLY` | `false` | 仅使用 IPv4 地址建立直连 WebSocket tunnel；配置 `aether_outbound_proxy_url` 时仅限制代理端点解析 |
+| `--tunnel-ipv6-only` | `ARCA_TUNNEL_IPV6_ONLY` | `false` | 仅使用 IPv6 地址建立直连 WebSocket tunnel；配置 `aether_outbound_proxy_url` 时仅限制代理端点解析 |
+| `--tunnel-stale-timeout-ms` | `ARCA_TUNNEL_STALE_TIMEOUT_MS` | `30000` | 无入站数据断连阈值（毫秒） |
+| `--tunnel-scale-check-interval-ms` | `ARCA_TUNNEL_SCALE_CHECK_INTERVAL_MS` | `1000` | autoscale 采样周期（毫秒） |
+| `--tunnel-scale-up-threshold-percent` | `ARCA_TUNNEL_SCALE_UP_THRESHOLD_PERCENT` | `50` | 单 tunnel 占用率超过该值时扩容 |
+| `--tunnel-scale-down-threshold-percent` | `ARCA_TUNNEL_SCALE_DOWN_THRESHOLD_PERCENT` | `35` | 单 tunnel 占用率持续低于该值时允许缩容 |
+| `--tunnel-scale-down-grace-secs` | `ARCA_TUNNEL_SCALE_DOWN_GRACE_SECS` | `15` | 低负载持续时间达到该值后才回收次级 tunnel |
+| `--tunnel-tcp-keepalive-secs` | `ARCA_TUNNEL_TCP_KEEPALIVE_SECS` | `30` | TCP keepalive 初始延迟（秒） |
+| `--tunnel-tcp-nodelay` | `ARCA_TUNNEL_TCP_NODELAY` | `true` | 禁用 Nagle 算法 |
+| `--tunnel-reconnect-base-ms` | `ARCA_TUNNEL_RECONNECT_BASE_MS` | `50` | 指数退避基础延迟（毫秒） |
+| `--tunnel-reconnect-max-ms` | `ARCA_TUNNEL_RECONNECT_MAX_MS` | `250` | 指数退避上限（毫秒） |
 
 省略 `tunnel_connections` 时，tunnel 会按 `tunnel_profile` 和设备能力自动计算一个基线值和扩容上限：`standard` 默认至少保留 4 条常驻 tunnel；如果显式设置了 `tunnel_connections` 但没有设置 `tunnel_connections_max`，则保持固定连接池，不自动扩缩。
 
-`tunnel_ipv4_only` / `tunnel_ipv6_only` 只能二选一。它们只改变 WebSocket tunnel 回连的 TCP 地址选择：直连 Aether 时过滤 Aether 域名的 DNS 结果；配置 `aether_outbound_proxy_url` 时过滤代理服务器端点的 DNS 结果，Host/SNI 仍使用原始 WebSocket URL。该选项不会影响 provider 上游请求；如需限制 provider 上游流量，请在 `upstream_proxy_url` 或系统网络层处理。对于 Cloudflare 等边缘 IP 会变化的域名，优先使用该选项而不是固定 `/etc/hosts`。
+`tunnel_ipv4_only` / `tunnel_ipv6_only` 只能二选一。它们只改变 WebSocket tunnel 回连的 TCP 地址选择：直连 Arca 时过滤 Arca 域名的 DNS 结果；配置 `aether_outbound_proxy_url` 时过滤代理服务器端点的 DNS 结果，Host/SNI 仍使用原始 WebSocket URL。该选项不会影响 provider 上游请求；如需限制 provider 上游流量，请在 `upstream_proxy_url` 或系统网络层处理。对于 Cloudflare 等边缘 IP 会变化的域名，优先使用该选项而不是固定 `/etc/hosts`。
 
 #### 上游 HTTP 请求
 
 | 参数 | 环境变量 | 默认值 | 说明 |
 |------|----------|--------|------|
-| `--upstream-connect-timeout-secs` | `AETHER_TUNNEL_UPSTREAM_CONNECT_TIMEOUT` | `30` | 上游建连超时（秒） |
-| `--upstream-pool-max-idle-per-host` | `AETHER_TUNNEL_UPSTREAM_POOL_MAX_IDLE_PER_HOST` | `64` | 每 Host 最大空闲连接数 |
-| `--upstream-pool-idle-timeout-secs` | `AETHER_TUNNEL_UPSTREAM_POOL_IDLE_TIMEOUT` | `300` | 连接池空闲超时（秒） |
-| `--upstream-tcp-keepalive-secs` | `AETHER_TUNNEL_UPSTREAM_TCP_KEEPALIVE` | `60` | TCP keepalive（秒，0 关闭） |
-| `--upstream-tcp-nodelay` | `AETHER_TUNNEL_UPSTREAM_TCP_NODELAY` | `true` | 启用 TCP_NODELAY |
-| `--upstream-proxy-url` | `AETHER_TUNNEL_UPSTREAM_PROXY_URL` | 空 | 仅 provider 上游请求使用的出口代理 |
-| `--upstream-proxy-remote-dns` | `AETHER_TUNNEL_UPSTREAM_PROXY_REMOTE_DNS` | `false` | 显式信任 HTTP/SOCKS5h 代理解析供应商域名并执行目标 IP 访问控制；需重启 |
+| `--upstream-connect-timeout-secs` | `ARCA_TUNNEL_UPSTREAM_CONNECT_TIMEOUT` | `30` | 上游建连超时（秒） |
+| `--upstream-pool-max-idle-per-host` | `ARCA_TUNNEL_UPSTREAM_POOL_MAX_IDLE_PER_HOST` | `64` | 每 Host 最大空闲连接数 |
+| `--upstream-pool-idle-timeout-secs` | `ARCA_TUNNEL_UPSTREAM_POOL_IDLE_TIMEOUT` | `300` | 连接池空闲超时（秒） |
+| `--upstream-tcp-keepalive-secs` | `ARCA_TUNNEL_UPSTREAM_TCP_KEEPALIVE` | `60` | TCP keepalive（秒，0 关闭） |
+| `--upstream-tcp-nodelay` | `ARCA_TUNNEL_UPSTREAM_TCP_NODELAY` | `true` | 启用 TCP_NODELAY |
+| `--upstream-proxy-url` | `ARCA_TUNNEL_UPSTREAM_PROXY_URL` | 空 | 仅 provider 上游请求使用的出口代理 |
+| `--upstream-proxy-remote-dns` | `ARCA_TUNNEL_UPSTREAM_PROXY_REMOTE_DNS` | `false` | 显式信任 HTTP/SOCKS5h 代理解析供应商域名并执行目标 IP 访问控制；需重启 |
 
 启用 `follow_redirects` 后，同源 307/308 会在请求体不超过 5 MiB 时重放。首个上游请求始终流式传输；超过重放预算时不会拒绝或截断原请求，而是将 307/308 响应原样返回给调用方。
 
@@ -197,7 +197,7 @@ upstream_proxy_url = "socks5h://microwarp:1080"
 upstream_proxy_remote_dns = true
 ```
 
-也可启用环境变量 `AETHER_TUNNEL_UPSTREAM_PROXY_REMOTE_DNS=true`、CLI 参数
+也可启用环境变量 `ARCA_TUNNEL_UPSTREAM_PROXY_REMOTE_DNS=true`、CLI 参数
 `--upstream-proxy-remote-dns` 或 setup 中的 `Proxy Remote DNS` 开关，保存后重启。
 该模式仅支持 `http://` 和 `socks5h://`，不支持本地解析语义的 `socks5://`；未配置代理时
 启动会报错。域名原样交给 HTTP CONNECT/SOCKS5h，HTTP Host 和 TLS SNI/证书校验仍使用
@@ -210,39 +210,39 @@ upstream_proxy_remote_dns = true
 不可用，使用代理 IP 地址或修复本地解析。代理 DNS、TCP、CONNECT/SOCKS 和 TLS 握手共同
 受 `upstream_connect_timeout_secs` 限制。
 
-如果需要让 Aether 管理 API 和 WebSocket tunnel 也走代理，使用 `aether_outbound_proxy_url`。
+如果需要让 Arca 管理 API 和 WebSocket tunnel 也走代理，使用 `aether_outbound_proxy_url`。
 
-#### Aether API 客户端
+#### Arca API 客户端
 
 | 参数 | 环境变量 | 默认值 | 说明 |
 |------|----------|--------|------|
-| `--aether-request-timeout-secs` | `AETHER_TUNNEL_AETHER_REQUEST_TIMEOUT` | `10` | 请求总超时（秒） |
-| `--aether-connect-timeout-secs` | `AETHER_TUNNEL_AETHER_CONNECT_TIMEOUT` | `10` | 建连超时（秒） |
-| `--aether-outbound-proxy-url` | `AETHER_TUNNEL_AETHER_OUTBOUND_PROXY_URL` | 空 | Aether 注册、心跳和 WebSocket tunnel 回连使用的出口代理（默认不走代理） |
-| `--aether-retry-max-attempts` | `AETHER_TUNNEL_AETHER_RETRY_MAX_ATTEMPTS` | `3` | 最大重试次数 |
+| `--aether-request-timeout-secs` | `ARCA_TUNNEL_AETHER_REQUEST_TIMEOUT` | `10` | 请求总超时（秒） |
+| `--aether-connect-timeout-secs` | `ARCA_TUNNEL_AETHER_CONNECT_TIMEOUT` | `10` | 建连超时（秒） |
+| `--aether-outbound-proxy-url` | `ARCA_TUNNEL_AETHER_OUTBOUND_PROXY_URL` | 空 | Arca 注册、心跳和 WebSocket tunnel 回连使用的出口代理（默认不走代理） |
+| `--aether-retry-max-attempts` | `ARCA_TUNNEL_AETHER_RETRY_MAX_ATTEMPTS` | `3` | 最大重试次数 |
 
 #### DNS 与安全
 
 | 参数 | 环境变量 | 默认值 | 说明 |
 |------|----------|--------|------|
-| `--allow-private-targets` | `AETHER_TUNNEL_ALLOW_PRIVATE_TARGETS` | `false` | 默认拦截 private/reserved 目标地址；仅在明确需要访问内网服务时设为 `true`，且仅影响重启后的进程 |
-| `--dns-cache-ttl-secs` | `AETHER_TUNNEL_DNS_CACHE_TTL` | `60` | DNS 缓存 TTL（秒） |
-| `--dns-cache-capacity` | `AETHER_TUNNEL_DNS_CACHE_CAPACITY` | `1024` | DNS 缓存容量（条目数） |
+| `--allow-private-targets` | `ARCA_TUNNEL_ALLOW_PRIVATE_TARGETS` | `false` | 默认拦截 private/reserved 目标地址；仅在明确需要访问内网服务时设为 `true`，且仅影响重启后的进程 |
+| `--dns-cache-ttl-secs` | `ARCA_TUNNEL_DNS_CACHE_TTL` | `60` | DNS 缓存 TTL（秒） |
+| `--dns-cache-capacity` | `ARCA_TUNNEL_DNS_CACHE_CAPACITY` | `1024` | DNS 缓存容量（条目数） |
 
 #### 日志
 
 | 参数 | 环境变量 | 默认值 | 说明 |
 |------|----------|--------|------|
-| `--log-level` | `AETHER_TUNNEL_LOG_LEVEL` | `info` | 日志级别 |
-| `--log-destination` | `AETHER_TUNNEL_LOG_DESTINATION` | `both` | 输出到 `stdout`、文件或两者同时输出 |
-| `--log-dir` | `AETHER_TUNNEL_LOG_DIR` | `logs` | 文件日志目录，`file/both` 时必填 |
-| `--log-rotation` | `AETHER_TUNNEL_LOG_ROTATION` | `daily` | 文件日志按小时或按天轮转 |
-| `--log-retention-days` | `AETHER_TUNNEL_LOG_RETENTION_DAYS` | `7` | 文件日志保留天数 |
-| `--log-max-files` | `AETHER_TUNNEL_LOG_MAX_FILES` | `30` | 文件日志最多保留文件数 |
+| `--log-level` | `ARCA_TUNNEL_LOG_LEVEL` | `info` | 日志级别 |
+| `--log-destination` | `ARCA_TUNNEL_LOG_DESTINATION` | `both` | 输出到 `stdout`、文件或两者同时输出 |
+| `--log-dir` | `ARCA_TUNNEL_LOG_DIR` | `logs` | 文件日志目录，`file/both` 时必填 |
+| `--log-rotation` | `ARCA_TUNNEL_LOG_ROTATION` | `daily` | 文件日志按小时或按天轮转 |
+| `--log-retention-days` | `ARCA_TUNNEL_LOG_RETENTION_DAYS` | `7` | 文件日志保留天数 |
+| `--log-max-files` | `ARCA_TUNNEL_LOG_MAX_FILES` | `30` | 文件日志最多保留文件数 |
 
 ### 日志落点
 
-- 默认 `AETHER_TUNNEL_LOG_DESTINATION=both`，同时输出到 stdout 和 `logs/` 文件目录
+- 默认 `ARCA_TUNNEL_LOG_DESTINATION=both`，同时输出到 stdout 和 `logs/` 文件目录
 - 需要只交给容器日志驱动或宿主机服务管理器时，可改成 `stdout`；setup TUI 里可用 `Save Logs to File` 开关关闭文件日志
 - 文件日志固定写普通文本，并支持 `hourly/daily` 轮转；默认按天轮换、保留 7 天，最多保留 30 个文件
 - 以 `systemd` 或 `OpenRC` 安装时默认会额外打开文件日志到 `/var/log/aether-tunnel`
@@ -259,7 +259,7 @@ tunnel 会在心跳兼容字段 `proxy_metadata` 中主动上报隧道稳定性�
 
 ### 多服务器配置
 
-在 `aether-tunnel.toml` 中使用 `[[servers]]` 配置 Aether 服务器。即使只有一个服务器，也必须写成一个 `[[servers]]` 条目；旧的顶层单服务器写法已不再支持。
+在 `aether-tunnel.toml` 中使用 `[[servers]]` 配置 Arca 服务器。即使只有一个服务器，也必须写成一个 `[[servers]]` 条目；旧的顶层单服务器写法已不再支持。
 
 ```toml
 [[servers]]
