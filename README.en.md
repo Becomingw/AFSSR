@@ -1,12 +1,12 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero-dark.png" />
-    <img src="docs/assets/hero-light.png" alt="Arca — a self-hosted AI gateway" width="100%" />
+    <img src="docs/assets/hero-light.png" alt="Arca — a self-hosted AI gateway with group quotas and agent-assisted operations" width="100%" />
   </picture>
 </p>
 
 <p align="center">
-  One entry point for Claude, OpenAI, Gemini and their CLI clients — authentication, conversion, scheduling and quotas, all on your own servers.
+  One entry point for Claude, OpenAI and Gemini. Quotas are allocated to users and groups; day-to-day operations are handled through feedback and your own agent.
 </p>
 
 <p align="center">
@@ -21,10 +21,9 @@
 
 <br />
 
-> **One endpoint, every model.**
-> Models now come from many places: official APIs, subscription accounts, third-party compatible services — each with its own protocol, quota and reliability.
-> Clients just want the OpenAI, Claude or Gemini interface they already know; operators want one controllable, auditable entry point.
-> Arca sits between the two and keeps routing, conversion, limits and metering in one place.
+> **Quotas for people, operations for agents.**
+> A team using AI internally doesn't need a checkout counter. It needs three answers: who may use which models, how much can be spent in a month, and who looks into it when something breaks.
+> Arca removes top-ups and payments and puts quotas on users and groups; user feedback, an admin MCP and your own agent then take over routine diagnosis and maintenance.
 
 <p align="center">
   <img src="docs/assets/overview.jpg" alt="Arca operations overview: QPS, SLA, time to first token, concurrency and queues" width="88%" />
@@ -35,28 +34,61 @@
 <table>
   <tr>
     <td width="33%" valign="top">
-      <h3>Protocol-agnostic</h3>
-      OpenAI Chat / Responses, Claude Messages and Gemini <code>generateContent</code> are all first-class entry points, with two-way conversion between them covering streaming, tool calls and reasoning content. Same-protocol requests pass through natively.
+      <h3>Quotas, not commerce</h3>
+      No top-ups, plans, payments or referral rewards. Administrators set USD budgets per user and per group — rolling five hours, weekly and monthly — and can go down to a single model when needed.
     </td>
     <td width="33%" valign="top">
-      <h3>Reliable and controllable</h3>
-      Candidates are ranked by priority, health and cache affinity; failures retry and fail over automatically. Subscription-style upstreams are managed as account pools with live quota and status, and unavailable accounts are dropped automatically.
+      <h3>Agents in the loop</h3>
+      Users file feedback in the app; an agent reads and diagnoses it through the admin MCP, and changes only happen after a preview and a single-use confirmation. Authority is always "current user role ∩ key scopes".
     </td>
     <td width="33%" valign="top">
-      <h3>Self-hosted</h3>
-      One Rust binary serves both the API and the frontend. It needs PostgreSQL; Redis is optional. Data and keys stay in your own environment — generated and held by you.
+      <h3>Protocol-agnostic, dependable</h3>
+      Clients use OpenAI Responses, Claude Messages or OpenAI Chat; the gateway converts and schedules to any upstream, retrying and failing over when requests fail.
     </td>
   </tr>
 </table>
 
+## How Arca differs from Aether
+
+Arca is derived from [Aether](https://github.com/fawney19/Aether), with deliberately different goals:
+
+| | Aether | Arca |
+| --- | --- | --- |
+| Use case | Built-in commercial features, can be operated publicly | Internal team use, quotas allocated by administrators |
+| Quota model | Wallet balance, plans and paid daily quotas | USD budgets per group and per user, with optional model-family or per-model sub-pools |
+| Payments and billing | Top-ups, refunds, redeem codes, plan purchase, referral rewards, payment gateways | Removed; the routes return 404 in internal mode. Upstream cost and usage are still recorded for accounting |
+| Operations | Manual work in the console | User feedback plus an admin MCP; agents assist within permission, preview and confirmation limits |
+| Client protocols | OpenAI, Claude and Gemini entry points | Primarily OpenAI Responses (including Codex), Claude Messages and OpenAI Chat; native Gemini is an upstream adapter |
+
+> Existing financial history is neither deleted nor migrated; internal requests simply are not charged. See [internal gateway mode](docs/operations/internal-gateway.md).
+
 ## Features
+
+### Group quotas
+
+- **USD budgets**: each group and each user can have rolling five-hour, weekly and monthly total budgets, with sub-pools per model family or per model (including daily limits).
+- **Clear inheritance**: a personal allocation fully replaces the group allocation; across groups, the larger value wins per window; `unlimited` is an explicit exemption.
+- **Grants and quotas are separate**: a quota entry never grants model access; model permissions are configured on users and groups.
+- **Concurrency-safe**: admission and reservation happen in PostgreSQL; policy writes carry a version check, so a stale write returns 409 instead of overwriting someone else's change.
+
+<p align="center">
+  <img src="docs/assets/quota.jpg" alt="User benefits: five-hour, weekly and monthly allocations per group and per user" width="88%" />
+</p>
+
+### Feedback-driven, agent-assisted operations
+
+- **User feedback**: an issue-style discussion with category, description, linked model or request, public or private visibility and an append-only history; users and administrators each have their own entry. See [feedback](docs/operations/feedback.md).
+- **Request diagnostics**: feedback can carry a request-diagnostics summary, which requires both feedback-write and monitoring-read permission. See [request diagnostics](docs/operations/request-diagnostics.md).
+- **Admin MCP**: a built-in `/mcp` endpoint covers users, grants, providers, models, routing, pools, statistics and health; writes are preview-only by default and execution needs a single-use confirmation ticket bound to the exact arguments. See [Agent MCP](docs/operations/agent-mcp.md).
+- **Bounded agents**: no arbitrary URL, SQL, shell or container commands; credential plaintext is never returned; logs and announcements are treated as untrusted data; feedback content is never execution authority.
+- **Model compatibility tests**: run synthetic connectivity and compatibility tests against provider models through the MCP. See [model compatibility](docs/operations/model-compatibility.md).
 
 ### Unified access and protocol conversion
 
-- **Multiple protocol entry points**: OpenAI Chat / Responses / Realtime, Claude Messages, Gemini `generateContent`, plus Embeddings, Rerank, image and video tasks, and Gemini Files.
-- **Two-way conversion**: requests and responses convert between OpenAI, Claude and Gemini; the conversion contract and field coverage matrix are published in [docs/api](docs/api/).
+- **Client protocols**: OpenAI Responses (including Codex), Claude Messages, OpenAI Chat Completions; Embeddings, Rerank and others are in [docs/api](docs/api/).
+- **Two-way conversion**: requests and responses convert between OpenAI, Claude and Gemini, including streaming, tool calls and reasoning content; the conversion contract and field coverage matrix are published in [docs/api](docs/api/).
 - **Per-model interface restriction**: restrict a model mapping to specific interface types and endpoints — for example, make an upstream model use only the native Gemini interface and bypass an incomplete compatibility layer.
-- **Model catalog and mappings**: global models are decoupled from each provider's real model names, with aliases, tiered pricing and model directives.
+- **Model catalog and mappings**: global models are decoupled from each provider's real model names, with aliases and tiered pricing.
 
 ### Scheduling and reliability
 
@@ -70,35 +102,23 @@
   <img src="docs/assets/health.jpg" alt="Health monitoring from endpoint, model and provider perspectives" width="49%" />
 </p>
 
-### Multi-tenancy, quotas and cost
+### Operations and security
 
-- **Users, groups and API keys** with per-model grants, IP allow/deny lists and audit logs.
-- **Quotas**: rolling and calendar request caps and shared monthly cost budgets; users without an allocation are denied by default. See [internal gateway mode](docs/operations/internal-gateway.md).
-- **Wallets and billing**: billing plans, wallets, referral rewards and payment gateways, plus cost and cache-savings analysis.
-
-### Operations and integrations
-
-- **Admin console**: providers and endpoints, models, routing strategies, users and keys, usage and cost, system settings; Chinese and English UI.
-- **Admin MCP**: a built-in `/mcp` endpoint using user-bound admin keys, with preview-and-confirm for writes. See [Agent MCP](docs/operations/agent-mcp.md).
 - **One-step Linux setup**: generate a one-time command on the API keys page to configure Codex CLI / Claude Code on a server. See the [setup guide](docs/operations/linux-client-setup.md).
 - **Tunnel proxy node**: deployed on an overseas VPS to relay outbound traffic. See the [Tunnel docs](apps/aether-tunnel/README.md).
-- **Observability**: per-request usage and timing, request diagnostics, request body viewer, Prometheus metrics.
-
-### Security
-
-- Upstream credentials and sensitive settings are stored encrypted; backups use an encrypted format with key identifiers and support [offline restore](docs/configuration.md#s3-备份离线恢复).
-- Body-size and concurrency budgets, outbound DNS and proxy policy, PII redaction and restoration, LDAP and OAuth sign-in.
+- **Observability**: per-request usage and timing, request body viewer, Prometheus metrics; audit logs and IP allow/deny lists.
+- **Security**: upstream credentials are stored encrypted; backups use an encrypted format with key identifiers and support [offline restore](docs/configuration.md#s3-备份离线恢复); body-size and concurrency budgets, outbound DNS and proxy policy, PII redaction and restoration, LDAP and OAuth sign-in.
 
 ## Architecture
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/architecture/architecture-dark.svg" />
-    <img src="docs/architecture/architecture-light.svg" alt="Arca architecture: clients pass through the gateway for authentication, resolution, scheduling, conversion and metering before reaching upstreams" width="100%" />
+    <img src="docs/architecture/architecture-light.svg" alt="Arca architecture: clients pass through the gateway for authentication, resolution, scheduling, conversion and quota metering before reaching upstreams" width="100%" />
   </picture>
 </p>
 
-A request passes through: authentication and admission → model resolution → candidate selection and failover → protocol conversion (if needed) → usage and billing. Besides official APIs, the gateway ships provider templates for `codex`, `claude_code`, `gemini_cli`, `antigravity`, `vertex_ai`, `kiro`, `chatgpt_web`, `grok`, `windsurf` and `opencode_go`, and supports any OpenAI-, Claude- or Gemini-compatible custom endpoint.
+A request passes through: authentication and admission → model resolution → candidate selection and failover → protocol conversion (if needed) → quota and usage. Besides official APIs, the gateway ships provider templates for `codex`, `claude_code`, `gemini_cli`, `antigravity`, `vertex_ai`, `kiro`, `chatgpt_web`, `grok`, `windsurf` and `opencode_go`, and supports any OpenAI-, Claude- or Gemini-compatible custom endpoint.
 
 ## Quick start
 
@@ -119,7 +139,7 @@ cp .env.example .env && chmod 600 .env
 docker compose up -d
 ```
 
-Open `http://localhost:8084`, sign in with `ADMIN_USERNAME` / `ADMIN_PASSWORD` from `.env`, then add providers, models and API keys. When upgrading, do not replace the generated secrets; the database schema migrates automatically on start, and `make db-status` lets you inspect it first.
+Open `http://localhost:8084`, sign in with `ADMIN_USERNAME` / `ADMIN_PASSWORD` from `.env`, then add providers, models, groups and quotas, and issue API keys to users. When upgrading, do not replace the generated secrets; the database schema migrates automatically on start, and `make db-status` lets you inspect it first.
 
 More: [configuration reference](docs/configuration.md) (Chinese) · [release notes and building your own image](docs/ARCA.md) · [Linux client setup](docs/operations/linux-client-setup.md).
 
@@ -135,9 +155,13 @@ npm ci
 VITE_DEMO_MODE=true npm run dev
 ```
 
-Open the address printed in the terminal, sign out of the default demo user, then sign in as `admin@demo.arca.io` / `demo123` for the administrator view. All data is simulated and no real calls are made.
+Open the address printed in the terminal, sign out of the default demo user, then sign in as `admin@demo.arca.io` / `demo123` for the administrator view. All data is simulated and no real calls are made; the feedback and MCP pages have no mock data in demo mode.
 
 </details>
+
+## Status
+
+Internal gateway mode (group quotas), user feedback and the admin MCP are still in development and acceptance, and have not been validated in production. Known remaining work is listed in the [internal gateway document](docs/operations/internal-gateway.md#remaining-roadmap). Read the [release notes](docs/ARCA.md) before upgrading.
 
 ## Documentation
 
@@ -145,8 +169,8 @@ Open the address printed in the terminal, sign out of the default demo user, the
 | --- | --- |
 | Configuration, environment variables, S3 backup restore | [docs/configuration.md](docs/configuration.md) (Chinese) |
 | Release notes and building your own image | [docs/ARCA.md](docs/ARCA.md) |
-| Internal gateway mode · admin MCP · routing and failover | [internal-gateway](docs/operations/internal-gateway.md) · [agent-mcp](docs/operations/agent-mcp.md) · [routing-failover](docs/operations/routing-failover.md) |
-| Model compatibility testing · request diagnostics | [model-compatibility](docs/operations/model-compatibility.md) · [request-diagnostics](docs/operations/request-diagnostics.md) |
+| Internal gateway mode · user feedback · admin MCP | [internal-gateway](docs/operations/internal-gateway.md) · [feedback](docs/operations/feedback.md) · [agent-mcp](docs/operations/agent-mcp.md) |
+| Routing and failover · model compatibility · request diagnostics | [routing-failover](docs/operations/routing-failover.md) · [model-compatibility](docs/operations/model-compatibility.md) · [request-diagnostics](docs/operations/request-diagnostics.md) |
 | Protocols: Embeddings · Rerank · Responses WebSocket | [embeddings](docs/api/embeddings.md) · [rerank](docs/api/rerank.md) · [WebSocket-Mode](docs/WebSocket-Mode.md) |
 | Format conversion contract and coverage | [passthrough contract](docs/api/format-passthrough-contract.md) · [field matrix](docs/api/format-field-coverage-matrix.md) · [interface definitions](docs/api/provider-interface-definitions.md) |
 | Runbooks | [Redis runtime](docs/operations/redis-runtime-runbook.md) · [TLS fingerprint](docs/operations/tls-fingerprint-capture.md) · [all](docs/operations/) |
