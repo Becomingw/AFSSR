@@ -1,12 +1,13 @@
 <template>
   <AppShell
+    class="workspace-console"
     :show-notice="showAuthError"
     :main-class="mainClasses"
     :sidebar-class="sidebarClasses"
     :content-class="contentClasses"
   >
     <template #notice>
-      <div class="flex w-full max-w-3xl flex-wrap items-center justify-between gap-3 rounded-3xl bg-orange-500 px-6 py-3 text-white shadow-2xl ring-1 ring-white/30">
+      <div class="flex w-full max-w-3xl flex-wrap items-center justify-between gap-3 rounded-md bg-amber-600 px-6 py-3 text-white shadow-sm">
         <div class="flex min-w-0 items-center gap-3">
           <AlertTriangle class="h-5 w-5 shrink-0" />
           <span class="break-words">{{ t('auth.expired') }}</span>
@@ -122,7 +123,7 @@
         >
           <div
             :key="sidebarCollapsed ? 'collapsed-footer' : 'expanded-footer'"
-            class="border-t border-[#3d3929]/5 dark:border-white/5"
+            class="border-t border-border"
             :class="sidebarCollapsed ? 'max-w-16 p-2' : 'p-4'"
           >
             <div
@@ -134,7 +135,7 @@
                 :class="sidebarCollapsed ? 'justify-center' : 'gap-3'"
               >
                 <div
-                  class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-black/5 bg-[#f0f0eb] text-xs font-bold text-[#3d3929] dark:bg-white/10 dark:text-[#d4a27f]"
+                  class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted text-xs font-semibold text-foreground"
                   :title="sidebarCollapsed ? authStore.user?.username : undefined"
                 >
                   {{ authStore.user?.username?.substring(0, 2).toUpperCase() }}
@@ -144,7 +145,7 @@
                   class="flex min-w-0 flex-col"
                 >
                   <span class="truncate text-xs font-semibold leading-none text-foreground opacity-90">{{ authStore.user?.username }}</span>
-                  <span class="mt-1.5 text-[10px] leading-none text-muted-foreground opacity-50">{{ currentRoleLabel }}</span>
+                  <span class="mt-1.5 break-words text-xs leading-4 text-muted-foreground">{{ currentRoleLabel }}</span>
                 </div>
               </div>
 
@@ -177,7 +178,7 @@
 
     <template #header>
       <!-- Mobile Header (matches Home page style) -->
-      <header class="lg:hidden fixed top-0 left-0 right-0 z-50 border-b border-[var(--shell-border)] bg-[var(--shell-glass)] backdrop-blur-xl transition-all">
+      <header class="console-topbar lg:hidden fixed top-0 left-0 right-0 z-50 border-b border-[var(--shell-border)] bg-[var(--shell-glass)] transition-colors">
         <div class="mx-auto max-w-7xl px-4 py-4 sm:px-6">
           <div class="flex min-w-0 items-center justify-between gap-2">
             <!-- Logo & Brand -->
@@ -284,8 +285,8 @@
                       :to="item.href"
                       class="flex min-w-0 items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-all"
                       :class="isNavActive(item.href)
-                        ? 'bg-[#cc785c]/10 dark:bg-[#cc785c]/20 text-[#cc785c] dark:text-[#d4a27f]'
-                        : 'text-[#666663] dark:text-muted-foreground hover:bg-black/5 dark:hover:bg-white/5 hover:text-[#191919] dark:hover:text-white'"
+                        ? 'bg-accent text-primary'
+                        : 'text-muted-foreground hover:bg-muted hover:text-foreground'"
                       @pointerenter="prefetchNavigationItem(item.href)"
                       @pointerdown="prefetchNavigationItem(item.href)"
                       @focus="prefetchNavigationItem(item.href)"
@@ -302,15 +303,15 @@
               </div>
 
               <!-- User Section -->
-              <div class="mt-4 pt-4 border-t border-[#cc785c]/10 dark:border-[rgba(227,224,211,0.12)]">
+              <div class="mt-4 pt-4 border-t border-border">
                 <div class="flex items-center justify-between">
                   <div class="flex items-center gap-3 min-w-0">
-                    <div class="w-8 h-8 rounded-full bg-[#f0f0eb] dark:bg-white/10 border border-black/5 flex items-center justify-center text-xs font-bold text-[#3d3929] dark:text-[#d4a27f] shrink-0">
+                    <div class="w-8 h-8 rounded-md bg-muted flex items-center justify-center text-xs font-semibold text-foreground shrink-0">
                       {{ authStore.user?.username?.substring(0, 2).toUpperCase() }}
                     </div>
                     <div class="flex flex-col min-w-0">
                       <span class="text-sm font-semibold leading-none truncate text-[#191919] dark:text-white">{{ authStore.user?.username }}</span>
-                      <span class="text-[10px] text-[#91918d] dark:text-muted-foreground leading-none mt-1">{{ currentRoleLabel }}</span>
+                      <span class="text-xs text-muted-foreground leading-4 mt-1">{{ currentRoleLabel }}</span>
                     </div>
                   </div>
                   <div class="flex shrink-0 items-center gap-1">
@@ -340,7 +341,7 @@
       </header>
 
       <!-- Desktop Page Header -->
-      <header class="hidden lg:flex min-h-16 gap-4 px-8 py-3 items-center justify-between shrink-0 border-b border-[#3d3929]/5 dark:border-white/5 sticky top-0 z-40 backdrop-blur-md bg-[#faf9f5]/90 dark:bg-[#191714]/90">
+      <header class="console-topbar hidden lg:flex min-h-14 gap-4 px-8 py-2 items-center justify-between shrink-0 border-b sticky top-0 z-40">
         <div class="flex min-w-0 flex-col gap-0.5">
           <div class="flex min-w-0 flex-wrap items-center gap-2 text-sm text-muted-foreground">
             <template
@@ -407,7 +408,7 @@
           <ThemeModeButton />
           <!-- GitHub Link -->
           <a
-            href="https://github.com/fawney19/Aether"
+            :href="ARCA_REPOSITORY_URL"
             target="_blank"
             rel="noopener noreferrer"
             class="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition"
@@ -529,6 +530,8 @@ import { prefetchNavigationTarget } from '@/utils/adminNavigationPrefetch'
 import { sanitizeMarkdown } from '@/utils/sanitize'
 import { useI18n, type MessageKey } from '@/i18n'
 import { buildBreadcrumbs, buildNavigation } from './main-layout/navigation'
+import { adminRoleLabel } from '@/config/adminRoles'
+import { ARCA_REPOSITORY_URL } from '@/constants/arcaBrand'
 
 type SystemUpdatePhase = 'download' | 'restart' | 'reconnecting'
 
@@ -1218,6 +1221,7 @@ function prefetchNavigationItem(href: string) {
 const navigation = computed(() => {
   return buildNavigation({
     canAccessAdmin: authStore.canAccessAdmin,
+    role: authStore.user?.role,
     modules: moduleStore.modules,
     isModuleActive: moduleStore.isActive,
     t,
@@ -1225,9 +1229,7 @@ const navigation = computed(() => {
 })
 
 const currentRoleLabel = computed(() => {
-  if (authStore.isAdmin) return t('auth.role.admin')
-  if (authStore.isAuditAdmin) return t('auth.role.auditAdmin')
-  return t('auth.role.user')
+  return adminRoleLabel(authStore.user?.role)
 })
 
 const breadcrumbs = computed(() => buildBreadcrumbs({
@@ -1238,14 +1240,14 @@ const breadcrumbs = computed(() => buildBreadcrumbs({
   t,
 }))
 
-// Styling Classes (Editorial)
+// Keep the navigation rail stable when switching between dense data pages.
 const sidebarClasses = computed(() => {
-    const widthClass = sidebarCollapsed.value ? 'w-16' : 'w-[260px]'
-    return `${widthClass} flex-col hidden lg:flex border-r border-[#3d3929]/5 dark:border-white/5 bg-[#faf9f5] dark:bg-[#1e1c19] h-screen sticky top-0 transition-[width] [transition-duration:240ms] [transition-timing-function:cubic-bezier(0.4,0,0.2,1)] motion-reduce:transition-none`
+    const widthClass = sidebarCollapsed.value ? 'w-16' : 'w-[232px]'
+    return `${widthClass} flex-col hidden lg:flex border-r h-screen sticky top-0 transition-[width] duration-200 motion-reduce:transition-none`
 })
 
 const contentClasses = computed(() => {
-    return `flex-1 min-w-0 bg-[#faf9f5] dark:bg-[#191714] text-[#3d3929] dark:text-[#d4a27f]`
+    return 'flex-1 min-w-0 bg-background text-foreground'
 })
 
 const mainClasses = computed(() => {

@@ -228,7 +228,7 @@
         <div class="flex items-center gap-2">
           <ThemeModeButton />
           <a
-            href="https://github.com/fawney19/Aether"
+            :href="ARCA_REPOSITORY_URL"
             target="_blank"
             rel="noopener noreferrer"
             class="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition"
@@ -304,6 +304,7 @@ import AppShell from '@/components/layout/AppShell.vue'
 import { useSiteInfo } from '@/composables/useSiteInfo'
 import { useI18n } from '@/i18n'
 import { guideNavItems } from './guide-config'
+import { ARCA_REPOSITORY_URL } from '@/constants/arcaBrand'
 
 const route = useRoute()
 const { siteName, siteSubtitle } = useSiteInfo()

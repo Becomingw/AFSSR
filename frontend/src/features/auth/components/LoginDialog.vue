@@ -8,7 +8,7 @@
       <!-- Logo 和标题 -->
       <div class="flex flex-col items-center text-center mb-8">
         <img
-          src="/aether_adaptive.svg"
+          src="/arca.svg"
           :alt="siteName"
           class="h-16 w-16 mb-4"
         >

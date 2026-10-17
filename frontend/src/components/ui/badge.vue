@@ -46,7 +46,11 @@ const badgeClass = computed(() =>
 </script>
 
 <template>
-  <div :class="badgeClass">
+  <div
+    data-ui="badge"
+    :data-variant="props.variant"
+    :class="badgeClass"
+  >
     <slot />
   </div>
 </template>

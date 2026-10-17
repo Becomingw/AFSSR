@@ -1,13 +1,10 @@
 <template>
-  <div class="space-y-5 px-4 pb-8 sm:px-6 lg:px-0">
-    <div class="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+  <div class="operations-page space-y-5 px-4 pb-8 sm:px-6 lg:px-0">
+    <div class="console-page-header">
       <div>
-        <h1 class="text-lg font-semibold">
+        <h1 class="console-page-title">
           运维总览
         </h1>
-        <p class="text-xs text-muted-foreground">
-          统一查看流量、吞吐、延迟、错误、上游健康、缓存与审计风险
-        </p>
       </div>
       <div class="flex flex-wrap items-center gap-2">
         <span class="text-xs text-muted-foreground">
@@ -37,44 +34,41 @@
 
     <div
       v-if="loadWarning"
-      class="rounded-lg border border-yellow-300/70 bg-yellow-50/80 px-3 py-2 text-xs text-yellow-900 dark:border-yellow-900/60 dark:bg-yellow-950/30 dark:text-yellow-100"
+      role="status"
+      class="ops-warning"
     >
-      {{ loadWarning }}
+      <AlertTriangle class="h-4 w-4 shrink-0" /><span>{{ loadWarning }}</span>
     </div>
 
-    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8">
-      <Card
+    <div
+      class="ops-kpi-band"
+      aria-label="运行指标"
+    >
+      <div
         v-for="card in kpiCards"
         :key="card.title"
-        class="min-h-[118px] p-4"
+        class="ops-kpi"
       >
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">
-            <p class="truncate text-xs text-muted-foreground">
+            <p class="ops-kpi-label">
               {{ card.title }}
             </p>
             <div
-              class="mt-2 truncate text-2xl font-semibold tabular-nums"
+              class="ops-kpi-value"
               :class="card.valueClass"
             >
               {{ card.value }}
             </div>
           </div>
-          <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-muted/30">
-            <component
-              :is="card.icon"
-              class="h-4 w-4"
-              :class="card.iconClass"
-            />
-          </div>
         </div>
-        <p class="mt-3 line-clamp-2 text-xs text-muted-foreground">
+        <p class="ops-kpi-hint">
           {{ card.hint }}
         </p>
-      </Card>
+      </div>
     </div>
 
-    <div class="grid grid-cols-1 gap-4 xl:grid-cols-3">
+    <div class="ops-split grid grid-cols-1 gap-4 xl:grid-cols-3">
       <Card class="overflow-hidden xl:col-span-2">
         <div class="border-b border-border/70 bg-muted/20 px-4 py-3">
           <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -97,6 +91,14 @@
             class="py-12"
           >
             <LoadingState message="加载流量趋势中" />
+          </div>
+          <div
+            v-else-if="!timeSeries.length"
+            role="status"
+            class="ops-chart-empty h-[302px]"
+          >
+            <ChartNoAxesCombined class="h-7 w-7" />
+            <span>暂无可显示的流量数据</span>
           </div>
           <div
             v-else
@@ -153,7 +155,7 @@
               :value="formatMetricNumber(currentProxyConnections)"
             />
           </div>
-          <div class="rounded-lg border border-border/60 bg-background/45 px-3 py-3">
+          <div class="ops-queue">
             <div class="flex items-center justify-between gap-3 text-xs">
               <span class="text-muted-foreground">队列利用率</span>
               <span class="font-medium tabular-nums">{{ tunnelQueueUtilizationText }}</span>
@@ -173,7 +175,7 @@
       </Card>
     </div>
 
-    <div class="grid grid-cols-1 gap-4 xl:grid-cols-4 2xl:grid-cols-5">
+    <div class="ops-infrastructure grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
       <Card class="overflow-hidden">
         <div class="border-b border-border/70 bg-muted/20 px-4 py-3">
           <div class="flex items-center justify-between gap-3">
@@ -676,6 +678,14 @@
             <LoadingState message="加载延迟百分位中" />
           </div>
           <div
+            v-else-if="!percentiles.length"
+            role="status"
+            class="ops-chart-empty h-[288px]"
+          >
+            <ChartNoAxesCombined class="h-7 w-7" />
+            <span>暂无可显示的延迟数据</span>
+          </div>
+          <div
             v-else
             class="h-[288px]"
           >
@@ -1027,6 +1037,7 @@ import {
   Activity,
   AlertTriangle,
   BarChart3,
+  ChartNoAxesCombined,
   CircleDollarSign,
   Database,
   Gauge,
@@ -1063,9 +1074,9 @@ const MetricCell = defineComponent<MetricCellProps>({
     valueClass: { type: String, default: '' },
   },
   setup(props) {
-    return () => h('div', { class: 'rounded-lg border border-border/60 bg-background/45 px-3 py-3' }, [
+    return () => h('div', { class: 'ops-metric' }, [
       h('div', { class: 'text-xs text-muted-foreground' }, props.label),
-      h('div', { class: ['mt-1 truncate text-lg font-semibold tabular-nums', props.valueClass] }, props.value),
+      h('div', { class: ['ops-metric-value', props.valueClass] }, props.value),
     ])
   },
 })
@@ -2222,3 +2233,5 @@ onUnmounted(() => {
   analyticsGeneration += 1
 })
 </script>
+
+<style src="./operations.css" />

@@ -4,9 +4,9 @@
 
 // 应用配置
 export const APP_CONFIG = {
-  NAME: 'Aether',
+  NAME: 'Arca',
   VERSION: '9.1.0',
-  DESCRIPTION: 'Claude API 代理服务管理平台',
+  DESCRIPTION: 'AI 模型接入与权益管理平台',
 } as const
 
 // 网络配置

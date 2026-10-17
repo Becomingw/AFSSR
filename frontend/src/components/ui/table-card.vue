@@ -1,5 +1,5 @@
 <template>
-  <Card class="overflow-hidden">
+  <section class="min-w-0 overflow-hidden border-y border-border bg-card">
     <!-- 标题和操作栏 -->
     <div
       v-if="$slots.header || title"
@@ -28,11 +28,10 @@
 
     <!-- 分页 -->
     <slot name="pagination" />
-  </Card>
+  </section>
 </template>
 
 <script setup lang="ts">
-import { Card } from '@/components/ui'
 
 interface Props {
   title?: string

@@ -34,6 +34,7 @@
         >
           <div
             v-if="isOpen"
+            data-ui="dialog"
             class="relative flex max-h-[100dvh] w-full transform flex-col overflow-hidden rounded-t-xl border border-x-0 border-b-0 border-border bg-background text-left shadow-2xl transition-all pointer-events-auto sm:my-8 sm:w-full sm:max-h-[calc(100dvh-4rem)] sm:rounded-lg sm:border"
             :style="{ zIndex: contentZIndex }"
             :class="maxWidthClass"

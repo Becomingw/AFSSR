@@ -18,7 +18,7 @@ const props = withDefaults(defineProps<Props>(), {
 })
 
 const containerClasses = computed(() => {
-  const classes = ['w-full mx-auto']
+  const classes = ['console-page-container w-full min-w-0 mx-auto']
 
   // Max width
   const maxWidthMap = {

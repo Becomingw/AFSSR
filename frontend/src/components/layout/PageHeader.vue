@@ -1,11 +1,11 @@
 <template>
-  <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+  <header class="console-page-header flex min-w-0 flex-wrap items-center justify-between gap-3">
     <div class="min-w-0 flex-1">
       <div class="flex min-w-0 items-center gap-3">
         <slot name="icon">
           <div
             v-if="icon"
-            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10"
+            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary/10"
           >
             <component
               :is="icon"
@@ -15,7 +15,7 @@
         </slot>
 
         <div class="min-w-0">
-          <h1 class="break-words text-2xl font-semibold text-foreground sm:text-3xl">
+          <h1 class="console-page-title break-words text-xl font-semibold text-foreground">
             {{ title }}
           </h1>
           <p
@@ -30,11 +30,11 @@
 
     <div
       v-if="$slots.actions"
-      class="flex min-w-0 flex-wrap items-center gap-2 sm:max-w-[50%] sm:justify-end"
+      class="flex min-w-0 max-w-full flex-wrap items-center gap-2 sm:justify-end"
     >
       <slot name="actions" />
     </div>
-  </div>
+  </header>
 </template>
 
 <script setup lang="ts">

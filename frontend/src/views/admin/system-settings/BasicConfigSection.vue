@@ -13,7 +13,7 @@
       </Button>
     </template>
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-      <div>
+      <div v-if="!INTERNAL_GATEWAY">
         <Label
           for="default-quota"
           class="block text-sm font-medium"
@@ -242,7 +242,7 @@
         </div>
       </div>
 
-      <div class="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4 border-t pt-5">
+      <div v-if="!INTERNAL_GATEWAY" class="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4 border-t pt-5">
         <div class="flex items-center h-full">
           <div class="flex items-center space-x-2">
             <Checkbox
@@ -445,6 +445,7 @@
 
 <script setup lang="ts">
 import Button from '@/components/ui/button.vue'
+import { INTERNAL_GATEWAY } from '@/config/internalGateway'
 import Input from '@/components/ui/input.vue'
 import Label from '@/components/ui/label.vue'
 import Textarea from '@/components/ui/textarea.vue'

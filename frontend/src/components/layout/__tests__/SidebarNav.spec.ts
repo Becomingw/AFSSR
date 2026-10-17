@@ -65,6 +65,8 @@ describe('SidebarNav', () => {
     expect(root.textContent).toContain('Dashboard')
     expect(root.querySelectorAll('[data-sidebar-group-divider]')).toHaveLength(0)
     const expandedDashboardLink = root.querySelector('a[href="/dashboard"]')
+    expect(expandedDashboardLink?.getAttribute('aria-current')).toBe('page')
+    expect(root.querySelector('a[href="/usage"]')?.hasAttribute('aria-current')).toBe(false)
     expect(expandedDashboardLink?.hasAttribute('aria-label')).toBe(false)
     expect(expandedDashboardLink?.classList.contains('py-2')).toBe(true)
     expect(expandedDashboardLink?.classList.contains('h-9')).toBe(false)

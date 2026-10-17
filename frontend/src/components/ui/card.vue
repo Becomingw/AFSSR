@@ -1,5 +1,5 @@
 <template>
-  <div :class="cardClass">
+  <div data-ui="card" :class="cardClass">
     <slot />
   </div>
 </template>

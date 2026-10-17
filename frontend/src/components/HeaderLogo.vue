@@ -11,7 +11,7 @@
       :class="[logoClass]"
     >
       <path
-        :d="aetherFullPath"
+        :d="brandPath"
         fill-rule="evenodd"
         fill="currentColor"
       />
@@ -20,7 +20,7 @@
 </template>
 
 <script setup lang="ts">
-import { AETHER_FULL_PATH, AETHER_SVG_VIEWBOX } from '@/constants/logoPaths'
+import { ARCA_LOGO_PATH, ARCA_LOGO_VIEWBOX } from '@/constants/arcaBrand'
 
 interface Props {
   size?: string
@@ -32,8 +32,8 @@ const props = withDefaults(defineProps<Props>(), {
   className: ''
 })
 
-const aetherFullPath = AETHER_FULL_PATH
-const viewBox = AETHER_SVG_VIEWBOX
+const brandPath = ARCA_LOGO_PATH
+const viewBox = ARCA_LOGO_VIEWBOX
 const containerClass = `${props.size} ${props.className}`.trim()
 const logoClass = 'w-full h-full'
 </script>

@@ -1,15 +1,21 @@
 <template>
-  <div class="space-y-6 px-4 sm:px-6 lg:px-0">
-    <!-- 页面头部：统计卡片 + 公告 -->
-    <div class="flex flex-col lg:flex-row gap-6 lg:items-start">
+  <div class="min-w-0 space-y-6">
+    <DashboardAnnouncements
+      :items="announcements"
+      :loading="loadingAnnouncements"
+      :error="announcementsError"
+      :all-url="isAdmin ? '/admin/announcements' : '/dashboard/announcements'"
+      @select="viewAnnouncementDetail"
+      @refresh="loadAnnouncements"
+    />
+    <div>
       <!-- 左侧统计区域 -->
       <div
-        ref="statsPanelRef"
         class="flex-1 min-w-0 flex flex-col"
       >
         <Badge
           :variant="authStore.isAdmin ? 'default' : 'secondary'"
-          class="mb-4 self-start uppercase tracking-[0.45em]"
+          class="mb-4 self-start"
         >
           {{ dashboardModeLabel }}
         </Badge>
@@ -34,15 +40,10 @@
               v-for="(stat, index) in stats"
               :key="stat.name"
               class="relative overflow-hidden p-3 sm:p-5"
-              :class="statCardBorders[index % statCardBorders.length]"
             >
-              <div
-                class="pointer-events-none absolute -right-4 -top-6 h-28 w-28 rounded-full blur-3xl opacity-40"
-                :class="statCardGlows[index % statCardGlows.length]"
-              />
               <!-- 图标固定在右上角 -->
               <div
-                class="absolute top-3 right-3 sm:top-5 sm:right-5 rounded-xl sm:rounded-2xl border border-border bg-card/50 p-2 sm:p-3 shadow-inner backdrop-blur-sm"
+                class="absolute top-3 right-3 sm:top-5 sm:right-5 p-1.5"
                 :class="getStatIconColor(index)"
               >
                 <component
@@ -58,7 +59,7 @@
                   {{ stat.name }}
                 </p>
                 <p
-                  class="mt-2 sm:mt-4 text-xl sm:text-3xl font-semibold text-foreground"
+                  class="mt-2 text-2xl font-semibold tabular-nums text-foreground [overflow-wrap:anywhere]"
                 >
                   {{ stat.value }}
                 </p>
@@ -96,14 +97,9 @@
               v-for="(placeholder, index) in emptyStatPlaceholders"
               :key="'empty-' + index"
               class="relative overflow-hidden p-3 sm:p-5"
-              :class="statCardBorders[index % statCardBorders.length]"
             >
               <div
-                class="pointer-events-none absolute -right-4 -top-6 h-28 w-28 rounded-full blur-3xl opacity-20"
-                :class="statCardGlows[index % statCardGlows.length]"
-              />
-              <div
-                class="absolute top-3 right-3 sm:top-5 sm:right-5 rounded-xl sm:rounded-2xl border border-border bg-card/50 p-2 sm:p-3 shadow-inner backdrop-blur-sm"
+                class="absolute top-3 right-3 sm:top-5 sm:right-5 p-1.5"
                 :class="getStatIconColor(index)"
               >
                 <component
@@ -337,125 +333,6 @@
             </Card>
           </div>
         </div>
-      </div>
-
-      <!-- 右侧系统公告 -->
-      <div
-        id="announcements-section"
-        class="w-full lg:w-[300px] xl:w-[320px] flex-shrink-0 flex flex-col min-h-0"
-        :style="announcementsContainerStyle"
-      >
-        <div class="mb-3 flex items-center justify-between flex-shrink-0">
-          <h3 class="text-sm font-medium text-foreground">
-            系统公告
-          </h3>
-          <Badge
-            variant="outline"
-            class="uppercase tracking-[0.3em] text-[10px]"
-          >
-            Live
-          </Badge>
-        </div>
-
-        <Card
-          class="overflow-hidden p-4 flex flex-col flex-1 min-h-0 h-full max-h-[280px] lg:max-h-none"
-        >
-          <div
-            v-if="loadingAnnouncements"
-            class="flex-1 flex items-center justify-center"
-          >
-            <Loader2 class="h-5 w-5 animate-spin text-muted-foreground" />
-          </div>
-
-          <div
-            v-else-if="announcements.length === 0"
-            class="flex-1 flex flex-col items-center justify-center"
-          >
-            <Bell class="h-8 w-8 text-muted-foreground/40" />
-            <p class="mt-2 text-xs text-muted-foreground">
-              暂无公告
-            </p>
-          </div>
-
-          <div
-            v-else
-            class="-mx-4 px-4 flex-1 overflow-y-auto scrollbar-thin min-h-0 pb-2"
-          >
-            <div
-              ref="announcementsTimelineRef"
-              class="relative pl-5"
-            >
-              <div
-                v-if="announcements.length > 1"
-                class="absolute left-[7px] w-[2px] bg-slate-200 dark:bg-muted"
-                :style="timelineLineStyle"
-              />
-
-              <button
-                v-for="announcement in announcements"
-                :key="announcement.id"
-                data-announcement-item
-                type="button"
-                class="relative w-full text-left mb-3 last:mb-0"
-                @click="viewAnnouncementDetail(announcement)"
-              >
-                <div class="flex gap-2">
-                  <div class="absolute left-[-18px] top-1 z-10">
-                    <span
-                      data-announcement-marker
-                      class="flex h-3 w-3 items-center justify-center rounded-full border-2 border-white dark:border-slate-900"
-                      :class="[
-                        announcement.is_pinned
-                          ? 'bg-amber-500 dark:bg-amber-400'
-                          : announcement.is_read
-                            ? 'bg-slate-300 dark:bg-slate-600'
-                            : getAnnouncementDotColor(announcement.type),
-                      ]"
-                    >
-                      <span
-                        v-if="!announcement.is_read && !announcement.is_pinned"
-                        class="h-1.5 w-1.5 rounded-full bg-white"
-                      />
-                    </span>
-                  </div>
-
-                  <div
-                    class="flex-1 rounded-lg p-2 transition"
-                    :class="[
-                      announcement.is_pinned
-                        ? 'hover:bg-amber-50/50 dark:hover:bg-amber-900/10'
-                        : 'hover:bg-slate-50/50 dark:hover:bg-slate-800/30',
-                    ]"
-                  >
-                    <div class="flex items-center gap-2 mb-1">
-                      <h4
-                        translate="no"
-                        class="text-xs font-medium text-foreground line-clamp-1 flex-1"
-                      >
-                        {{ announcement.title }}
-                      </h4>
-                      <span
-                        v-if="announcement.is_pinned"
-                        class="flex-shrink-0 rounded-full bg-amber-100 dark:bg-amber-900/30 px-1.5 py-0.5 text-[9px] font-medium text-amber-700 dark:text-amber-400"
-                      >
-                        置顶
-                      </span>
-                    </div>
-                    <div
-                      translate="no"
-                      class="text-[11px] text-muted-foreground leading-relaxed line-clamp-2 mb-1"
-                    >
-                      {{ getPlainText(announcement.content) }}
-                    </div>
-                    <div class="text-[10px] text-muted-foreground/70">
-                      {{ formatAnnouncementDate(announcement.created_at) }}
-                    </div>
-                  </div>
-                </div>
-              </button>
-            </div>
-          </div>
-        </Card>
       </div>
     </div>
 
@@ -894,12 +771,12 @@ import {
   onMounted,
   computed,
   onBeforeUnmount,
-  nextTick,
   watch,
   markRaw,
 } from "vue";
 import type { Component } from "vue";
 import { useAuthStore } from "@/stores/auth";
+import { adminRoleLabel } from "@/config/adminRoles";
 import {
   dashboardApi,
   type DashboardStat,
@@ -926,6 +803,7 @@ import { TimeRangePicker } from "@/components/common";
 import BarChart from "@/components/charts/BarChart.vue";
 import DoughnutChart from "@/components/charts/DoughnutChart.vue";
 import LineChart from "@/components/charts/LineChart.vue";
+import DashboardAnnouncements from "./components/DashboardAnnouncements.vue";
 import {
   Users,
   Activity,
@@ -934,12 +812,10 @@ import {
   Key,
   Hash,
   Zap,
-  Bell,
   AlertCircle,
   AlertTriangle,
   Info,
   Wrench,
-  Loader2,
   Clock,
   Database,
   Shuffle,
@@ -961,126 +837,13 @@ type DashboardStatCard = Omit<DashboardStat, "icon"> & {
   icon: Component;
 };
 
-const statsPanelRef = ref<HTMLElement | null>(null);
-const announcementsHeight = ref<number | null>(null);
-const announcementsTimelineRef = ref<HTMLElement | null>(null);
-const timelineLineStyle = ref<{ top: string; bottom: string }>({
-  top: "0px",
-  bottom: "0px",
-});
-const isLargeScreen = ref(false);
-
-const announcementsContainerStyle = computed(() => {
-  // 移动端不设置固定高度，让内容自然流动
-  if (!isLargeScreen.value || !announcementsHeight.value) return {};
-  // 桌面端设置固定高度，与左侧统计面板保持一致
-  return { height: `${announcementsHeight.value}px` };
-});
-
-function checkScreenSize() {
-  if (typeof window !== "undefined") {
-    isLargeScreen.value = window.innerWidth >= 1024; // lg breakpoint
-  }
-}
-
-let statsPanelObserver: ResizeObserver | null = null;
-let announcementsTimelineObserver: ResizeObserver | null = null;
-
-function updateAnnouncementsHeight() {
-  if (typeof window === "undefined") return;
-  const panel = statsPanelRef.value;
-  if (!panel) return;
-  const { height } = panel.getBoundingClientRect();
-  if (height <= 0) return;
-  announcementsHeight.value = Math.round(height);
-  nextTick(() => updateTimelineLine());
-}
-
-function updateTimelineLine() {
-  if (typeof window === "undefined") return;
-  const container = announcementsTimelineRef.value;
-  if (!container) return;
-  const items = container.querySelectorAll<HTMLElement>(
-    "[data-announcement-item]",
-  );
-  if (items.length < 2) {
-    timelineLineStyle.value = { top: "0px", bottom: "0px" };
-    return;
-  }
-  const firstMarker = items[0].querySelector<HTMLElement>(
-    "[data-announcement-marker]",
-  );
-  const lastMarker = items[items.length - 1].querySelector<HTMLElement>(
-    "[data-announcement-marker]",
-  );
-  if (!firstMarker || !lastMarker) return;
-  const containerRect = container.getBoundingClientRect();
-  const firstRect = firstMarker.getBoundingClientRect();
-  const lastRect = lastMarker.getBoundingClientRect();
-  const topOffset = Math.max(
-    0,
-    firstRect.top + firstRect.height / 2 - containerRect.top,
-  );
-  const bottomOffset = Math.max(
-    0,
-    containerRect.bottom - (lastRect.top + lastRect.height / 2),
-  );
-  timelineLineStyle.value = {
-    top: `${topOffset}px`,
-    bottom: `${bottomOffset}px`,
-  };
-}
-
-function handleWindowResize() {
-  checkScreenSize();
-  updateAnnouncementsHeight();
-  updateTimelineLine();
-}
-
-function setupResizeObserver() {
-  if (typeof window === "undefined") return;
-  const panel = statsPanelRef.value;
-  if (!panel || !("ResizeObserver" in window)) return;
-  statsPanelObserver = new ResizeObserver(() => updateAnnouncementsHeight());
-  statsPanelObserver.observe(panel);
-  updateAnnouncementsHeight();
-}
-
-function setupTimelineResizeObserver() {
-  if (typeof window === "undefined" || !("ResizeObserver" in window)) return;
-  const container = announcementsTimelineRef.value;
-  announcementsTimelineObserver?.disconnect();
-  announcementsTimelineObserver = null;
-  if (!container) return;
-  announcementsTimelineObserver = new ResizeObserver(() =>
-    updateTimelineLine(),
-  );
-  announcementsTimelineObserver.observe(container);
-}
-
 const isAdmin = computed(() => authStore.canAccessAdmin);
 const dashboardModeLabel = computed(() => {
-  if (authStore.isAdmin) return "ADMIN MODE";
-  if (authStore.isAuditAdmin) return "AUDIT MODE";
-  return "PERSONAL MODE";
+  return authStore.canAccessAdmin ? adminRoleLabel(authStore.user?.role) : "个人概览";
 });
 
-const statCardBorders = [
-  "border-book-cloth/30 dark:border-book-cloth/25",
-  "border-kraft/30 dark:border-kraft/25",
-  "border-manilla/40 dark:border-manilla/30",
-  "border-book-cloth/25 dark:border-kraft/25",
-];
-
-const statCardGlows = [
-  "bg-book-cloth/30",
-  "bg-kraft/30",
-  "bg-manilla/35",
-  "bg-kraft/30",
-];
-
-const getStatIconColor = (_index: number): string => {
-  return "text-muted-foreground";
+const getStatIconColor = (index: number): string => {
+  return ["text-primary", "text-blue-600 dark:text-blue-400", "text-amber-600 dark:text-amber-400", "text-rose-600 dark:text-rose-400"][index % 4]!;
 };
 
 // 统计数据
@@ -1147,6 +910,7 @@ let dailyStatsDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 // 公告
 const announcements = ref<Announcement[]>([]);
 const loadingAnnouncements = ref(false);
+const announcementsError = ref(false);
 const selectedAnnouncement = ref<Announcement | null>(null);
 const detailDialogOpen = ref(false);
 
@@ -1471,33 +1235,14 @@ const dailyUsageTrendChartOptions = computed<ChartOptions<"line">>(() => {
 });
 
 onMounted(async () => {
-  checkScreenSize();
-  setupResizeObserver();
-  if (typeof window !== "undefined") {
-    window.addEventListener("resize", handleWindowResize);
-  }
   await Promise.all([
     loadDashboardData(),
     loadDailyStats(),
     loadAnnouncements(),
   ]);
-  await nextTick();
-  setupTimelineResizeObserver();
-  updateAnnouncementsHeight();
-  updateTimelineLine();
 });
 
 onBeforeUnmount(() => {
-  if (typeof window !== "undefined") {
-    window.removeEventListener("resize", handleWindowResize);
-  }
-  if (statsPanelObserver && statsPanelRef.value) {
-    statsPanelObserver.unobserve(statsPanelRef.value);
-  }
-  statsPanelObserver?.disconnect();
-  statsPanelObserver = null;
-  announcementsTimelineObserver?.disconnect();
-  announcementsTimelineObserver = null;
   if (dailyStatsDebounceTimer) {
     clearTimeout(dailyStatsDebounceTimer);
     dailyStatsDebounceTimer = null;
@@ -1615,6 +1360,7 @@ function formatResponseTime(seconds: number): string {
 // 公告相关
 async function loadAnnouncements() {
   loadingAnnouncements.value = true;
+  announcementsError.value = false;
   try {
     const response = await announcementApi.getAnnouncements({
       active_only: true,
@@ -1623,22 +1369,11 @@ async function loadAnnouncements() {
     announcements.value = response.items;
   } catch {
     announcements.value = [];
+    announcementsError.value = true;
   } finally {
     loadingAnnouncements.value = false;
-    await nextTick();
-    setupTimelineResizeObserver();
-    updateTimelineLine();
   }
 }
-
-watch(
-  () => announcements.value.length,
-  async () => {
-    await nextTick();
-    setupTimelineResizeObserver();
-    updateTimelineLine();
-  },
-);
 
 async function viewAnnouncementDetail(announcement: Announcement) {
   if (!announcement.is_read && !isAdmin.value) {
@@ -1651,20 +1386,6 @@ async function viewAnnouncementDetail(announcement: Announcement) {
   }
   selectedAnnouncement.value = announcement;
   detailDialogOpen.value = true;
-}
-
-function getPlainText(content: string): string {
-  const cleaned = content
-    .replace(/```[\s\S]*?```/g, " ")
-    .replace(/`[^`]*`/g, " ")
-    .replace(/!\[[^\]]*]\([^)]*\)/g, " ")
-    .replace(/\[[^\]]*]\(([^)]*)\)/g, "$1")
-    .replace(/[#>*_~]/g, "")
-    .replace(/\n+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (cleaned.length <= 100) return cleaned;
-  return `${cleaned.slice(0, 100).trim()}...`;
 }
 
 function getAnnouncementIcon(type: string) {
@@ -1690,38 +1411,6 @@ function getAnnouncementIconColor(type: string) {
       return "text-orange-600 dark:text-orange-400";
     default:
       return "text-primary dark:text-primary";
-  }
-}
-
-function formatAnnouncementDate(dateString: string): string {
-  const date = new Date(dateString);
-  const now = new Date();
-  const diff = now.getTime() - date.getTime();
-  const minutes = Math.floor(diff / (1000 * 60));
-  const hours = Math.floor(diff / (1000 * 60 * 60));
-  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-  if (minutes < 1) return formatRelativeTime(0, 'second');
-  if (minutes < 60) return formatRelativeTime(-minutes, 'minute');
-  if (hours < 24) return formatRelativeTime(-hours, 'hour');
-  if (days < 7) return formatRelativeTime(-days, 'day');
-  return date.toLocaleDateString(getI18nLocale(), {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function getAnnouncementDotColor(type: string): string {
-  switch (type) {
-    case "important":
-      return "bg-rose-500 dark:bg-rose-400";
-    case "warning":
-      return "bg-amber-500 dark:bg-amber-400";
-    case "maintenance":
-      return "bg-orange-500 dark:bg-orange-400";
-    default:
-      return "bg-emerald-500 dark:bg-emerald-400";
   }
 }
 

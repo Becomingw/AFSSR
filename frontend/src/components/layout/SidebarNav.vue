@@ -20,8 +20,7 @@
           class="flex items-center gap-2 px-2.5 pb-1"
           :class="index > 0 ? 'pt-1' : ''"
         >
-          <span class="text-[10px] font-medium text-muted-foreground/50 font-mono tabular-nums">{{ String(index + 1).padStart(2, '0') }}</span>
-          <span class="min-w-0 break-words text-[10px] font-semibold leading-4 text-muted-foreground/70 uppercase tracking-normal">{{ group.title }}</span>
+          <span class="min-w-0 break-words text-xs font-medium leading-4 text-muted-foreground">{{ group.title }}</span>
         </div>
 
         <!-- Links -->
@@ -47,6 +46,7 @@
                       : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
                   ]"
                   :aria-label="collapsed ? item.name : undefined"
+                  :aria-current="isItemActive(item.href) ? 'page' : undefined"
                   @pointerenter="schedulePrefetch(item.href)"
                   @pointerleave="cancelScheduledPrefetch(item.href)"
                   @pointerdown="prefetchNow(item.href)"

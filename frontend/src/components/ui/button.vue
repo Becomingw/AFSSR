@@ -1,5 +1,7 @@
 <template>
   <button
+    data-ui="button"
+    :data-variant="props.variant"
     :type="props.type"
     :class="buttonClass"
     :disabled="disabled"
@@ -32,24 +34,24 @@ const props = withDefaults(defineProps<Props>(), {
 
 const buttonClass = computed(() => {
   const baseClass =
-    'inline-flex min-w-0 max-w-full items-center justify-center rounded-xl text-sm font-semibold leading-5 [overflow-wrap:anywhere] [&_svg]:shrink-0 transition-all duration-200 ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 active:scale-[0.98]'
+    'inline-flex min-w-0 max-w-full items-center justify-center gap-1.5 rounded-md text-sm font-medium leading-5 [overflow-wrap:anywhere] [&_svg]:shrink-0 transition-colors duration-150 ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50'
 
   const variantClasses = {
-    default: 'bg-primary text-white hover:bg-primary/90',
+    default: 'bg-primary text-primary-foreground hover:bg-primary/90',
     destructive: 'bg-destructive text-destructive-foreground hover:bg-destructive/85',
     outline:
-      'border border-border/60 bg-card/60 text-foreground hover:border-primary/60 hover:text-primary hover:bg-primary/10 backdrop-blur transition-all',
+      'border border-border bg-card text-foreground hover:border-primary/50 hover:bg-accent',
     secondary:
-      'bg-secondary text-secondary-foreground shadow-inner hover:bg-secondary/80',
+      'bg-secondary text-secondary-foreground hover:bg-secondary/80',
     ghost: 'hover:bg-accent hover:text-accent-foreground',
     link: 'text-primary underline-offset-4 hover:underline',
   }
 
   const sizeClasses = {
-    default: 'h-11 px-5',
-    sm: 'h-9 rounded-lg px-3',
-    lg: 'h-12 rounded-xl px-8 text-base',
-    icon: 'h-11 w-11 shrink-0 rounded-2xl',
+    default: 'h-9 px-3.5',
+    sm: 'h-8 px-3 text-xs',
+    lg: 'h-10 px-5',
+    icon: 'h-9 w-9 shrink-0 p-0',
   }
 
   return cn(

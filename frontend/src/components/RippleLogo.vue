@@ -606,12 +606,14 @@ import {
   AETHER_LOGO_VIEWBOX,
   AETHER_SVG_VIEWBOX
 } from '@/constants/logoPaths'
+import { ARCA_LOGO_CENTER, ARCA_LOGO_PATH, ARCA_LOGO_VIEWBOX } from '@/constants/arcaBrand'
 
 type LogoType = 'aether' | 'claude' | 'openai' | 'gemini'
 
 const props = withDefaults(
   defineProps<{
     type: LogoType
+    brand?: 'aether' | 'arca'
     size?: number
     /** Use adaptive SVG image instead of inline SVG (for aether type) */
     useAdaptive?: boolean
@@ -623,6 +625,7 @@ const props = withDefaults(
     static?: boolean
   }>(),
   {
+    brand: 'aether',
     size: 200,
     useAdaptive: false,
     disableRipple: false,
@@ -649,10 +652,11 @@ const adaptiveStrokeComplete = ref(false)
 const adaptiveFillComplete = ref(false)
 const adaptiveStrokeDuration = 1500 // ms for stroke drawing
 const adaptiveFillDuration = 600 // ms for fill fade-in (shorter for smoother transition)
-const aetherPath = AETHER_LOGO_PATH
-const aetherCenter = `${AETHER_LOGO_CENTER.x}px ${AETHER_LOGO_CENTER.y}px`
-const adaptiveAetherPath = AETHER_FULL_PATH
-const adaptiveAetherViewBox = AETHER_SVG_VIEWBOX
+const aetherPath = props.brand === 'arca' ? ARCA_LOGO_PATH : AETHER_LOGO_PATH
+const logoCenter = props.brand === 'arca' ? ARCA_LOGO_CENTER : AETHER_LOGO_CENTER
+const aetherCenter = `${logoCenter.x}px ${logoCenter.y}px`
+const adaptiveAetherPath = props.brand === 'arca' ? ARCA_LOGO_PATH : AETHER_FULL_PATH
+const adaptiveAetherViewBox = props.brand === 'arca' ? ARCA_LOGO_VIEWBOX : AETHER_SVG_VIEWBOX
 const aetherPathRef = ref<SVGPathElement | null>(null)
 const aetherPathLength = ref(12000)
 
@@ -817,7 +821,7 @@ const pathId = computed(() => `${props.type}-ripple-path`)
 // Smaller viewBox = larger icon appearance
 const viewBox = computed(() => {
   const viewBoxes: Record<LogoType, string> = {
-    aether: AETHER_LOGO_VIEWBOX, // Original Aether logo viewBox
+    aether: props.brand === 'arca' ? ARCA_LOGO_VIEWBOX : AETHER_LOGO_VIEWBOX,
     claude: '0 0 24 24', // Original Claude viewBox
     openai: '0 0 24 24', // Original OpenAI viewBox
     gemini: '-4 -4 32 32'

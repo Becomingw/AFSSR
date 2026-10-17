@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, defineComponent, h, nextTick, type App } from 'vue'
+import { createMemoryHistory, createRouter } from 'vue-router'
 
 import Dashboard from '../Dashboard.vue'
 
@@ -7,6 +8,7 @@ const dashboardApiMocks = vi.hoisted(() => ({
   getStats: vi.fn(),
   getDailyStats: vi.fn(),
 }))
+const announcementMocks = vi.hoisted(() => ({ getAnnouncements: vi.fn(), markAsRead: vi.fn() }))
 
 vi.mock('@/stores/auth', () => ({
   useAuthStore: () => ({
@@ -21,10 +23,7 @@ vi.mock('@/api/dashboard', () => ({
 }))
 
 vi.mock('@/api/announcements', () => ({
-  announcementApi: {
-    getAnnouncements: vi.fn().mockResolvedValue({ items: [] }),
-    markAsRead: vi.fn().mockResolvedValue({}),
-  },
+  announcementApi: announcementMocks,
 }))
 
 vi.mock('@/components/charts/BarChart.vue', async () => {
@@ -93,6 +92,8 @@ vi.mock('lucide-vue-next', async () => {
     Hash: Icon,
     Zap: Icon,
     Bell: Icon,
+    ArrowRight: Icon,
+    Pin: Icon,
     AlertCircle: Icon,
     AlertTriangle: Icon,
     Info: Icon,
@@ -110,6 +111,7 @@ function mountDashboard() {
   const root = document.createElement('div')
   document.body.appendChild(root)
   const app = createApp(Dashboard)
+  app.use(createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { render: () => h('div') } }, { path: '/dashboard/announcements', component: { render: () => h('div') } }] }))
   app.mount(root)
   mountedApps.push({ app, root })
   return root
@@ -123,6 +125,8 @@ async function settle() {
 }
 
 beforeEach(() => {
+  announcementMocks.getAnnouncements.mockReset().mockResolvedValue({ items: [] })
+  announcementMocks.markAsRead.mockReset().mockResolvedValue({})
   dashboardApiMocks.getStats.mockReset()
   dashboardApiMocks.getDailyStats.mockReset()
   dashboardApiMocks.getDailyStats.mockResolvedValue({
@@ -189,5 +193,30 @@ describe('Dashboard refresh controls', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('Dashboard announcement placement and detail', () => {
+  it('places notices before statistics and retains detail/read behavior', async () => {
+    dashboardApiMocks.getStats.mockResolvedValue({ stats: [] })
+    const notice = { id: 'notice', title: 'Gateway notice', content: 'Read this announcement', type: 'important', priority: 10, is_pinned: true, is_active: true, requires_ack: false, is_read: false, author: { id: 'admin', username: 'Admin' }, created_at: '2026-10-16T00:00:00Z' }
+    announcementMocks.getAnnouncements.mockResolvedValue({ items: [notice] })
+    const root = mountDashboard(); await settle()
+    expect(root.firstElementChild?.firstElementChild?.id).toBe('announcements-section')
+    root.querySelector<HTMLButtonElement>('.announcement-featured')!.click(); await settle()
+    expect(announcementMocks.markAsRead).toHaveBeenCalledWith('notice')
+    expect(root.textContent).toContain('Read this announcement')
+    expect(root.querySelector('.announcement-featured__footer')?.textContent).toContain('已读')
+  })
+
+  it('shows source failure and retries without changing announcement data', async () => {
+    dashboardApiMocks.getStats.mockResolvedValue({ stats: [] })
+    announcementMocks.getAnnouncements.mockRejectedValueOnce(new Error('offline'))
+    const root = mountDashboard(); await settle()
+    expect(root.textContent).toContain('公告暂时无法加载')
+    root.querySelector<HTMLButtonElement>('#announcements-section button')!.click(); await settle()
+    expect(announcementMocks.getAnnouncements).toHaveBeenCalledTimes(2)
+    expect(root.textContent).toContain('暂无公告')
+    expect(announcementMocks.markAsRead).not.toHaveBeenCalled()
   })
 })

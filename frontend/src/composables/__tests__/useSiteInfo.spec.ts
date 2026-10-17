@@ -61,7 +61,26 @@ describe('useSiteInfo', () => {
     expect(document.title).toBe('Configured Aether')
   })
 
-  it('uses upstream defaults only after public site info fails', async () => {
+  it.each(['Aether', 'AFSSR'])('rebrands the legacy %s default without changing custom names', async (name) => {
+    apiClientMocks.get.mockResolvedValue({ data: { site_name: name, site_subtitle: 'AI Gateway' } })
+    const { useSiteInfo } = await import('../useSiteInfo')
+    const { siteName, siteSubtitle, refreshSiteInfo } = useSiteInfo()
+    await refreshSiteInfo()
+    expect(siteName.value).toBe('Arca')
+    expect(siteSubtitle.value).toBe('智枢 · AI Gateway')
+    expect(document.title).toBe('Arca')
+  })
+
+  it('preserves a custom subtitle when replacing a legacy default name', async () => {
+    apiClientMocks.get.mockResolvedValue({ data: { site_name: ' Aether ', site_subtitle: ' Team Gateway ' } })
+    const { useSiteInfo } = await import('../useSiteInfo')
+    const { siteName, siteSubtitle, refreshSiteInfo } = useSiteInfo()
+    await refreshSiteInfo()
+    expect(siteName.value).toBe('Arca')
+    expect(siteSubtitle.value).toBe('Team Gateway')
+  })
+
+  it('uses Arca defaults only after public site info fails', async () => {
     apiClientMocks.get.mockRejectedValue(new Error('network unavailable'))
 
     const { useSiteInfo } = await import('../useSiteInfo')
@@ -72,9 +91,9 @@ describe('useSiteInfo', () => {
 
     await refreshSiteInfo()
 
-    expect(siteName.value).toBe('Aether')
-    expect(siteSubtitle.value).toBe('AI Gateway')
+    expect(siteName.value).toBe('Arca')
+    expect(siteSubtitle.value).toBe('智枢 · AI Gateway')
     expect(siteInfoLoaded.value).toBe(true)
-    expect(document.title).toBe('Aether')
+    expect(document.title).toBe('Arca')
   })
 })

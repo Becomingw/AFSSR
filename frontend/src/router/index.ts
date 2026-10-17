@@ -9,6 +9,7 @@ import {
   checkModuleAccess
 } from './guards'
 import { routes } from './routes'
+import { isCommercialPage } from '@/config/internalGateway'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -16,6 +17,7 @@ const router = createRouter({
 })
 
 router.beforeEach(async (to, from, next) => {
+  if (isCommercialPage(to.path)) return next('/dashboard')
   const requiresAuth = to.matched.some(record => record.meta.requiresAuth !== false)
 
   try {

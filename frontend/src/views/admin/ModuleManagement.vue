@@ -241,6 +241,7 @@
 
 <script setup lang="ts">
 import { useI18n } from '@/i18n'
+import { COMMERCIAL_MODULES } from '@/config/internalGateway'
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import {
@@ -355,7 +356,7 @@ function moveNameToTargetIndex(names: string[], draggedName: string, targetName:
 // 后端默认顺序
 const defaultOrderedModules = computed(() => {
   return Object.values(moduleStore.modules)
-    .filter(module => !BUILTIN_BACKING_MODULES.has(module.name))
+    .filter(module => !BUILTIN_BACKING_MODULES.has(module.name) && !COMMERCIAL_MODULES.has(module.name))
     .sort(compareModuleDefaultOrder)
 })
 

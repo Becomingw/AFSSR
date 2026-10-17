@@ -8,7 +8,7 @@
       <div class="flex flex-col items-center text-center">
         <div class="mb-4 rounded-3xl border border-primary/30 dark:border-[#cc785c]/30 bg-primary/5 dark:bg-transparent p-4 shadow-inner shadow-white/40 dark:shadow-[#cc785c]/10">
           <img
-            src="/aether_adaptive.svg"
+            src="/arca.svg"
             alt="Logo"
             class="h-16 w-16"
           >

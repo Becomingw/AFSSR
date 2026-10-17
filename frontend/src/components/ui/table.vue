@@ -15,7 +15,7 @@ const tableClass = computed(() =>
 </script>
 
 <template>
-  <div class="relative w-full overflow-auto">
+  <div data-ui="table-scroll" class="relative min-w-0 w-full overflow-auto">
     <table :class="tableClass">
       <slot />
     </table>

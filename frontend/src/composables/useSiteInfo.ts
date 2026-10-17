@@ -1,5 +1,6 @@
 import { readonly, ref, watch } from 'vue'
 import apiClient from '@/api/client'
+import { ARCA_NAME, ARCA_SUBTITLE } from '@/constants/arcaBrand'
 
 interface SiteInfo {
   site_name: string
@@ -7,8 +8,8 @@ interface SiteInfo {
 }
 
 const DEFAULT_SITE_INFO: SiteInfo = {
-  site_name: 'Aether',
-  site_subtitle: 'AI Gateway',
+  site_name: ARCA_NAME,
+  site_subtitle: ARCA_SUBTITLE,
 }
 
 // 模块级缓存，所有组件共享同一份数据
@@ -18,9 +19,14 @@ const loaded = ref(false)
 let fetchPromise: Promise<void> | null = null
 
 function normalizeSiteInfo(data: Partial<SiteInfo> | null | undefined): SiteInfo {
+  const name = data?.site_name?.trim()
+  const subtitle = data?.site_subtitle?.trim()
+  const legacyDefault = name === 'Aether' || name === 'AFSSR'
   return {
-    site_name: data?.site_name?.trim() || DEFAULT_SITE_INFO.site_name,
-    site_subtitle: data?.site_subtitle?.trim() || DEFAULT_SITE_INFO.site_subtitle,
+    site_name: !name || legacyDefault ? DEFAULT_SITE_INFO.site_name : name,
+    site_subtitle: !subtitle || (legacyDefault && subtitle === 'AI Gateway')
+      ? DEFAULT_SITE_INFO.site_subtitle
+      : subtitle,
   }
 }
 
@@ -35,7 +41,7 @@ async function fetchSiteInfo() {
     const response = await apiClient.get<SiteInfo>('/api/public/site-info')
     applySiteInfo(response.data)
   } catch {
-    // 加载失败时才使用 upstream 默认站点信息，避免配置加载前闪出默认品牌文案
+    // 加载失败时才使用默认站点信息，避免配置加载前闪出默认品牌文案
     if (!siteName.value || !siteSubtitle.value) {
       applySiteInfo(DEFAULT_SITE_INFO)
     }

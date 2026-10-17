@@ -157,13 +157,13 @@ const autocompleteAttr = computed(() => {
 
 // 尺寸相关的样式
 const sizeClasses = {
-  default: 'h-11 py-2 px-4',
+  default: 'h-10 py-2 px-3',
   sm: 'h-8 py-1 px-3'
 }
 
 const inputClass = computed(() =>
   cn(
-    'flex w-full rounded-xl border border-border/60 bg-muted/50 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:border-primary/60 text-foreground transition-all',
+    'flex w-full min-w-0 rounded-md border border-border bg-card text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:border-primary disabled:cursor-not-allowed disabled:opacity-60 text-foreground transition-colors',
     sizeClasses[props.size || 'default'],
     props.masked && 'pr-10',
     props.class

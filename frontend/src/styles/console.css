@@ -1,0 +1,353 @@
+/* Console tokens also reach dialogs and menus teleported to body. */
+body:has(.workspace-console) {
+  --background: #ffffff;
+  --foreground: #18181b;
+  --card: #ffffff;
+  --card-foreground: #18181b;
+  --popover: #ffffff;
+  --popover-foreground: #18181b;
+  --primary: #087f6b;
+  --primary-foreground: #ffffff;
+  --secondary: #f0f0f2;
+  --secondary-foreground: #3f3f46;
+  --muted: #f7f7f8;
+  --muted-foreground: #64646e;
+  --accent: #edf5f2;
+  --accent-foreground: #086653;
+  --destructive: #c93745;
+  --destructive-foreground: #ffffff;
+  --border: #e4e4e7;
+  --input: #d4d4d8;
+  --ring: #087f6b;
+  --switch-off: #bfc5ce;
+  --surface-hover: #f1f1f3;
+  --control-shadow: 0 1px 2px rgb(24 24 27 / 4%);
+  --floating-shadow: 0 12px 32px -8px rgb(24 24 27 / 16%), 0 2px 6px rgb(24 24 27 / 5%);
+  --status-success-bg: #edf7f2;
+  --status-success-fg: #08734f;
+  --status-warning-bg: #fff8e8;
+  --status-warning-fg: #96600d;
+  --status-danger-bg: #fdf0f1;
+  --status-danger-fg: #b42b3d;
+  --shell-glass: #ffffff;
+  --shell-border: #dfe3e8;
+  --color-background: #ffffff;
+  --color-background-soft: #f0f2f5;
+  --color-text: #18181b;
+  --color-primary: #087f6b;
+  --color-border: #dfe3e8;
+  --sans-serif: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Noto Sans SC', sans-serif;
+  --font-sans: var(--sans-serif);
+  --chart-1: #087f6b;
+  --chart-2: #4278c3;
+  --chart-3: #b88616;
+  --chart-4: #9e6baf;
+  --chart-5: #c35b65;
+}
+
+.dark body:has(.workspace-console),
+body[theme-mode='dark']:has(.workspace-console) {
+  --background: #141517;
+  --foreground: #ededf0;
+  --card: #1b1c1f;
+  --card-foreground: #ededf0;
+  --popover: #232427;
+  --popover-foreground: #ededf0;
+  --primary: #50bfa3;
+  --primary-foreground: #10251e;
+  --secondary: #2c2d31;
+  --secondary-foreground: #e1e1e6;
+  --muted: #242529;
+  --muted-foreground: #a2a2ad;
+  --accent: #20352d;
+  --accent-foreground: #85d7bd;
+  --destructive: #ef7180;
+  --destructive-foreground: #201014;
+  --border: #303136;
+  --input: #45464e;
+  --ring: #50bfa3;
+  --switch-off: #4a515b;
+  --surface-hover: #292a2e;
+  --control-shadow: 0 1px 2px rgb(0 0 0 / 15%);
+  --floating-shadow: 0 12px 32px -8px rgb(0 0 0 / 45%), 0 2px 6px rgb(0 0 0 / 20%);
+  --status-success-bg: #18392d;
+  --status-success-fg: #79d8ad;
+  --status-warning-bg: #392f1c;
+  --status-warning-fg: #e7bc6b;
+  --status-danger-bg: #3e2229;
+  --status-danger-fg: #f398a5;
+  --shell-glass: #1b1c1f;
+  --shell-border: #303136;
+  --color-background: #141517;
+  --color-background-soft: #242529;
+  --color-text: #ededf0;
+  --color-primary: #50bfa3;
+  --color-border: #303136;
+}
+
+body:has(.workspace-console),
+body:has(.workspace-console) :is(button, input, select, textarea) {
+  font-family: var(--font-sans);
+}
+
+.workspace-console :is(h1, h2, h3, h4) {
+  font-family: var(--font-sans);
+}
+
+body:has(.workspace-console) [data-ui='dialog'] :is(h1, h2, h3, h4) {
+  font-family: var(--font-sans);
+}
+
+body:has(.workspace-console) * {
+  letter-spacing: 0;
+}
+
+.workspace-console::before,
+.workspace-console .app-shell__backdrop {
+  display: none;
+}
+
+.workspace-console .app-shell__sidebar {
+  background: #f8f9fa;
+  border-color: var(--border);
+}
+
+.dark .workspace-console .app-shell__sidebar,
+body[theme-mode='dark'] .workspace-console .app-shell__sidebar { background: #191a1d; }
+
+.workspace-console .sidebar-nav a { border-radius: 5px; min-height: 36px; }
+.workspace-console .sidebar-nav a span { font-size: 13px; }
+.workspace-console .sidebar-nav a[aria-current='page'] { background: var(--accent); }
+.workspace-console .sidebar-nav a[aria-current='page']::before { content: ''; position: absolute; left: -12px; top: 8px; bottom: 8px; width: 3px; background: var(--primary); border-radius: 0 2px 2px 0; }
+.workspace-console .sidebar-nav a[aria-current='page'] > .rounded-full { display: none; }
+.workspace-console .sidebar-nav a:not([aria-current='page']) { color: var(--secondary-foreground); }
+.workspace-console .sidebar-nav a:not([aria-current='page']):hover { background: var(--surface-hover); }
+.workspace-console .sidebar-nav a svg { color: inherit; opacity: .8; }
+.workspace-console .sidebar-nav a[aria-current='page'] svg { opacity: 1; }
+.workspace-console .console-topbar { font-size: 13px; }
+.workspace-console :is(input, select, textarea) { border-radius: 6px; }
+body:has(.workspace-console) [role='switch'][aria-checked='false'] { background: var(--switch-off); }
+.workspace-console input::placeholder { color: var(--muted-foreground); opacity: .75; }
+.workspace-console table th { color: var(--muted-foreground); }
+.workspace-console table td { line-height: 1.5; }
+
+/* Stable component hooks keep variants consistent, including portalled dialogs. */
+body:has(.workspace-console) [data-ui='button'] { border-radius: 6px; }
+body:has(.workspace-console) [data-ui='button'][data-variant='default'],
+body:has(.workspace-console) [data-ui='button'][data-variant='destructive'] {
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 12%), var(--control-shadow);
+  border: 1px solid rgb(0 0 0 / 8%);
+}
+body:has(.workspace-console) [data-ui='button'][data-variant='outline'] {
+  border-color: var(--input);
+  box-shadow: var(--control-shadow);
+}
+body:has(.workspace-console) [data-ui='button'][data-variant='outline']:hover:not(:disabled) {
+  background: var(--muted);
+}
+body:has(.workspace-console) :is(input, select, textarea):not([type='checkbox']):not([type='radio']):not([type='range']):not([type='hidden']) {
+  border-color: var(--input);
+  box-shadow: var(--control-shadow);
+}
+body:has(.workspace-console) :is(input, select, textarea):focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--ring) 40%, transparent);
+  outline-offset: 2px;
+}
+body:has(.workspace-console) :is(button, a, [role='tab']):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
+body:has(.workspace-console) :is([role='menu'], [role='listbox'], [data-ui='dialog']) {
+  border-color: var(--border);
+  box-shadow: var(--floating-shadow);
+}
+body:has(.workspace-console) [data-ui='badge'] {
+  max-width: 100%;
+  border-radius: 5px;
+  padding: 2px 7px;
+  font-weight: 500;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+body:has(.workspace-console) [data-ui='badge']:is([data-variant='success'], [data-variant='default']) {
+  background: var(--status-success-bg);
+  color: var(--status-success-fg);
+}
+body:has(.workspace-console) [data-ui='badge'][data-variant='warning'] {
+  background: var(--status-warning-bg);
+  color: var(--status-warning-fg);
+}
+body:has(.workspace-console) [data-ui='badge'][data-variant='destructive'] {
+  background: var(--status-danger-bg);
+  color: var(--status-danger-fg);
+}
+
+.workspace-console .app-shell__content {
+  background: var(--background);
+  color: var(--foreground);
+  scrollbar-gutter: stable;
+}
+
+.workspace-console .app-shell__main {
+  width: 100%;
+  max-width: 1920px;
+  margin-inline: auto;
+}
+
+.workspace-console .console-topbar {
+  background: var(--card);
+  border-color: var(--border);
+}
+
+.workspace-console [data-ui='card'] {
+  min-width: 0;
+  border-radius: 8px;
+  box-shadow: none;
+}
+
+/* A page section is a band; only repeated items remain framed. */
+.workspace-console .app-shell__main > [data-ui='card'],
+.workspace-console .app-shell__main > * > [data-ui='card'] {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.workspace-console .console-page-header {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-block: 4px 20px;
+}
+
+.workspace-console .console-page-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 30px;
+}
+
+.workspace-console .console-toolbar {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding-block: 14px;
+  border-block: 1px solid var(--border);
+}
+
+.workspace-console [data-ui='table-scroll'] {
+  max-width: 100%;
+  background: var(--card);
+  overscroll-behavior-inline: contain;
+}
+
+.workspace-console table {
+  font-variant-numeric: tabular-nums;
+}
+
+.workspace-console thead {
+  background: var(--muted);
+}
+
+.workspace-console th {
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+body:has(.workspace-console) [data-ui='dialog'] {
+  background: var(--card);
+}
+
+.workspace-console .console-policy-section {
+  min-width: 0;
+  padding-block: 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.workspace-console .console-budget-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px;
+}
+
+.workspace-console .console-budget-field {
+  display: block;
+  min-width: 0;
+  border-left: 2px solid var(--border);
+  padding-left: 16px;
+}
+
+.workspace-console .console-budget-field input {
+  margin-top: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.workspace-console .console-quota-table {
+  min-width: 760px;
+}
+
+.workspace-console .console-quota-table th:first-child {
+  width: 28%;
+}
+
+.workspace-console .console-page-container {
+  max-width: none;
+  padding: 0;
+}
+
+.workspace-console .console-settings-section {
+  border-top: 0;
+  border-inline: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.workspace-console .console-settings-section > div {
+  padding-inline: 0;
+}
+
+@media (max-width: 639px) {
+  .workspace-console .console-page-title { font-size: 20px; line-height: 28px; }
+  .workspace-console .console-budget-grid { grid-template-columns: 1fr; gap: 18px; }
+  .workspace-console .console-toolbar > * { max-width: 100%; }
+  .workspace-console .console-quota-table,
+  .workspace-console .console-quota-table tbody { display: block; min-width: 0; }
+  .workspace-console .console-quota-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .workspace-console .console-quota-table tr {
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    padding-block: 16px;
+  }
+  .workspace-console .console-quota-table td { display: block; min-width: 0; padding: 0; }
+  .workspace-console .console-quota-table td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 6px;
+    color: var(--muted-foreground);
+    font-size: 12px;
+  }
+  .workspace-console .console-quota-table td:first-child { grid-column: 1 / -1; padding-right: 44px; }
+  .workspace-console .console-quota-table td:last-child { position: absolute; top: 34px; right: 0; }
+  .workspace-console .console-quota-table td[colspan] { padding: 24px 0; position: static; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-console *,
+  body:has(.workspace-console) [data-ui='dialog'] { scroll-behavior: auto; transition: none; }
+}

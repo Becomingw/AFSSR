@@ -1,5 +1,5 @@
 <template>
-  <Card :class="cardClasses">
+  <section class="console-settings-section border-b border-border" :class="cardClasses">
     <div
       v-if="title || description || $slots.header"
       :class="headerClasses"
@@ -40,12 +40,11 @@
     >
       <slot name="footer" />
     </div>
-  </Card>
+  </section>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import Card from '@/components/ui/card.vue'
 
 interface Props {
   title?: string

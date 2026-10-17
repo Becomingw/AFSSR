@@ -92,6 +92,7 @@ import {
   AETHER_FULL_PATH,
   getAetherLineDelayMultiplier
 } from '@/constants/logoPaths'
+import { ARCA_LOGO_PATH, ARCA_LOGO_VIEWBOX } from '@/constants/arcaBrand'
 
 // Animation phases
 type AnimationPhase = 'idle' | 'drawOutline' | 'fillFadeIn' | 'hold' | 'fillFadeOut' | 'eraseOutline'
@@ -104,6 +105,7 @@ interface ColorScheme {
 
 const props = withDefaults(
   defineProps<{
+    brand?: 'aether' | 'arca'
     size?: number
     lineDelay?: number
     strokeDuration?: number
@@ -118,6 +120,7 @@ const props = withDefaults(
     isDark?: boolean
   }>(),
   {
+    brand: 'aether',
     size: 400,
     lineDelay: 60,
     strokeDuration: 1200,
@@ -138,7 +141,10 @@ const emit = defineEmits<{
   (e: 'colorChange', colors: ColorScheme): void
 }>()
 // Constants
-const LINE_COUNT = AETHER_ORDERED_LINES.length
+const orderedLines = props.brand === 'arca'
+  ? [{ order: 0, path: ARCA_LOGO_PATH }]
+  : AETHER_ORDERED_LINES
+const LINE_COUNT = orderedLines.length
 const DEFAULT_PATH_LENGTH = 3000
 
 // Light mode color schemes
@@ -176,9 +182,8 @@ const DARK_MODE_SCHEMES: ColorScheme[] = [
 // Unique ID for gradient
 const gradientId = `aether-gradient-${Math.random().toString(36).slice(2, 9)}`
 
-const viewBox = AETHER_SVG_VIEWBOX
-const orderedLines = AETHER_ORDERED_LINES
-const fullPath = AETHER_FULL_PATH
+const viewBox = props.brand === 'arca' ? ARCA_LOGO_VIEWBOX : AETHER_SVG_VIEWBOX
+const fullPath = props.brand === 'arca' ? ARCA_LOGO_PATH : AETHER_FULL_PATH
 
 // Path refs and lengths
 const pathRefs = ref<(SVGPathElement | null)[]>(new Array(LINE_COUNT).fill(null))
