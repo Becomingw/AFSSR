@@ -35,6 +35,35 @@ No history, raw prompts/responses, headers, upstream key names/IDs, tokens, targ
 - Fixtures use the real stored-candidate/usage schema and existing executor error codes with synthetic identifiers and secret canaries, not production conversations. Tests cover common Chat/Responses/Claude/Gemini format-error shapes, stream interruption, missing/running evidence, success after fallback, stale candidates, ownership, admin/token scope, explicit feedback attachment and frontend stale-result cancellation.
 - No inference replay, inference retry, automatic feedback creation, history forwarding or production issue creation occurs.
 
+## Debugging Upstream Compatibility Errors
+
+The safe projection above never returns upstream bodies. Administrators debugging an upstream that
+rejects a converted request use the raw evidence instead:
+
+- **What the upstream answered** is kept for every attempt by default: `GET /api/admin/monitoring/trace/{request_id}`
+  returns, per candidate, `extra_data.upstream_response` (status, headers, body, each bounded to
+  64 KiB), the gateway's `error_flow` classification and the upstream URL. A stream that fails
+  in-band after HTTP 200 is recorded on a candidate that looks successful but carries
+  `error_message`. Only the parsed message of such an in-band error is guaranteed: the raw error
+  event is kept as the usage record's `response_body` for Chat upstreams, not for Responses or
+  Messages upstreams.
+- **What was sent** (the request after format conversion) is a body, so it follows the system
+  setting `request_record_level`:
+  - `basic` (default): no bodies.
+  - `failures`: bodies of requests that ended in `failed` are kept (request, converted upstream
+    request, upstream response, client response); successful, cancelled and in-flight requests keep
+    none. Streams buffer no more than under `basic`. OAuth exchanges are never captured.
+  - `full`: bodies of every request.
+
+  A same-format request (for example Messages to a Messages upstream) stores one copy of the
+  request, the client's; it is what went upstream apart from model mapping. The policy is cached
+  for about 30 seconds, and only requests after the change are affected.
+- The request detail drawer shows both side by side for failed requests (**Upstream failure
+  comparison**): the converted upstream request on the left, the upstream's status, useful headers
+  and error on the right, with one tab per failed attempt.
+- `tests/client_e2e/run.py` runs the real Codex and Claude Code clients against scripted upstream
+  failures (400, 429, 500, HTML 502, in-band stream error) and asserts all of the above.
+
 ## Local Checks
 
 ```sh

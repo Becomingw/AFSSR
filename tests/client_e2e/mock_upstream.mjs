@@ -36,6 +36,11 @@ function steps(scenario) {
     case 'text_only':
     case 'cancel':
     case 'cancel_drain':
+    case 'err_400':
+    case 'err_429':
+    case 'err_500':
+    case 'err_html':
+    case 'err_stream':
     default:
       return [];
   }
@@ -109,6 +114,7 @@ function plan(info) {
     const call = toolCall(script[info.results], info.tools);
     if (call) return { type: 'tool', callId: id('call_'), ...call };
   }
+  if (info.scenario?.name?.startsWith('err_')) return { type: 'error', kind: info.scenario.name };
   if (info.scenario?.name === 'cancel') return { type: 'slow', chunks: 150 };
   if (info.scenario?.name === 'cancel_drain') return { type: 'slow', chunks: 20 };
   const done = info.scenario ? `E2E_DONE rounds=${info.results}` : 'synthetic hello';
@@ -256,6 +262,38 @@ async function slowStream(format, body, res, requestId, chunks) {
   }
 }
 
+// ---- scripted upstream failures ------------------------------------------------------------
+// Bodies mimic what real providers send, with a marker (`E2E_UPSTREAM_ERROR_*`) the harness greps for.
+function upstreamError(format, body, kind, res) {
+  const detail = { chat: (m, t, c) => ({ error: { message: m, type: t, code: c, param: null } }),
+    responses: (m, t, c) => ({ error: { message: m, type: t, code: c, param: null } }),
+    messages: (m, t) => ({ type: 'error', error: { type: t, message: m } }) }[format];
+  const extra = { 'x-request-id': 'upstream-req-e2e', 'x-ratelimit-remaining': '0' };
+  if (kind === 'err_400') {
+    res.writeHead(400, { 'content-type': 'application/json', ...extra }).end(JSON.stringify(detail('E2E_UPSTREAM_ERROR_400 unsupported parameter: reasoning_effort', 'invalid_request_error', 'unsupported_parameter')));
+  } else if (kind === 'err_429') {
+    res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '7', ...extra }).end(JSON.stringify(detail('E2E_UPSTREAM_ERROR_429 rate limit reached', format === 'messages' ? 'rate_limit_error' : 'rate_limit_exceeded', 'rate_limit_exceeded')));
+  } else if (kind === 'err_500') {
+    res.writeHead(500, { 'content-type': 'application/json', ...extra }).end(JSON.stringify(detail('E2E_UPSTREAM_ERROR_500 internal failure', format === 'messages' ? 'api_error' : 'server_error', 'internal')));
+  } else if (kind === 'err_html') {
+    res.writeHead(502, { 'content-type': 'text/html' }).end('<html><body><h1>502 Bad Gateway</h1><p>E2E_UPSTREAM_ERROR_HTML</p></body></html>');
+  } else {
+    // 200 + SSE that fails half-way: the failure only exists in-band.
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+    if (format === 'chat') {
+      res.write(`data: ${JSON.stringify({ id: 'x', object: 'chat.completion.chunk', model: body.model, choices: [{ index: 0, delta: { role: 'assistant', content: 'partial ' }, finish_reason: null }] })}\n\n`);
+      res.write(`data: ${JSON.stringify({ error: { message: 'E2E_UPSTREAM_ERROR_STREAM overloaded', type: 'server_error' } })}\n\n`);
+    } else if (format === 'responses') {
+      res.write(`event: response.created\ndata: ${JSON.stringify({ type: 'response.created', response: { id: 'resp_x', object: 'response', model: body.model, status: 'in_progress', output: [] } })}\n\n`);
+      res.write(`event: response.failed\ndata: ${JSON.stringify({ type: 'response.failed', response: { id: 'resp_x', status: 'failed', error: { code: 'server_error', message: 'E2E_UPSTREAM_ERROR_STREAM overloaded' } } })}\n\n`);
+    } else {
+      res.write(`event: message_start\ndata: ${JSON.stringify({ type: 'message_start', message: { id: 'msg_x', type: 'message', role: 'assistant', model: body.model, content: [], usage: { input_tokens: 1, output_tokens: 0 } } })}\n\n`);
+      res.write(`event: error\ndata: ${JSON.stringify({ type: 'error', error: { type: 'overloaded_error', message: 'E2E_UPSTREAM_ERROR_STREAM overloaded' } })}\n\n`);
+    }
+    res.end();
+  }
+}
+
 // ---- server --------------------------------------------------------------------------------
 // Match by suffix: the gateway may or may not insert a `/v1` depending on the endpoint's base URL.
 const formatOf = (path) => (path.endsWith('/chat/completions') ? 'chat' : path.endsWith('/responses') ? 'responses' : path.endsWith('/messages') ? 'messages' : null);
@@ -292,6 +330,7 @@ const server = http.createServer(async (req, res) => {
   const info = inspect(format, body);
   const reply = plan(info);
   log({ kind: 'request', request_id: requestId, format, path, model: body.model, stream: !!body.stream, scenario: info.scenario?.name ?? null, tools: info.toolNames, tool_results: info.results, reply: reply.type === 'tool' ? { tool: reply.name } : { [reply.type]: true }, headers, body });
+  if (reply.type === 'error') { upstreamError(format, body, reply.kind, res); return; }
   if (reply.type === 'slow') { await slowStream(format, body, res, requestId, reply.chunks); return; }
   ({ chat, responses, messages })[format](body, reply, res);
 });

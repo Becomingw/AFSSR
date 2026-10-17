@@ -598,6 +598,12 @@
                 @feedback="openDiagnosticFeedback"
               />
 
+              <UpstreamFailurePanel
+                v-if="detail.status === 'failed'"
+                :request-id="detail.request_id || traceTimelineRequestId || null"
+                :usage-id="detail.id || null"
+              />
+
               <!-- 请求链路追踪卡片 -->
               <div>
                 <HorizontalRequestTimeline
@@ -970,6 +976,7 @@ import { BodyDocumentError, MAX_BODY_BYTES } from '../utils/body-document-protoc
 import { useToast } from '@/composables/useToast'
 import HorizontalRequestTimeline from './HorizontalRequestTimeline.vue'
 import RequestDiagnosticPanel from './RequestDiagnosticPanel.vue'
+import UpstreamFailurePanel from './UpstreamFailurePanel.vue'
 import ReplayDialog from './ReplayDialog.vue'
 import ServiceTierFacts from './ServiceTierFacts.vue'
 import UsageModelDisplay from './UsageModelDisplay.vue'

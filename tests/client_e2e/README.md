@@ -17,7 +17,7 @@ Prerequisites: `node`, a local PostgreSQL (`createdb`/`dropdb` on `PATH`), the `
 CLIs, and a built gateway (`cargo build -p aether-gateway`).
 
 ```bash
-python3 tests/client_e2e/run.py                                   # full matrix: 2 clients x 3 upstreams x 6 scenarios
+python3 tests/client_e2e/run.py                                   # full matrix: 2 clients x 3 upstreams x 11 scenarios
 python3 tests/client_e2e/run.py --clients claude --upstreams chat  # a slice
 python3 tests/client_e2e/run.py --scenarios multi_tool --keep      # keep logs + captured upstream traffic
 ```
@@ -40,6 +40,8 @@ pass-through and both directions of format conversion are exercised.
 | `shell` | one shell command | the command ran in the client's own shell tool |
 | `cancel` | a long stream; the client gets Ctrl-C mid-stream | with `cancel_on_client_disconnect` on, the gateway closes the upstream stream |
 | `cancel_drain` | same, default policy | the gateway keeps draining the upstream stream so usage can still settle |
+| `err_400` `err_429` `err_500` `err_html` | the upstream rejects with a JSON error / rate limit / server error / HTML 502 page | the trace keeps the upstream status, useful headers (`retry-after`, upstream `x-request-id`) and body verbatim, the gateway's classification and URL; the failed request keeps the converted request that was sent (`request_record_level=failures`) |
+| `err_stream` | a 200 whose SSE fails half-way | the in-band error message is kept on the attempt and the error body with the failed request |
 
 Every non-cancel case also checks, on the request the gateway forwarded upstream:
 
@@ -56,7 +58,7 @@ Every non-cancel case also checks, on the request the gateway forwarded upstream
 - Real model behaviour (the mock is scripted) and real provider quirks: auth, rate limits, field
   allow-lists. That needs a paid smoke test against a real channel.
 - Interactive TUI modes, `/compact` and context compression, MCP servers, sub-agents, images,
-  reasoning/thinking round trips, WebSocket transport for Codex, and error/429/failover paths.
+  reasoning/thinking round trips, WebSocket transport for Codex, and multi-provider failover.
   The scenario hook in `mock_upstream.mjs` (`steps()`) is the place to add them.
 - Client versions other than the ones installed locally; results are only evidence for those.
 

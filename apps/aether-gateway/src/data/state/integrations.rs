@@ -43,6 +43,8 @@ fn usage_request_record_level_from_value(value: Option<&Value>) -> UsageRequestR
 
     if value.eq_ignore_ascii_case("full") {
         UsageRequestRecordLevel::Full
+    } else if value.eq_ignore_ascii_case("failures") {
+        UsageRequestRecordLevel::Failures
     } else {
         UsageRequestRecordLevel::Basic
     }
@@ -514,6 +516,20 @@ mod tests {
             .expect("request record level should read");
 
         assert_eq!(level, UsageRequestRecordLevel::Full);
+    }
+
+    #[tokio::test]
+    async fn usage_runtime_access_reads_failures_only_capture_case_insensitively() {
+        let state = GatewayDataState::disabled().with_system_config_values_for_tests([(
+            "request_record_level".to_string(),
+            json!(" Failures "),
+        )]);
+
+        let level = UsageRuntimeAccess::request_record_level(&state)
+            .await
+            .expect("request record level should read");
+
+        assert_eq!(level, UsageRequestRecordLevel::Failures);
     }
 
     #[tokio::test]

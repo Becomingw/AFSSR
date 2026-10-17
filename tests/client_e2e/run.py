@@ -35,7 +35,18 @@ ROOT = HERE.parent.parent
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 UPSTREAM_FORMAT = {'chat': 'openai:chat', 'responses': 'openai:responses', 'messages': 'claude:messages'}
-SCENARIOS = ['text_only', 'write_file', 'multi_tool', 'shell', 'cancel', 'cancel_drain']
+SCENARIOS = ['text_only', 'write_file', 'multi_tool', 'shell', 'cancel', 'cancel_drain',
+             'err_400', 'err_429', 'err_500', 'err_html', 'err_stream']
+# What the mock upstream returns for each error scenario, and what the gateway must have recorded.
+ERROR_EXPECT = {
+    'err_400': {'status': 400, 'marker': 'E2E_UPSTREAM_ERROR_400', 'headers': {'x-request-id': 'upstream-req-e2e'}},
+    'err_429': {'status': 429, 'marker': 'E2E_UPSTREAM_ERROR_429', 'headers': {'retry-after': '7'}},
+    'err_500': {'status': 500, 'marker': 'E2E_UPSTREAM_ERROR_500', 'headers': {'x-request-id': 'upstream-req-e2e'}},
+    'err_html': {'status': 502, 'marker': 'E2E_UPSTREAM_ERROR_HTML', 'headers': {}},
+    # A 200 whose SSE fails half-way: the gateway records the failure with a synthesized status.
+    'err_stream': {'status': None, 'marker': 'E2E_UPSTREAM_ERROR_STREAM', 'headers': {}},
+}
+RECORD_LEVEL_CACHE_SECONDS = 32  # the gateway caches the capture policy for 30s
 CLIENT_PROTOCOL = {'codex': 'responses', 'claude': 'messages'}
 
 
@@ -92,6 +103,7 @@ class Stack:
         self.procs = []
         self.models = {}
         self.token = None
+        self.record_level_ready_at = 0.0
 
     def start(self):
         subprocess.run(['createdb', '-h', 'localhost', self.db], check=True)
@@ -118,6 +130,10 @@ class Stack:
             self.provision(upstream, api_format)
         key = admin.request('POST', '/api/users/me/api-keys', {'name': 'client-e2e'}, statuses=(200, 201))
         self.token = key.get('key') or admin.request('GET', f'/api/users/me/api-keys/{key["id"]}?include_key=true')['key']
+        # Keep bodies only for failed requests: this is what the error scenarios assert on, and it
+        # shows that successful requests leave no body behind.
+        admin.request('PUT', '/api/admin/system/configs/request_record_level', {'value': 'failures'}, statuses=(200, 201))
+        self.record_level_ready_at = time.time() + RECORD_LEVEL_CACHE_SECONDS
 
     def provision(self, upstream, api_format):
         model = f'e2e-{upstream}'
@@ -230,6 +246,9 @@ def run_case(stack, client, upstream, scenario, timeout):
     argv, env = build_command(client, stack, upstream, home, workdir, prompt_for(scenario, workdir))
     if scenario.startswith('cancel'):
         stack.set_cancel_policy(scenario == 'cancel')
+    if scenario.startswith('err_'):
+        time.sleep(max(0.0, stack.record_level_ready_at - time.time()))
+    case_started_at = time.time()
     mark = stack.mock_mark()
     usage_before = usage_totals(stack, f'e2e-{upstream}')
     started = time.time()
@@ -243,12 +262,16 @@ def run_case(stack, client, upstream, scenario, timeout):
         if proc.poll() is None:
             os.killpg(proc.pid, signal.SIGINT)
             cancelled = True
+    # Clients retry failed requests with backoff; for error scenarios the gateway's record is the
+    # subject, so give the client a short window and then stop it. (They retry for a long time.)
+    client_timeout = min(timeout, 15) if scenario.startswith('err_') else timeout
     try:
-        out, err = proc.communicate(timeout=timeout)
+        out, err = proc.communicate(timeout=client_timeout)
     except subprocess.TimeoutExpired:
         os.killpg(proc.pid, signal.SIGKILL)
         out, err = proc.communicate()
-        result.check(False, f'client timed out after {timeout}s')
+        if not scenario.startswith('err_'):
+            result.check(False, f'client timed out after {timeout}s')
     if scenario.startswith('cancel'):
         # `cancel`: the gateway should notice the vanished client and close the upstream connection.
         # `cancel_drain` (default policy): it keeps draining the upstream so usage can still settle.
@@ -261,7 +284,9 @@ def run_case(stack, client, upstream, scenario, timeout):
     result.notes.append(f'{time.time() - started:.1f}s, {len(requests)} scripted upstream request(s)')
     (stack.tmp / f'{client}-{upstream}-{scenario}.out').write_text(out + '\n--- stderr ---\n' + err)
     assert_case(result, scenario, client, upstream, workdir, out, err, proc.returncode, requests, events, cancelled)
-    if not scenario.startswith('cancel') and requests:
+    if scenario.startswith('err_'):
+        check_recorded_error(stack, result, upstream, scenario, case_started_at, requests)
+    elif not scenario.startswith('cancel') and requests:
         check_forwarded(result, client, upstream, requests)
         check_usage(stack, result, client, upstream, requests, usage_before)
     return result
@@ -279,6 +304,52 @@ def check_usage(stack, result, client, upstream, requests, before):
     result.check(got == want, f'usage accounting is exact (requests, input, output tokens): wanted {want}, got {got}')
 
 
+def check_recorded_error(stack, result, upstream, scenario, since, requests):
+    """The gateway must keep the upstream's real error and the request it was a reply to."""
+    want = ERROR_EXPECT[scenario]
+    records = stack.admin.request('GET', '/api/admin/usage/records?limit=50')['records']
+    failed = [r for r in records if r.get('model') == f'e2e-{upstream}' and r.get('status') == 'failed']
+    if not result.check(bool(failed), 'a failed usage record exists for the request'):
+        return
+    record = failed[0]  # newest first
+    detail = stack.admin.request('GET', f'/api/admin/usage/{record["id"]}?include_bodies=true')
+    trace = stack.admin.request('GET', '/api/admin/monitoring/trace/' + detail['request_id'])
+    # An in-band stream failure is recorded on a candidate that reached the upstream "successfully"
+    # (HTTP 200), so evidence is: failed attempts, or attempts that carry an error message.
+    attempts = [c for c in trace['candidates'] if c['status'] == 'failed' or (c.get('error_message') and c['status'] != 'skipped')]
+    result.check(bool(attempts), 'the trace has attempts that carry the failure')
+    if not attempts:
+        return
+    attempt = attempts[-1]
+    extra = attempt.get('extra_data') or {}
+    upstream_response = extra.get('upstream_response') or {}
+    result.check(bool(upstream_response), 'the attempt keeps the upstream response')
+    if scenario == 'err_stream':
+        # Only the parsed message of an in-band error is guaranteed; the raw event is kept for some
+        # upstream formats only (see docs/operations/request-diagnostics.md).
+        result.check(want['marker'] in (attempt.get('error_message') or ''), 'the in-band upstream error message is kept on the attempt')
+    else:
+        result.check(upstream_response.get('status_code') == want['status'], f'upstream status {want["status"]} recorded (got {upstream_response.get("status_code")})')
+        result.check(want['marker'] in json.dumps(upstream_response.get('body')), 'the upstream error body is kept verbatim')
+        headers = {k.lower(): v for k, v in (upstream_response.get('headers') or {}).items()}
+        for name, value in want['headers'].items():
+            result.check(headers.get(name) == value, f'upstream header {name} kept')
+        flow = extra.get('error_flow') or {}
+        result.check(bool(flow), 'the gateway recorded how it classified the error')
+        result.check(want['marker'] in (attempt.get('error_message') or '') + json.dumps(flow) + json.dumps(upstream_response.get('body')), 'the upstream message is recoverable from the attempt')
+    result.check(bool(extra.get('upstream_url')), 'the upstream URL is recorded')
+    # Failures-only capture: the request that was sent upstream is kept for failed requests.
+    # Same-format passthrough stores one copy of the request: the client's, which is what went upstream.
+    sent = detail.get('provider_request_body') or (detail.get('request_body') if detail.get('has_format_conversion') is False else None)
+    result.check(isinstance(sent, dict) and sent.get('model') == f'e2e-{upstream}', 'the converted request sent upstream is kept for the failed request')
+    if upstream == 'messages':
+        result.check(isinstance(sent, dict) and 'messages' in sent, 'the kept upstream request is in the upstream (Messages) format')
+    elif upstream == 'responses':
+        result.check(isinstance(sent, dict) and 'input' in sent, 'the kept upstream request is in the upstream (Responses) format')
+    else:
+        result.check(isinstance(sent, dict) and 'messages' in sent, 'the kept upstream request is in the upstream (Chat) format')
+
+
 def assert_case(result, scenario, client, upstream, workdir, out, err, code, requests, events, cancelled):
     result.check(bool(requests), 'the upstream received at least one scripted request')
     result.check(all(r['format'] == upstream for r in requests), f'every request reached the {upstream} upstream format')
@@ -292,6 +363,8 @@ def assert_case(result, scenario, client, upstream, workdir, out, err, code, req
         else:
             result.check(not aborted and any(e['kind'] == 'stream_finished' for e in events), 'default policy: the gateway drained the upstream stream to completion')
         return
+    if scenario.startswith('err_'):
+        return  # the client's own error handling is not the subject; see check_recorded_error
     result.check(code == 0, f'client exited cleanly (exit code {code})')
     if scenario == 'text_only':
         result.check('E2E_DONE rounds=0' in out, 'the final answer reached the client')

@@ -399,7 +399,10 @@ fn direct_passthrough_mode() -> DirectPassthroughMode {
 
 fn stream_body_buffer_limit_for_record_level(record_level: UsageRequestRecordLevel) -> usize {
     match record_level {
-        UsageRequestRecordLevel::Basic => BASIC_STREAM_BODY_ANALYSIS_LIMIT_BYTES,
+        // `Failures` buffers no more than `Basic` does; a failing stream keeps what was buffered.
+        UsageRequestRecordLevel::Basic | UsageRequestRecordLevel::Failures => {
+            BASIC_STREAM_BODY_ANALYSIS_LIMIT_BYTES
+        }
         UsageRequestRecordLevel::Full => crate::execution_runtime::MAX_STREAM_BODY_CAPTURE_BYTES,
     }
 }

@@ -42,6 +42,8 @@ pub trait UsageBillingEventEnricher: Send + Sync {
 pub enum UsageRequestRecordLevel {
     #[default]
     Basic,
+    /// Bodies are kept only for requests that ended in failure.
+    Failures,
     Full,
 }
 

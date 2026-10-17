@@ -6,7 +6,7 @@ use aether_data_contracts::repository::usage::{
 use serde::Serialize;
 use serde_json::{json, Map, Value};
 
-use crate::event::UsageEvent;
+use crate::event::{UsageEvent, UsageEventType};
 use crate::runtime::{UsageBodyCapturePolicy, UsageRequestRecordLevel};
 
 const TRUNCATED_BODY_STRING_SUFFIX: &str = "...[truncated]";
@@ -122,9 +122,11 @@ impl UsageBodyCaptureEngine {
             event.data.api_format.as_deref(),
             event.data.endpoint_api_format.as_deref(),
         );
+        let failed = matches!(event.event_type, UsageEventType::Failed);
         self.apply_to_payload(
             UsageBodyCapturePayloadMut::from_event(event),
             force_disabled,
+            failed,
         );
     }
 
@@ -133,16 +135,32 @@ impl UsageBodyCaptureEngine {
             record.api_format.as_deref(),
             record.endpoint_api_format.as_deref(),
         );
+        let failed = record.status == "failed";
         self.apply_to_payload(
             UsageBodyCapturePayloadMut::from_record(record),
             force_disabled,
+            failed,
         );
     }
 
-    fn apply_to_payload(self, payload: UsageBodyCapturePayloadMut<'_>, force_disabled: bool) {
-        if force_disabled || matches!(self.policy.record_level, UsageRequestRecordLevel::Basic) {
+    fn apply_to_payload(
+        self,
+        payload: UsageBodyCapturePayloadMut<'_>,
+        force_disabled: bool,
+        failed: bool,
+    ) {
+        // `Failures` keeps bodies only for requests that ended in failure; everything else is
+        // handled exactly like `Basic`.
+        let strip = match self.policy.record_level {
+            UsageRequestRecordLevel::Basic => true,
+            UsageRequestRecordLevel::Failures => !failed,
+            UsageRequestRecordLevel::Full => false,
+        };
+        if force_disabled || strip {
             let reason = if force_disabled {
                 "sensitive_oauth_exchange"
+            } else if self.policy.record_level == UsageRequestRecordLevel::Failures {
+                "request_record_level_failures"
             } else {
                 "request_record_level_basic"
             };
@@ -838,6 +856,67 @@ mod tests {
                 Some("sensitive_oauth_exchange")
             );
         }
+    }
+
+    fn failures_policy_event(event_type: UsageEventType, api_format: &str) -> UsageEvent {
+        let mut event = sensitive_oauth_event(api_format);
+        event.event_type = event_type;
+        apply_usage_body_capture_policy_to_event(
+            UsageBodyCapturePolicy {
+                record_level: UsageRequestRecordLevel::Failures,
+            },
+            &mut event,
+        );
+        event
+    }
+
+    #[test]
+    fn failures_policy_keeps_bodies_only_for_failed_requests() {
+        let failed = failures_policy_event(UsageEventType::Failed, "openai:chat");
+        // Kept bodies may be stored inline or by reference; either way they are not disabled.
+        for state in [
+            failed.data.request_body_state,
+            failed.data.provider_request_body_state,
+            failed.data.response_body_state,
+            failed.data.client_response_body_state,
+        ] {
+            assert_ne!(state, Some(UsageBodyCaptureState::Disabled));
+        }
+        assert!(failed.data.request_body.is_some() || failed.data.request_body_ref.is_some());
+        assert!(failed.data.response_body.is_some() || failed.data.response_body_ref.is_some());
+
+        for other in [
+            UsageEventType::Pending,
+            UsageEventType::Streaming,
+            UsageEventType::Completed,
+            UsageEventType::Cancelled,
+        ] {
+            let event = failures_policy_event(other, "openai:chat");
+            assert!(event.data.request_body.is_none(), "{other:?}");
+            assert!(event.data.provider_request_body.is_none(), "{other:?}");
+            assert!(event.data.response_body.is_none(), "{other:?}");
+            assert_eq!(
+                event.data.request_body_state,
+                Some(UsageBodyCaptureState::Disabled)
+            );
+            assert_eq!(
+                event
+                    .data
+                    .request_metadata
+                    .as_ref()
+                    .and_then(|m| m.pointer("/body_capture/request/reason"))
+                    .and_then(Value::as_str),
+                Some("request_record_level_failures")
+            );
+        }
+    }
+
+    #[test]
+    fn failures_policy_never_captures_sensitive_oauth_bodies_even_when_failed() {
+        let event = failures_policy_event(UsageEventType::Failed, "oauth:exchange");
+        assert!(event.data.request_body.is_none());
+        assert!(event.data.provider_request_body.is_none());
+        assert!(event.data.response_body.is_none());
     }
 
     #[test]

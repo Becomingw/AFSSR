@@ -37,13 +37,16 @@
             <SelectItem value="headers">
               HEADERS - 含请求头 (~2-3KB/条)
             </SelectItem>
+            <SelectItem value="failures">
+              FAILURES - 仅失败请求保存完整请求响应
+            </SelectItem>
             <SelectItem value="full">
               FULL - 完整请求响应
             </SelectItem>
           </SelectContent>
         </Select>
         <p class="mt-1 text-xs text-muted-foreground">
-          敏感信息会自动脱敏
+          敏感信息会自动脱敏。排查上游兼容问题时建议使用 FAILURES：成功请求不留正文，失败请求保留转换后发给上游的请求体和上游返回的错误。
         </p>
       </div>
 
