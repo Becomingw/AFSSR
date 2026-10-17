@@ -8,18 +8,22 @@ export interface FeedbackSummary {
   title: string; category: FeedbackCategory; model: string | null; request_id: string | null
   status: FeedbackStatus; version: number; activity_seq: number; created_at: number; updated_at: number
   visibility?: FeedbackVisibility
+  /** 人类可读的编号，用 #N 引用 */
+  number?: number
+  /** 管理员置顶的时间（秒），未置顶为 null */
+  pinned_at?: number | null
 }
 export interface FeedbackIssue extends FeedbackSummary { description: string }
 export interface FeedbackEvent {
   seq: number; issue_id: string; actor_id: string | null; actor_username: string | null
-  actor_role: string; kind: 'created' | 'reply' | 'status'; content: string | null
+  actor_role: string; kind: 'created' | 'reply' | 'status' | 'pin'; content: string | null
   from_status: FeedbackStatus | null; to_status: FeedbackStatus | null; created_at: number
   visibility?: FeedbackVisibility
 }
 export interface FeedbackPage { items: FeedbackSummary[]; total: number; next_cursor: number | null }
 export interface FeedbackDetail { issue: FeedbackIssue; events: FeedbackEvent[]; next_event_cursor: number | null; has_more: boolean }
 export interface FeedbackCreate { title: string; description: string; category: FeedbackCategory; model?: string; request_id?: string; client_request_id: string; include_diagnostics?: boolean; visibility?: FeedbackVisibility }
-export type FeedbackAction = { action: 'reply'; content: string } | { action: 'set_status'; status: FeedbackStatus; comment?: string }
+export type FeedbackAction = { action: 'reply'; content: string } | { action: 'set_status'; status: FeedbackStatus; comment?: string } | { action: 'set_pinned'; pinned: boolean }
 export type FeedbackCommand = FeedbackAction & { expected_version: number; client_request_id: string; diagnostic_request_id?: string; visibility?: FeedbackVisibility }
 export interface FeedbackMutation { issue: FeedbackIssue; replayed: boolean }
 const base = (admin: boolean) => admin ? '/api/admin/feedback' : '/api/feedback'
@@ -34,4 +38,8 @@ export async function createFeedback(input: FeedbackCreate, admin = false): Prom
 }
 export async function commandFeedback(admin: boolean, id: string, input: FeedbackCommand): Promise<FeedbackMutation> {
   return (await apiClient.post<FeedbackMutation>(`${base(admin)}/${encodeURIComponent(id)}/commands`, input)).data
+}
+/** 可被 @ 的管理员用户名（只含用户名） */
+export async function listMentionableAdmins(admin: boolean): Promise<string[]> {
+  return (await apiClient.get<{ items: string[] }>(`${base(admin)}/mentionable`)).data.items
 }

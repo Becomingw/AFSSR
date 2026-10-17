@@ -4,3 +4,5 @@ export function feedbackStatusLabel(value: string) { return feedbackStatuses.fin
 export function feedbackCategoryLabel(value: string) { return feedbackCategories.find(item => item.value === value)?.label || value }
 export function feedbackDate(value: number) { return new Date(value * 1000).toLocaleString() }
 export function feedbackShortId(id: string) { return id.length > 12 ? `${id.slice(0, 4)}…${id.slice(-6)}` : id }
+/** `#12`（有编号时）或缩写 id */
+export function feedbackRef(issue: { id: string, number?: number }) { return issue.number ? `#${issue.number}` : `#${feedbackShortId(issue.id)}` }

@@ -2,7 +2,7 @@ import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { canAccessAdminRole } from '@/config/adminRoles'
-import { listFeedback, getFeedback, createFeedback, commandFeedback, type FeedbackAction, type FeedbackCategory, type FeedbackDetail, type FeedbackSummary, type FeedbackVisibility } from '@/api/feedback'
+import { listFeedback, getFeedback, createFeedback, commandFeedback, listMentionableAdmins, type FeedbackAction, type FeedbackCategory, type FeedbackDetail, type FeedbackSummary, type FeedbackVisibility } from '@/api/feedback'
 
 export function useFeedback() {
   const route = useRoute(), router = useRouter(), auth = useAuthStore()
@@ -16,7 +16,8 @@ export function useFeedback() {
   const loading = ref(false), detailLoading = ref(false), busy = ref(false), creating = ref(false), closing = ref(false)
   const error = ref(''), notice = ref(''), draftError = ref(''), replyText = ref(''), replyingTo = ref('')
   const replyVisibility = ref<FeedbackVisibility>('private')
-  const replyInput = ref<HTMLTextAreaElement | null>(null)
+  const replyInput = ref<{ focus: () => void } | null>(null)
+  const mentionable = ref<string[]>([])
   const draft = reactive({ title: '', description: '', category: 'bug' as FeedbackCategory, model: '', request_id: '', visibility: 'private' as FeedbackVisibility })
   const diagnosticId = ref(''), includeDiagnostics = ref(false), attachReply = ref(false)
   const canManageIssue = computed(() => Boolean(detail.value && (manager.value || (auth.user?.id && detail.value.issue.owner_id === auth.user.id))))
@@ -104,7 +105,7 @@ export function useFeedback() {
   }
   async function mutate(action: FeedbackAction) {
     if (!detail.value || busy.value || detailLoading.value) return
-    const content = action.action === 'reply' ? action.content : action.comment || ''
+    const content = action.action === 'reply' ? action.content : action.action === 'set_status' ? action.comment || '' : ''
     if (new TextEncoder().encode(content).length > 20000) { error.value = '评论最多 20,000 字节'; return }
     const id = selectedId.value
     const value = { ...action, expected_version: detail.value.issue.version, visibility: publicIssue.value ? replyVisibility.value : 'private' as FeedbackVisibility, ...(action.action === 'reply' && attachReply.value && diagnosticId.value.trim() ? { diagnostic_request_id: diagnosticId.value.trim() } : {}) }
@@ -113,10 +114,10 @@ export function useFeedback() {
     try {
       const result = await commandFeedback(admin.value, id, { ...value, client_request_id: commandId({ id, ...value }) })
       pending = undefined; committed = true
-      notice.value = action.action === 'reply' ? '回复已发送' : '状态已更新'
+      notice.value = action.action === 'reply' ? '回复已发送' : action.action === 'set_pinned' ? (action.pinned ? '已置顶' : '已取消置顶') : '状态已更新'
       if (selectedId.value === id && detail.value) {
         detail.value.issue = result.issue; closing.value = false
-        if (action.action === 'reply' || action.comment?.trim()) {
+        if (action.action === 'reply' || (action.action === 'set_status' && action.comment?.trim())) {
           replyText.value = ''; replyingTo.value = ''; replyVisibility.value = 'private'; attachReply.value = false
         }
         const after = detail.value.has_more ? result.issue.activity_seq - 1 : Math.max(detail.value.next_event_cursor || 0, ...detail.value.events.map(event => event.seq), 0)
@@ -139,10 +140,12 @@ export function useFeedback() {
     if (attachReply.value) { error.value = '请先发送附带诊断的回复，再填写最终解决说明'; return }
     await mutate({ action: 'set_status', status: 'resolved', comment: replyText.value.trim() })
   }
+  async function togglePin() { if (manager.value && detail.value) await mutate({ action: 'set_pinned', pinned: !detail.value.issue.pinned_at }) }
+  async function loadMentionable() { try { mentionable.value = await listMentionableAdmins(admin.value) } catch { mentionable.value = [] } }
   async function reopen() { if (canManageIssue.value) await mutate({ action: 'set_status', status: 'open' }) }
   async function closeIssue() { if (manager.value) await mutate({ action: 'set_status', status: 'closed' }) }
   watch(() => [selectedId.value, admin.value], () => { void loadDetail() })
-  watch(admin, () => { items.value = []; total.value = 0; page.value = 0; void loadList() })
-  onMounted(() => { void refresh() })
-  return { admin, manager, canCreate, selectedId, status, category, search, page, total, items, detail, loading, detailLoading, busy, creating, closing, error, notice, draftError, replyText, replyingTo, replyVisibility, replyInput, draft, diagnosticId, includeDiagnostics, attachReply, canManageIssue, publicIssue, createFromDiagnostic, loadList, refresh, filterChanged, openIssue, showList, replyTo, moreEvents, submit, reply, resolve, reopen, closeIssue }
+  watch(admin, () => { items.value = []; total.value = 0; page.value = 0; void loadList(); void loadMentionable() })
+  onMounted(() => { void refresh(); void loadMentionable() })
+  return { admin, manager, canCreate, selectedId, status, category, search, page, total, items, detail, loading, detailLoading, busy, creating, closing, error, notice, draftError, replyText, replyingTo, replyVisibility, replyInput, mentionable, base, togglePin, draft, diagnosticId, includeDiagnostics, attachReply, canManageIssue, publicIssue, createFromDiagnostic, loadList, refresh, filterChanged, openIssue, showList, replyTo, moreEvents, submit, reply, resolve, reopen, closeIssue }
 }

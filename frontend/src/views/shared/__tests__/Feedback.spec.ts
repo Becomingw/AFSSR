@@ -3,7 +3,7 @@ import { createApp, defineComponent, h, nextTick, type App } from 'vue'
 import Feedback from '../Feedback.vue'
 import { canAccessAdminPage } from '@/config/adminRoles'
 
-const mocks = vi.hoisted(() => ({ auth: { user: { id: 'user-1', role: 'user' } }, list: vi.fn(), detail: vi.fn(), create: vi.fn(), command: vi.fn(), push: vi.fn(), route: { path: '/dashboard/feedback', params: {} as Record<string, string>, query: {} as Record<string, string> } }))
+const mocks = vi.hoisted(() => ({ auth: { user: { id: 'user-1', role: 'user' } }, list: vi.fn(), detail: vi.fn(), create: vi.fn(), command: vi.fn(), mentionable: vi.fn(), push: vi.fn(), route: { path: '/dashboard/feedback', params: {} as Record<string, string>, query: {} as Record<string, string> } }))
 vi.mock('@/stores/auth', async () => {
   const { reactive } = await import('vue')
   mocks.auth = reactive(mocks.auth)
@@ -15,7 +15,7 @@ vi.mock('vue-router', async () => {
   mocks.push.mockImplementation(async (path: string) => { mocks.route.path = path; mocks.route.params = { issueId: path.split('/')[3] || '' } })
   return { useRoute: () => mocks.route, useRouter: () => ({ push: mocks.push }) }
 })
-vi.mock('@/api/feedback', () => ({ listFeedback: mocks.list, getFeedback: mocks.detail, createFeedback: mocks.create, commandFeedback: mocks.command }))
+vi.mock('@/api/feedback', () => ({ listFeedback: mocks.list, getFeedback: mocks.detail, createFeedback: mocks.create, commandFeedback: mocks.command, listMentionableAdmins: mocks.mentionable }))
 vi.mock('@/components/ui', () => ({
   Button: defineComponent({ setup(_, { slots, attrs }) { return () => h('button', attrs, slots.default?.()) } }),
   Input: defineComponent({ props: { modelValue: { type: [String, Number], default: '' } }, emits: ['update:modelValue'], setup(props, { emit, attrs }) { return () => h('input', { ...attrs, value: props.modelValue, onInput: (event: Event) => emit('update:modelValue', (event.target as HTMLInputElement).value) }) } }),
@@ -30,7 +30,7 @@ beforeEach(async () => {
   vi.clearAllMocks(); mocks.auth.user = { id: 'user-1', role: 'user' }; mocks.route.path = '/dashboard/feedback/issue-id'; mocks.route.params = { issueId: 'issue-id' }; mocks.route.query = {}
   mocks.list.mockResolvedValue({ items: [issue], total: 1, next_cursor: 7 })
   mocks.detail.mockResolvedValue({ issue, events: [], next_event_cursor: null, has_more: false })
-  mocks.create.mockResolvedValue({ issue, replayed: false }); mocks.command.mockResolvedValue({ issue: { ...issue, version: 4, activity_seq: 8 }, replayed: false })
+  mocks.mentionable.mockResolvedValue(['root', 'Alice']); mocks.create.mockResolvedValue({ issue, replayed: false }); mocks.command.mockResolvedValue({ issue: { ...issue, version: 4, activity_seq: 8 }, replayed: false })
   root = document.createElement('div'); document.body.append(root); app = createApp(Feedback); app.mount(root); await flush()
 })
 afterEach(() => { app.unmount(); root.remove() })
@@ -162,5 +162,36 @@ describe('feedback workflows', () => {
     click('所有反馈'); await flush()
     expect(root.querySelector('[aria-label="反馈列表"]')).toBeTruthy(); expect(root.querySelector('#feedback-reply')).toBeNull()
     expect(root.querySelector('[aria-label="反馈状态"]')).toBeTruthy()
+  })
+  it('shows the issue number and lets only administrators pin and unpin', async () => {
+    mocks.detail.mockResolvedValue({ issue: { ...issue, number: 12 }, events: [], next_event_cursor: null, has_more: false }); mocks.route.params = { issueId: '12' }; await flush()
+    expect(root.querySelector('.issue-heading h1')?.textContent).toContain('#12')
+    expect([...root.querySelectorAll('button')].some(b => b.textContent?.includes('置顶'))).toBe(false)
+    mocks.auth.user = { id: 'root', role: 'admin' }; mocks.route.path = '/admin/feedback/12'; await flush()
+    const pinnedIssue = { ...issue, number: 12, pinned_at: 5, version: 4, activity_seq: 8 }
+    mocks.command.mockResolvedValue({ issue: pinnedIssue, replayed: false })
+    mocks.detail.mockResolvedValue({ issue: pinnedIssue, events: [], next_event_cursor: null, has_more: false })
+    click('置顶'); await flush()
+    expect(mocks.command).toHaveBeenLastCalledWith(true, '12', expect.objectContaining({ action: 'set_pinned', pinned: true, expected_version: 3 }))
+    expect(root.textContent).toContain('已置顶')
+    click('取消置顶'); await flush()
+    expect(mocks.command).toHaveBeenLastCalledWith(true, '12', expect.objectContaining({ action: 'set_pinned', pinned: false, expected_version: 4 }))
+  })
+  it('suggests administrators after @ and inserts the chosen name', async () => {
+    const textarea = root.querySelector<HTMLTextAreaElement>('#feedback-reply')!
+    textarea.value = 'cc @al'; textarea.setSelectionRange(6, 6); textarea.dispatchEvent(new Event('input', { bubbles: true })); await flush()
+    const options = [...root.querySelectorAll('.mention-list button')]; expect(options.map(o => o.textContent?.trim())).toEqual(['@Alice'])
+    options[0]!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })); await flush()
+    expect(textarea.value).toBe('cc @Alice ')
+  })
+  it('previews markdown with images, issue references and mentions', async () => {
+    const textarea = root.querySelector<HTMLTextAreaElement>('#feedback-reply')!
+    fill(textarea, '**bold** #7 @root ![shot](https://example.com/a.png)'); await flush()
+    click('预览'); await flush()
+    const preview = root.querySelector('.editor-preview')!
+    expect(preview.querySelector('strong')?.textContent).toBe('bold')
+    expect(preview.querySelector('a.fb-ref')?.getAttribute('href')).toBe('/dashboard/feedback/7')
+    expect(preview.querySelector('.fb-mention')?.textContent).toBe('@root')
+    expect(preview.querySelector('img')?.getAttribute('src')).toBe('https://example.com/a.png')
   })
 })

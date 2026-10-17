@@ -140,7 +140,12 @@
                   class="issue-status-icon"
                   :class="[`status-${issue.status}`]"
                 />
-                <span class="issue-main"><strong>{{ issue.title }}</strong><span>#{{ feedbackShortId(issue.id) }} · {{ issue.owner_username || '已注销用户' }} · {{ feedbackStatusLabel(issue.status) }}</span></span>
+                <span class="issue-main"><strong><Pin
+                  v-if="issue.pinned_at"
+                  :size="13"
+                  class="pinned-mark"
+                  aria-label="已置顶"
+                />{{ issue.title }}</strong><span>{{ feedbackRef(issue) }} · {{ issue.owner_username || '已注销用户' }} · {{ feedbackStatusLabel(issue.status) }}</span></span>
                 <span class="row-category">{{ feedbackCategoryLabel(issue.category) }}</span>
                 <span class="row-visibility"><Globe
                   v-if="issue.visibility === 'public'"
@@ -196,7 +201,22 @@
     </p>
     <template v-else-if="detail">
       <header class="issue-heading">
-        <h1>{{ detail.issue.title }} <span>#{{ feedbackShortId(detail.issue.id) }}</span></h1>
+        <div class="heading-row">
+          <h1>{{ detail.issue.title }} <span>{{ feedbackRef(detail.issue) }}</span></h1>
+          <Button
+            v-if="manager"
+            variant="outline"
+            size="sm"
+            :disabled="busy"
+            @click="togglePin"
+          >
+            <component
+              :is="detail.issue.pinned_at ? PinOff : Pin"
+              :size="14"
+              class="mr-2"
+            />{{ detail.issue.pinned_at ? '取消置顶' : '置顶' }}
+          </Button>
+        </div>
         <div class="issue-meta">
           <span
             class="status-badge"
@@ -210,7 +230,10 @@
           /><Lock
             v-else
             :size="13"
-          />{{ publicIssue ? '公开反馈' : '私密反馈' }}</span><span>{{ detail.issue.owner_username || '已注销用户' }} 发起于 {{ feedbackDate(detail.issue.created_at) }}</span>
+          />{{ publicIssue ? '公开反馈' : '私密反馈' }}</span><span
+            v-if="detail.issue.pinned_at"
+            class="pin-badge"
+          ><Pin :size="13" />已置顶</span><span>{{ detail.issue.owner_username || '已注销用户' }} 发起于 {{ feedbackDate(detail.issue.created_at) }}</span>
         </div>
       </header>
       <div class="issue-layout">
@@ -221,6 +244,8 @@
           <FeedbackDiscussion
             :issue="detail.issue"
             :events="detail.events"
+            :issue-base="base"
+            :mentionable="mentionable"
             @reply="replyTo"
           />
           <Button
@@ -245,14 +270,16 @@
                 @click="replyingTo = ''"
               ><X :size="13" /></button></span>
             </div>
-            <textarea
+            <FeedbackEditor
               id="feedback-reply"
               ref="replyInput"
               v-model="replyText"
               aria-label="回复"
-              placeholder="补充信息、回复讨论，或填写最终解决说明…"
+              placeholder="补充信息、回复讨论，或填写最终解决说明…（支持 Markdown）"
               :maxlength="20000"
               :disabled="busy"
+              :issue-base="base"
+              :mentionable="mentionable"
             />
             <label
               v-if="diagnosticId.trim()"
@@ -398,13 +425,19 @@
             :disabled="busy"
           /></label>
         </div>
-        <label>问题描述<textarea
-          v-model="draft.description"
-          placeholder="现象、复现步骤与预期结果；请勿包含密钥、密码或私人对话"
-          :maxlength="20000"
-          :disabled="busy"
-          required
-        /></label>
+        <div class="editor-field">
+          <span>问题描述</span>
+          <FeedbackEditor
+            v-model="draft.description"
+            aria-label="问题描述"
+            placeholder="现象、复现步骤与预期结果；请勿包含密钥、密码或私人对话"
+            :maxlength="20000"
+            :disabled="busy"
+            required
+            :issue-base="base"
+            :mentionable="mentionable"
+          />
+        </div>
         <label
           v-if="draft.request_id.trim()"
           class="diagnostic-opt-in"
@@ -471,15 +504,16 @@
 </template>
 
 <script setup lang="ts">
-import { ArrowLeft, CheckCircle2, ChevronLeft, ChevronRight, CircleDot, CircleX, Globe, Lock, Plus, RefreshCw, RotateCcw, Search, Send, X } from 'lucide-vue-next'
+import { ArrowLeft, CheckCircle2, ChevronLeft, ChevronRight, CircleDot, CircleX, Globe, Lock, Pin, PinOff, Plus, RefreshCw, RotateCcw, Search, Send, X } from 'lucide-vue-next'
 import PageContainer from '@/components/layout/PageContainer.vue'
 import { Button, Input } from '@/components/ui'
 import Dialog from '@/components/ui/dialog/Dialog.vue'
 import FeedbackDiscussion from './FeedbackDiscussion.vue'
 import FeedbackDiagnostics from './FeedbackDiagnostics.vue'
+import FeedbackEditor from './components/FeedbackEditor.vue'
 import { useFeedback } from './useFeedback'
-import { feedbackStatuses as statuses, feedbackCategories as categories, feedbackDate, feedbackShortId, feedbackStatusLabel, feedbackCategoryLabel } from './feedback-view'
-const { admin, manager, canCreate, selectedId, status, category, search, page, total, items, detail, loading, detailLoading, busy, creating, closing, error, notice, draftError, replyText, replyingTo, replyVisibility, replyInput, draft, diagnosticId, includeDiagnostics, attachReply, canManageIssue, publicIssue, createFromDiagnostic, loadList, refresh, filterChanged, openIssue, showList, replyTo, moreEvents, submit, reply, resolve, reopen, closeIssue } = useFeedback()
+import { feedbackStatuses as statuses, feedbackCategories as categories, feedbackDate, feedbackRef, feedbackStatusLabel, feedbackCategoryLabel } from './feedback-view'
+const { admin, manager, canCreate, selectedId, status, category, search, page, total, items, detail, loading, detailLoading, busy, creating, closing, error, notice, draftError, replyText, replyingTo, replyVisibility, replyInput, mentionable, base, togglePin, draft, diagnosticId, includeDiagnostics, attachReply, canManageIssue, publicIssue, createFromDiagnostic, loadList, refresh, filterChanged, openIssue, showList, replyTo, moreEvents, submit, reply, resolve, reopen, closeIssue } = useFeedback()
 function statusIcon(value: string) { return value === 'open' ? CircleDot : value === 'resolved' ? CheckCircle2 : CircleX }
 </script>
 
@@ -488,4 +522,5 @@ function statusIcon(value: string) { return value === 'open' ? CircleDot : value
 :global(.dark) .feedback-page,:global(body[theme-mode='dark']) .feedback-page{--feedback-resolved:#c4a7ee}
 @media(max-width:1100px){.issue-layout{grid-template-columns:minmax(0,1fr)} .issue-sidebar{grid-row:auto;border-left:0;padding:0 0 22px;border-bottom:1px solid var(--border)}.issue-sidebar dl{grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.issue-sidebar h2{margin-bottom:14px}.list-heading,.row-category,.row-date{display:none}.issue-row{grid-template-columns:18px minmax(0,1fr) 72px 15px}}
 @media(max-width:640px){.feedback-toolbar{margin-bottom:20px}.feedback-toolbar h1,.issue-heading h1{font-size:21px}.issue-heading h1>span{font-size:14px}.issue-row{grid-template-columns:18px minmax(0,1fr) 15px;gap:10px;padding:14px}.row-visibility{grid-column:2;grid-row:2}.row-chevron{grid-column:3;grid-row:1}.issue-sidebar dl{grid-template-columns:repeat(2,minmax(0,1fr))}.issue-meta{gap:10px}.form-pair{grid-template-columns:minmax(0,1fr)}.submit-actions{width:100%;justify-content:flex-start;margin-left:0}.submit-actions :deep(button){font-size:12px}.lifecycle-actions>div{flex-wrap:wrap}.status-tabs{gap:20px}}
+.heading-row{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.heading-row h1{min-width:0}.pin-badge,.pinned-mark{color:var(--primary)}.pin-badge{display:inline-flex;align-items:center;gap:4px}.pinned-mark{display:inline-block;vertical-align:-1px;margin-right:6px;transform:rotate(35deg)}.editor-field{display:grid;gap:8px;font-size:13px}
 </style>
