@@ -52,8 +52,6 @@ mod support_payment;
 mod support_test_connection;
 #[path = "support/user_me.rs"]
 mod support_user_me;
-#[path = "support/user_me_vscodex.rs"]
-mod support_vscodex;
 #[path = "support/wallet.rs"]
 mod support_wallet;
 
@@ -97,8 +95,6 @@ use self::support_oauth::maybe_build_local_oauth_response;
 use self::support_payment::maybe_build_local_payment_callback_response;
 use self::support_test_connection::maybe_build_local_test_connection_response;
 use self::support_user_me::maybe_build_local_users_me_response;
-pub(crate) use self::support_vscodex::vscodex_ws_proxy;
-use self::support_vscodex::{handle_users_me_vscodex_request, maybe_build_local_vscodex_response};
 use self::support_wallet::{
     build_wallet_balance_payload_for_auth_scope, build_wallet_balance_payload_for_user,
     build_wallet_live_today_usage_payload_for_api_key,
@@ -252,11 +248,6 @@ async fn build_local_public_support_response(
             request_body,
         )
         .await;
-    }
-
-    if decision.route_family.as_deref() == Some("vscodex") {
-        return maybe_build_local_vscodex_response(state, request_context, client_ip, request_body)
-            .await;
     }
 
     if decision.route_family.as_deref() == Some("install") {

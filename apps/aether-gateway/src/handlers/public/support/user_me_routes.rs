@@ -19,10 +19,9 @@ use super::{
     handle_users_me_preferences_put, handle_users_me_providers_get, handle_users_me_referral_get,
     handle_users_me_sessions_get, handle_users_me_update_session, handle_users_me_usage_active_get,
     handle_users_me_usage_get, handle_users_me_usage_heatmap_get,
-    handle_users_me_usage_interval_timeline_get, handle_users_me_vscodex_request,
-    users_me_api_key_capabilities_path_matches, users_me_api_key_detail_path_matches,
-    users_me_api_key_install_sessions_path_matches, users_me_api_key_providers_path_matches,
-    users_me_management_token_detail_path_matches,
+    handle_users_me_usage_interval_timeline_get, users_me_api_key_capabilities_path_matches,
+    users_me_api_key_detail_path_matches, users_me_api_key_install_sessions_path_matches,
+    users_me_api_key_providers_path_matches, users_me_management_token_detail_path_matches,
     users_me_management_token_regenerate_path_matches,
     users_me_management_token_toggle_path_matches, users_me_management_tokens_root,
     users_me_session_detail_path_matches, AppState, GatewayPublicRequestContext,
@@ -58,14 +57,6 @@ pub(crate) async fn maybe_build_local_users_me_response(
         {
             Some(handle_users_me_delete_other_sessions(state, request_context, headers).await)
         }
-        Some(
-            "vscodex_devices_list"
-            | "vscodex_pairing_create"
-            | "vscodex_device_delete"
-            | "vscodex_ws_ticket_create",
-        ) => Some(
-            handle_users_me_vscodex_request(state, request_context, headers, request_body).await,
-        ),
         Some("session_delete")
             if users_me_session_detail_path_matches(&request_context.request_path) =>
         {

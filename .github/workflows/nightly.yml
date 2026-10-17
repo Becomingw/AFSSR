@@ -127,15 +127,6 @@ jobs:
           cache: npm
           cache-dependency-path: |
             frontend/package-lock.json
-            aether-vscodex/web/package-lock.json
-
-      # The frontend prebuild synchronizes the embedded VSCodex UI by running
-      # its build from a separate package. Install that package explicitly so
-      # vue-tsc can resolve vite/client, vitest/globals, and node types in a
-      # clean runner.
-      - name: Install VSCodex web dependencies
-        working-directory: aether-vscodex/web
-        run: npm ci
 
       - name: Install dependencies
         working-directory: frontend

@@ -79,13 +79,6 @@ jobs:
           cache: npm
           cache-dependency-path: |
             frontend/package-lock.json
-            aether-vscodex/web/package-lock.json
-
-      - name: Build aether-vscodex web
-        working-directory: aether-vscodex/web
-        run: |
-          npm ci
-          npm run build
 
       - name: Install & build
         working-directory: frontend
@@ -100,71 +93,6 @@ jobs:
           path: frontend/dist/
           if-no-files-found: error
           retention-days: 1
-
-  vscodex:
-    name: Build VS Code Codex extension
-    needs: preflight
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-
-      - name: Setup Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: |
-            aether-vscodex/package-lock.json
-            aether-vscodex/web/package-lock.json
-            aether-vscodex/vscode-extension/package-lock.json
-
-      - name: Install module test dependencies
-        working-directory: aether-vscodex
-        run: npm ci
-
-      - name: Build the embedded Web UI
-        working-directory: aether-vscodex/web
-        run: |
-          npm ci
-          npm run build
-
-      - name: Install extension dependencies
-        working-directory: aether-vscodex/vscode-extension
-        run: npm ci
-
-      - name: Check and compile the extension
-        working-directory: aether-vscodex/vscode-extension
-        run: |
-          npm run check
-          npm run build
-
-      - name: Run module tests
-        working-directory: aether-vscodex
-        run: npm test
-
-      - name: Run Web UI tests
-        working-directory: aether-vscodex/web
-        run: npm test
-
-      - name: Package VSIX
-        working-directory: aether-vscodex/vscode-extension
-        shell: bash
-        run: |
-          set -euo pipefail
-          version="$(node -p "require('./package.json').version")"
-          npx --yes @vscode/vsce package --no-update-package-json --allow-missing-repository
-          source_vsix="codex-remote-collab-${version}.vsix"
-          test -f "${source_vsix}"
-          mv "${source_vsix}" "aether-vscodex-${version}.vsix"
-          unzip -l "aether-vscodex-${version}.vsix" | grep 'extension/node_modules/ws/index.js' >/dev/null
-
-      - name: Upload VSIX artifact
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
-        with:
-          name: aether-vscodex-vsix
-          path: aether-vscodex/vscode-extension/aether-vscodex-*.vsix
-          if-no-files-found: error
-          retention-days: 7
 
   build:
     name: Build ${{ matrix.name }}
@@ -416,7 +344,7 @@ jobs:
 
   github-release:
     name: GitHub Release assets
-    needs: [preflight, docker, package, vscodex]
+    needs: [preflight, docker, package]
     if: needs.preflight.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -427,12 +355,6 @@ jobs:
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
           name: release-assets
-          path: release-assets
-
-      - name: Download VSIX artifact
-        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
-        with:
-          name: aether-vscodex-vsix
           path: release-assets
 
       - name: Delete stale draft releases for tag

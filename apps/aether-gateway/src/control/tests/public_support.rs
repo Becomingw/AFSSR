@@ -4,6 +4,27 @@ use super::{classify_control_route, headers, GatewayPublicRequestContext};
 use crate::handlers::shared::local_proxy_route_requires_buffered_body;
 
 #[test]
+fn classifies_opencode_config_with_fixed_api_key_signature() {
+    let headers = headers(&[
+        ("authorization", "Bearer sk-test"),
+        ("anthropic-version", "2023-06-01"),
+    ]);
+    let uri: Uri = "/api/opencode/config?client_version=0.144.1"
+        .parse()
+        .expect("uri should parse");
+    let decision =
+        classify_control_route(&http::Method::GET, &uri, &headers).expect("route should classify");
+    assert_eq!(decision.route_class.as_deref(), Some("public_support"));
+    assert_eq!(decision.route_family.as_deref(), Some("models"));
+    assert_eq!(decision.route_kind.as_deref(), Some("opencode_config"));
+    assert_eq!(
+        decision.auth_endpoint_signature.as_deref(),
+        Some("aether:opencode")
+    );
+    assert!(!decision.is_execution_runtime_candidate());
+}
+
+#[test]
 fn classifies_models_list_as_public_support_route() {
     let headers = headers(&[("authorization", "Bearer sk-test")]);
     let uri: Uri = "/v1/models".parse().expect("uri should parse");
@@ -441,26 +462,6 @@ fn classifies_users_me_routes_as_public_support_route() {
             "available_models",
         ),
         (
-            http::Method::GET,
-            "/api/users/me/vscodex/devices",
-            "vscodex_devices_list",
-        ),
-        (
-            http::Method::POST,
-            "/api/users/me/vscodex/pairings",
-            "vscodex_pairing_create",
-        ),
-        (
-            http::Method::DELETE,
-            "/api/users/me/vscodex/devices/device-1",
-            "vscodex_device_delete",
-        ),
-        (
-            http::Method::POST,
-            "/api/users/me/vscodex/ws-tickets",
-            "vscodex_ws_ticket_create",
-        ),
-        (
             http::Method::PUT,
             "/api/users/me/model-capabilities",
             "model_capabilities_update",
@@ -517,49 +518,6 @@ fn classifies_users_me_routes_as_public_support_route() {
 }
 
 #[test]
-fn vscodex_post_routes_buffer_request_body() {
-    let headers = headers(&[]);
-    for path in [
-        "/api/vscodex/pair",
-        "/api/users/me/vscodex/pairings",
-        "/api/users/me/vscodex/ws-tickets",
-    ] {
-        let uri: Uri = path.parse().expect("uri should parse");
-        let decision = classify_control_route(&http::Method::POST, &uri, &headers)
-            .expect("route should classify");
-        let context = GatewayPublicRequestContext::from_request_parts(
-            "trace-vscodex",
-            &http::Method::POST,
-            &uri,
-            &headers,
-            Some(decision),
-        );
-
-        assert!(
-            local_proxy_route_requires_buffered_body(&context),
-            "{path} should buffer its JSON body"
-        );
-    }
-}
-
-#[test]
-fn classifies_public_vscodex_pairing_exchange() {
-    let headers = headers(&[]);
-    let uri: Uri = "/api/vscodex/pair".parse().expect("uri should parse");
-    let decision =
-        classify_control_route(&http::Method::POST, &uri, &headers).expect("route should classify");
-
-    assert_eq!(decision.route_class.as_deref(), Some("public_support"));
-    assert_eq!(decision.route_family.as_deref(), Some("vscodex"));
-    assert_eq!(decision.route_kind.as_deref(), Some("pairing_exchange"));
-    assert_eq!(
-        decision.auth_endpoint_signature.as_deref(),
-        Some("public:vscodex")
-    );
-    assert!(!decision.is_execution_runtime_candidate());
-}
-
-#[test]
 fn classifies_ccswitch_usage_as_api_key_public_support_route() {
     let headers = headers(&[]);
     let uri: Uri = "/api/ccswitch/usage".parse().expect("uri should parse");
@@ -574,6 +532,26 @@ fn classifies_ccswitch_usage_as_api_key_public_support_route() {
         Some("aether:ccswitch_usage")
     );
     assert!(!decision.is_execution_runtime_candidate());
+}
+
+#[test]
+fn retired_remote_control_is_not_classified_as_a_live_control_service() {
+    let headers = headers(&[]);
+    for path in [
+        "/api/vscodex/pair",
+        "/api/vscodex/ws",
+        "/api/users/me/vscodex/devices",
+        "/api/users/me/vscodex/pairings",
+        "/api/users/me/vscodex/ws-tickets",
+    ] {
+        let uri: Uri = path.parse().unwrap();
+        for method in [http::Method::GET, http::Method::POST, http::Method::DELETE] {
+            assert!(
+                classify_control_route(&method, &uri, &headers).is_none(),
+                "{path}"
+            );
+        }
+    }
 }
 
 #[test]

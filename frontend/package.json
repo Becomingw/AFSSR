@@ -4,12 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "sync:vscodex": "node scripts/sync-vscodex.mjs",
-    "predev": "npm run sync:vscodex",
     "dev": "vite --host",
-    "prebuild": "npm run sync:vscodex",
     "build": "vite build",
-    "prebuild:with-typecheck": "npm run sync:vscodex",
     "build:with-typecheck": "vue-tsc -b && vite build",
     "preview": "vite preview",
     "test": "node --experimental-require-module --disable-warning=ExperimentalWarning ./node_modules/vitest/vitest.mjs",

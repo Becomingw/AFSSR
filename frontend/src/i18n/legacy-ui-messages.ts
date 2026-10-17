@@ -1874,7 +1874,6 @@ export const legacyUiEnglishMessages: Record<string, string> = {
   '管理 IP 黑白名单，控制系统访问权限': 'Manage IP allowlists and blocklists to control system access',
   '添加Http/Socket代理节点, 或使用Aether-Proxy自动连接代理节点.': 'Add HTTP or SOCKS proxy nodes, or connect nodes automatically with Aether-Proxy.',
   '管理用户邀请关系与返利记录，支持比例返利和人头返利': 'Manage referrals and rewards, with percentage-based or fixed rewards per referral',
-  '通过 aether-vscodex 插件远程控制本地 Codex 工作区': 'Control your local Codex workspace remotely through the aether-vscodex extension',
   '请求间隔时间线（最近24小时）': 'Request interval timeline (last 24 hours)',
   '可调度': 'Schedulable',
   'S3 自动备份开关': 'Automatic S3 backups',
