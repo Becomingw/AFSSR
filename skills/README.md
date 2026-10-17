@@ -1,5 +1,10 @@
 # Agent skills
 
+| Skill | For | What it does |
+| --- | --- | --- |
+| [`arca-admin`](arca-admin/SKILL.md) | administrators and support/ops agents | operate Arca through the MCP server, answer "how do I configure / what does this setting mean" from a product knowledge base, reply to user feedback |
+| [`arca-user`](arca-user/SKILL.md) | ordinary users and their coding agents | get a key, find model ids, connect Codex / Claude Code / OpenCode, read quotas and errors, file useful feedback (needs no administrator rights and no MCP) |
+
 ## arca-admin
 
 Teaches an agent to operate Arca through its embedded MCP server: query and diagnose, make
@@ -48,3 +53,12 @@ Set `ARCA_MCP_ALLOWED_HOSTS` for a reverse-proxied hostname. Details: `docs/oper
 python3 skills/arca-admin/scripts/gen_tool_map.py          # regenerate after changing catalog.rs
 python3 skills/arca-admin/scripts/gen_tool_map.py --check  # exit 1 if stale
 ```
+
+### Keeping the knowledge base accurate
+
+```bash
+python3 skills/arca-admin/scripts/gen_settings_defaults.py --check  # defaults match code; every setting has a glossary entry
+python3 skills/sync_shared.py --check                                # shared documents are in sync
+```
+
+`arca-user` needs no setup beyond copying the folder (`cp -R skills/arca-user ~/.claude/skills/`).
