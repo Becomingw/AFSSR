@@ -76,22 +76,34 @@ async fn shared_catalog_import_and_explicit_refresh_sync_metadata_without_touchi
     let (url, handle) = start_server(build_router_with_state(state)).await;
     let client = reqwest::Client::new();
     let catalog_url = format!("{url}/api/admin/models/external");
+    // The catalog is never fetched implicitly: reading before a refresh finds nothing.
     assert_eq!(
         trusted_admin(client.get(&catalog_url))
             .send()
             .await
             .unwrap()
             .status(),
-        StatusCode::OK
+        StatusCode::SERVICE_UNAVAILABLE
     );
+    assert_eq!(hits.load(Ordering::SeqCst), 0);
     assert_eq!(
-        trusted_admin(client.get(&catalog_url))
+        trusted_admin(client.post(format!("{url}/api/admin/models/external/refresh")))
             .send()
             .await
             .unwrap()
             .status(),
         StatusCode::OK
     );
+    for _ in 0..2 {
+        assert_eq!(
+            trusted_admin(client.get(&catalog_url))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+    }
     assert_eq!(hits.load(Ordering::SeqCst), 1);
     let response = trusted_admin(client.post(format!(
         "{url}/api/admin/providers/channel/import-from-upstream"
@@ -530,7 +542,7 @@ async fn gateway_fetches_external_models_through_connected_tunnel_node() {
     let (gateway_url, gateway_handle) = start_server(gateway).await;
     let request_task = tokio::spawn(async move {
         trusted_admin(
-            reqwest::Client::new().get(format!("{gateway_url}/api/admin/models/external")),
+            reqwest::Client::new().post(format!("{gateway_url}/api/admin/models/external/refresh")),
         )
         .send()
         .await
@@ -634,7 +646,7 @@ async fn gateway_fetches_external_models_through_connected_tunnel_node() {
     assert_eq!(response.status(), StatusCode::OK);
     let payload: serde_json::Value = response.json().await.expect("json body should parse");
     assert_eq!(
-        payload["tunnel-provider"]["models"]["tunnel"]["name"],
+        payload["catalog"]["tunnel-provider"]["models"]["tunnel"]["name"],
         "TUNNEL"
     );
 
@@ -769,6 +781,20 @@ async fn gateway_handles_admin_external_models_locally_with_trusted_admin_princi
     let (gateway_url, gateway_handle) = start_server(gateway).await;
     let client = reqwest::Client::new();
 
+    // Reading never fetches: without a snapshot the catalog is simply unavailable.
+    let response = trusted_admin(client.get(format!("{gateway_url}/api/admin/models/external")))
+        .send()
+        .await
+        .expect("request should succeed");
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(*external_source_hits.lock().expect("mutex should lock"), 0);
+
+    let response =
+        trusted_admin(client.post(format!("{gateway_url}/api/admin/models/external/refresh")))
+            .send()
+            .await
+            .expect("refresh request should succeed");
+    assert_eq!(response.status(), StatusCode::OK);
     let response = trusted_admin(client.get(format!("{gateway_url}/api/admin/models/external")))
         .send()
         .await
@@ -815,7 +841,18 @@ async fn gateway_handles_admin_external_models_locally_with_trusted_admin_princi
     let response = trusted_admin(client.get(format!("{gateway_url}/api/admin/models/external")))
         .send()
         .await
-        .expect("refresh should succeed");
+        .expect("read should succeed");
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let response =
+        trusted_admin(client.post(format!("{gateway_url}/api/admin/models/external/refresh")))
+            .send()
+            .await
+            .expect("refresh should succeed");
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = trusted_admin(client.get(format!("{gateway_url}/api/admin/models/external")))
+        .send()
+        .await
+        .expect("read should succeed");
     let payload: serde_json::Value = response.json().await.expect("json body should parse");
     assert_eq!(
         payload["manual-provider"]["models"]["manual"]["name"],

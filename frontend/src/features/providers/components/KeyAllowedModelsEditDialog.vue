@@ -370,11 +370,13 @@ import { useConfirm } from '@/composables/useConfirm'
 import { parseApiError } from '@/utils/errorParser'
 import {
   getProviderModels,
+  importModelsFromUpstream,
   updateProviderKey,
   type EndpointAPIKey,
   type AllowedModels,
 } from '@/api/endpoints'
 import { useUpstreamModelsCache } from '../composables/useUpstreamModelsCache'
+import { modelsNeedingProviderLink } from '../utils/modelLinking'
 import { formatApiFormatShort, type UpstreamModel } from '@/api/endpoints/types'
 
 interface AvailableModel {
@@ -800,7 +802,32 @@ async function handleSave() {
       allowed_models: newAllowed,
       locked_models: newLocked
     })
-    success('模型权限已更新', '成功')
+
+    // 选中的模型里还没关联到当前提供商的，按总模型库匹配后加入关联模型与模型管理。
+    // 只增不删：取消勾选不会解除已有关联。
+    const modelsToLink = modelsNeedingProviderLink(
+      selectedModels.value,
+      allProviderModels.value.map(m => m.name),
+    )
+    let linkSummary = ''
+    if (modelsToLink.length > 0) {
+      try {
+        const result = await importModelsFromUpstream(props.providerId, modelsToLink)
+        const linked = result.success?.length ?? 0
+        const pending = result.success?.filter(m => m.global_model_active === false).length ?? 0
+        const failed = result.errors ?? []
+        if (linked > 0) {
+          linkSummary = `，已关联 ${linked} 个模型${pending ? `（${pending} 个待完善价格后启用）` : ''}`
+        }
+        if (failed.length > 0) {
+          showWarning(`${failed.length} 个模型关联失败：${failed[0].error}`, '部分模型未关联')
+        }
+      } catch (err: unknown) {
+        showWarning(parseApiError(err, '关联模型失败，模型权限已保存'), '模型未关联')
+      }
+    }
+
+    success(`模型权限已更新${linkSummary}`, '成功')
     emit('saved')
     emit('close')
   } catch (err: unknown) {

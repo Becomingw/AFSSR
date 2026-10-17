@@ -671,52 +671,30 @@ async fn fetch_admin_external_models_from_source(
     Ok(normalize_admin_external_models_payload(payload))
 }
 
+/// Reads the stored catalog snapshot. This never touches the network: the snapshot is only
+/// created or replaced by an explicit refresh (`refresh_admin_external_models_catalog`).
+/// `None` means no usable snapshot exists yet (never refreshed, cleared, or an outdated format).
 pub(crate) async fn read_admin_external_models_cache(
     state: &AdminAppState<'_>,
-    request_id: &str,
+    _request_id: &str,
 ) -> Result<Option<serde_json::Value>, GatewayError> {
-    if let Some(raw) = state
+    let Some(raw) = state
         .as_ref()
         .runtime_kv_get(ADMIN_EXTERNAL_MODELS_CACHE_KEY)
         .await?
-    {
-        match parse_admin_external_models_cache(&raw) {
-            Some(envelope) if envelope.schema_version == ADMIN_EXTERNAL_MODELS_CACHE_VERSION => {
-                return Ok(Some(normalize_admin_external_models_payload(
-                    envelope.payload,
-                )));
-            }
-            Some(_) => {}
-            None => warn!("failed to parse cached external models payload"),
-        }
-    }
-
-    // Coalesce local callers without making each of them fetch or fail while the leader loads.
-    let _fetch_guard = CATALOG_FETCH_LOCK.lock().await;
-    // Serialize with other gateway instances; re-read after acquiring the shared lock.
-    let lock = match acquire_admin_external_models_config_mutation_lock(state).await {
-        Ok(lock) => lock,
-        Err(_) => return Ok(None),
+    else {
+        return Ok(None);
     };
-    let result = async {
-        if let Some(raw) = state
-            .as_ref()
-            .runtime_kv_get(ADMIN_EXTERNAL_MODELS_CACHE_KEY)
-            .await?
-        {
-            if let Some(envelope) = parse_admin_external_models_cache(&raw)
-                .filter(|v| v.schema_version == ADMIN_EXTERNAL_MODELS_CACHE_VERSION)
-            {
-                return Ok(Some(normalize_admin_external_models_payload(
-                    envelope.payload,
-                )));
-            }
+    match parse_admin_external_models_cache(&raw) {
+        Some(envelope) if envelope.schema_version == ADMIN_EXTERNAL_MODELS_CACHE_VERSION => Ok(
+            Some(normalize_admin_external_models_payload(envelope.payload)),
+        ),
+        Some(_) => Ok(None),
+        None => {
+            warn!("failed to parse cached external models payload");
+            Ok(None)
         }
-        fetch_and_store_admin_external_models(state, request_id).await
     }
-    .await;
-    release_admin_external_models_config_mutation_lock(state, &lock).await;
-    result
 }
 
 async fn fetch_and_store_admin_external_models(
@@ -818,8 +796,8 @@ mod tests {
         admin_external_models_source_url, classify_admin_external_models_transport_error,
         normalize_admin_external_models_payload, normalize_admin_external_models_proxy_node_id,
         parse_admin_external_models_cache, parse_admin_external_models_source_url,
-        read_admin_external_models_cache, resolve_admin_external_models_source,
-        set_admin_external_models_source_url_for_tests,
+        read_admin_external_models_cache, refresh_admin_external_models_catalog,
+        resolve_admin_external_models_source, set_admin_external_models_source_url_for_tests,
         validate_admin_external_models_source_addresses, ADMIN_EXTERNAL_MODELS_CACHE_MAX_BYTES,
     };
     use crate::handlers::admin::request::AdminAppState;
@@ -1020,11 +998,22 @@ mod tests {
             set_admin_external_models_source_url_for_tests(&format!("{upstream_url}/api.json"));
 
         let state = AppState::new().expect("gateway should build");
-        let payload =
-            read_admin_external_models_cache(&AdminAppState::new(&state), "external-models-test")
+        let admin = AdminAppState::new(&state);
+        assert!(
+            read_admin_external_models_cache(&admin, "external-models-test")
                 .await
                 .expect("external models read should succeed")
-                .expect("payload should be fetched");
+                .is_none(),
+            "reading must never fetch the catalog implicitly"
+        );
+        refresh_admin_external_models_catalog(&admin, "external-models-test")
+            .await
+            .expect("refresh should not error")
+            .expect("explicit refresh should fetch the catalog");
+        let payload = read_admin_external_models_cache(&admin, "external-models-test")
+            .await
+            .expect("external models read should succeed")
+            .expect("snapshot should be stored by the refresh");
 
         assert_eq!(payload["openai"]["official"], json!(true));
         assert_eq!(payload["openai"]["models"]["gpt-5"]["name"], json!("GPT-5"));
@@ -1055,14 +1044,18 @@ mod tests {
             set_admin_external_models_source_url_for_tests(&format!("{upstream_url}/redirect"));
 
         let state = AppState::new().expect("gateway should build");
-        let payload = read_admin_external_models_cache(
-            &AdminAppState::new(&state),
-            "external-models-redirect",
-        )
-        .await
-        .expect("external models read should not fail");
-
-        assert!(payload.is_none(), "redirected payload must not be accepted");
+        let admin = AdminAppState::new(&state);
+        let refreshed = refresh_admin_external_models_catalog(&admin, "external-models-redirect")
+            .await
+            .expect("external models refresh should not fail");
+        assert!(
+            refreshed.is_err(),
+            "redirected payload must not be accepted"
+        );
+        let payload = read_admin_external_models_cache(&admin, "external-models-redirect")
+            .await
+            .expect("external models read should not fail");
+        assert!(payload.is_none(), "redirected payload must not be stored");
         upstream_handle.abort();
     }
 }

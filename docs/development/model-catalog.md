@@ -1,9 +1,14 @@
 # Shared Model Catalog
 
-The external model catalog is a shared models.dev snapshot. It is fetched on the
-first cache miss and retained without a time-based expiry. Redis persistence and
-eviction policies still apply. Browsers reuse their memory/localStorage snapshot.
-Opening the model dialog does not refresh the upstream catalog.
+The external model catalog is a shared models.dev snapshot. It is created and
+replaced **only by an explicit refresh**; no read ever fetches it. Until the first
+refresh (or after the snapshot has been cleared, or lost because the runtime
+backend is in-memory and the gateway restarted) `GET /api/admin/models/external`
+returns 503 with a hint to refresh, and imports simply find no catalog match. The
+snapshot has no time-based expiry. Redis persistence and eviction policies still
+apply, so use a persistent runtime backend if the snapshot must survive restarts.
+Browsers reuse their memory/localStorage snapshot. Opening the model dialog does
+not refresh the upstream catalog.
 
 The refresh button in the global-model dialog calls
 `POST /api/admin/models/external/refresh`. This authenticated service-management
@@ -21,6 +26,20 @@ Similar names are not fuzzy-matched. Source provider/model IDs are retained in
 `config.models_dev_pricing_source`; this also allows refreshes of public aliases.
 The importer creates/reuses the global model and associates it with the provider.
 Duplicate input IDs are ignored; requests are limited to 1,000 IDs.
+
+Saving a key's model permissions (provider key dialog) runs the same importer for
+every selected model that is not yet associated with the provider: the model is
+matched against the stored catalog, the global model is created or reused, and
+the provider association is added, so it appears in Model Management. Models that
+cannot be matched or priced are created disabled and flagged as pending. Linking
+is additive only; deselecting a model never removes an existing association.
+
+Global models that have had no provider association for a long time are removed
+automatically by a sweep that runs every six hours. A model found without
+associations is stamped with `config.orphaned_since`; it is deleted only if it is
+still unassociated once the retention period has passed, and the stamp is removed
+as soon as it is associated again. The retention period is the system config
+`global_model_orphan_retention_days` (default 30; `0` disables the sweep).
 
 Imported metadata includes token/context limits, modalities, tool/reasoning
 capabilities, release information, context/cache token prices, and processing-tier

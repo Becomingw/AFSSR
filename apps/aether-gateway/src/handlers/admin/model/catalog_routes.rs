@@ -57,7 +57,7 @@ pub(crate) async fn maybe_build_local_admin_model_catalog_response(
                 None => (
                     http::StatusCode::SERVICE_UNAVAILABLE,
                     Json(json!({
-                        "detail": "External models catalog unavailable"
+                        "detail": "总模型库尚未初始化，请先点击刷新获取"
                     })),
                 )
                     .into_response(),
