@@ -61,6 +61,16 @@ type = "unix_seconds"
 nullable = true
 
 [[table.feedback_issues.columns]]
+name = "edited_at"
+type = "unix_seconds"
+nullable = true
+
+[[table.feedback_issues.columns]]
+name = "deleted_at"
+type = "unix_seconds"
+nullable = true
+
+[[table.feedback_issues.columns]]
 name = "version"
 type = "int64"
 
@@ -154,6 +164,21 @@ nullable = true
 name = "payload_hash"
 type = "text"
 length = 64
+nullable = true
+
+[[table.feedback_events.columns]]
+name = "target_seq"
+type = "int64"
+nullable = true
+
+[[table.feedback_events.columns]]
+name = "edited_at"
+type = "unix_seconds"
+nullable = true
+
+[[table.feedback_events.columns]]
+name = "deleted_at"
+type = "unix_seconds"
 nullable = true
 
 [[table.feedback_issues.uniques]]

@@ -127,6 +127,16 @@ pub(super) fn build_mention_email(
     }
 }
 
+fn skip_mention(issue: &FeedbackSummary, name: &str, reason: &'static str) {
+    tracing::info!(
+        event_name = "feedback_mention_email_skipped",
+        reason,
+        issue_id = %issue.id,
+        mentioned = name,
+        "feedback mention e-mail skipped"
+    );
+}
+
 /// Best-effort: failures are logged and never affect the feedback mutation that triggered them.
 pub(super) async fn notify_mentions(
     state: AppState,
@@ -144,9 +154,17 @@ pub(super) async fn notify_mentions(
     }
     let smtp = match read_smtp_delivery_config(&state).await {
         Ok(Some(config)) => config,
-        Ok(None) => return,
+        Ok(None) => {
+            tracing::info!(
+                event_name = "feedback_mention_email_skipped",
+                reason = "smtp_not_configured",
+                issue_id = %issue.id,
+                "feedback mention e-mail skipped: smtp_host or smtp_from_email is not set"
+            );
+            return;
+        }
         Err(err) => {
-            tracing::warn!(error = ?err, "feedback mention e-mail skipped: SMTP configuration unreadable");
+            tracing::warn!(error = ?err, issue_id = %issue.id, "feedback mention e-mail skipped: SMTP configuration unreadable");
             return;
         }
     };
@@ -158,16 +176,25 @@ pub(super) async fn notify_mentions(
     let mut notified: BTreeSet<String> = BTreeSet::new();
     for name in names {
         let Ok(Some(user)) = state.data.find_user_auth_by_username(&name).await else {
+            skip_mention(&issue, &name, "user_not_found");
             continue;
         };
         let email = user.email.as_deref().map(str::trim).unwrap_or_default();
-        if user.id == actor_id
-            || !user.is_active
-            || user.is_deleted
-            || !is_feedback_admin(&user.role)
-            || email.is_empty()
-            || !notified.insert(user.id.clone())
-        {
+        let reason = if user.id == actor_id {
+            Some("mentioned_self")
+        } else if !user.is_active || user.is_deleted {
+            Some("user_inactive")
+        } else if !is_feedback_admin(&user.role) {
+            Some("not_an_administrator")
+        } else if email.is_empty() {
+            Some("no_email_address")
+        } else if !notified.insert(user.id.clone()) {
+            Some("already_notified")
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            skip_mention(&issue, &name, reason);
             continue;
         }
         let message = build_mention_email(
@@ -190,6 +217,13 @@ pub(super) async fn notify_mentions(
         .await
         {
             tracing::warn!(error = ?err, issue_id = %issue.id, mentioned = %user.id, "failed to send feedback mention e-mail");
+        } else {
+            tracing::info!(
+                event_name = "feedback_mention_email_sent",
+                issue_id = %issue.id,
+                mentioned = %user.id,
+                "feedback mention e-mail sent"
+            );
         }
     }
 }
@@ -211,6 +245,8 @@ mod tests {
             visibility: "private".into(),
             number: 12,
             pinned_at: None,
+            edited_at: None,
+            deleted_at: None,
             version: 1,
             activity_seq: 1,
             created_at: 1,

@@ -4,8 +4,9 @@ Feedback is a persistent issue/discussion workflow, not an instruction queue tha
 automatically executes user-supplied text. The UI lives at `/dashboard/feedback`
 for users and `/admin/feedback` for administrators. Each issue stores a category,
 description, optional model/request references, visibility, current status/version and an
-append-only history of replies and state changes. Text is rendered as plain text;
-attachments, HTML execution and issue deletion are not exposed.
+append-only history of replies and state changes. Text is rendered as Markdown (see below);
+attachments and HTML execution are not exposed. Issues and replies can be edited and deleted
+by the people allowed to (see *Editing and deleting*).
 
 ## Permissions
 
@@ -37,8 +38,9 @@ replay, so a demoted non-owner cannot replay an old administrator close.
 Replies are allowed after
 closing. Every real reply/transition advances `version` and `activity_seq` and
 records its actor and timestamp. User deletion anonymizes foreign-key references
-without deleting the support history. Retention must be covered by the operator's
-database/privacy policy; the feature provides no permanent-delete API.
+without deleting the support history. Deleting an issue or reply hides it but keeps the row (see
+*Editing and deleting*); retention must be covered by the operator's database/privacy policy and
+the feature provides no permanent-purge API.
 
 ## Privacy Contract
 
@@ -140,6 +142,46 @@ Additive response DTOs: `FeedbackSummary.visibility` (also flattened in
 fields deserialize to private. `CreateFeedback.visibility` and flat
 `FeedbackCommand.visibility` are optional and default private. Unknown visibility
 values and forged identity fields are rejected. No nested action DTO was added.
+
+## Editing and deleting
+
+Modelled on issue trackers. All of it goes through the same `commands` endpoint (so versions,
+idempotency UUIDs and the 409 rules above apply) with these actions:
+
+| Action | Fields | Who |
+| --- | --- | --- |
+| `edit_issue` | at least one of `title`, `description`, `category` | issue owner, any administrator |
+| `delete_issue` | none | issue owner, any administrator |
+| `edit_reply` | `seq`, `content` | the reply's author only |
+| `delete_reply` | `seq` | the reply's author, any administrator |
+
+Everyone else gets 403 (or 404 where they cannot see the issue). Each action rejects fields that
+belong to other actions. An edit that changes nothing is a 409 rather than a silent version bump.
+Only `reply` events can be edited or deleted; status, pin and creation events are history.
+
+- **Edits** change the stored text in place. The issue shows `edited_at`, an edited reply shows its
+  `edited_at`, and an administrator editing someone else's issue leaves a visible `issue_edit` line
+  (`content` lists the changed fields) for the people who can see private events. Reply edits are
+  author-only so nobody can put words in another person's mouth.
+- **Deleting a reply** clears its `content` for good and sets `deleted_at`; the timeline keeps a
+  "this reply was deleted" placeholder so the conversation still reads correctly.
+- **Deleting an issue** sets `deleted_at`. The issue then answers 404 by id and by number for every
+  viewer, including administrators, and is dropped from lists. Its number is **not** reused and its
+  row stays in the database (use your database policy to purge it if required). Incremental
+  readers (`GET /api/feedback?after=…`) still receive the deleted issue once, with `deleted_at`
+  set, so a client that mirrors the list can remove it. Retrying the same delete command is a replay,
+  not an error.
+- Every change also appends a content-free marker event (`issue_edit`, `issue_delete`,
+  `reply_edit`, `reply_delete`, with `target_seq` for replies) so pollers using `activity_seq` see
+  that something changed. Markers are private events; the console does not display them except
+  `issue_edit`.
+- Editing and deleting never send mention e-mails, and the embedded MCP does not expose these
+  actions: an agent cannot rewrite or remove user feedback.
+- Every change is written to the audit log (`event_name=feedback_mutation`, with `action`).
+
+Migration `20261018000000_feedback_edit_delete.sql` is additive and idempotent: it adds
+`feedback_issues.edited_at/deleted_at`, `feedback_events.target_seq/edited_at/deleted_at` and widens
+the event kind check.
 
 ## MCP and Unattended Workers
 
@@ -255,3 +297,11 @@ an e-mail with the issue subject, number and the mentioning text, plus a link wh
 `ARCA_PUBLIC_BASE_URL` is configured. Mails are best-effort: they need working SMTP
 settings, never block or fail the feedback request, are sent once per administrator and message,
 and are never sent to the author themself or to non-administrators.
+
+When a mention does not produce a mail, the gateway log says why: each skipped mention logs
+`event_name=feedback_mention_email_skipped` with a `reason` (`smtp_not_configured`,
+`user_not_found`, `mentioned_self`, `user_inactive`, `not_an_administrator`, `no_email_address`,
+`already_notified`), a delivered one logs `feedback_mention_email_sent`, and a failed SMTP
+delivery logs a warning with the error. The admin SMTP test (`POST /api/admin/system/smtp/test`)
+only proves that the gateway can connect and log in, not that a given mention was mailed. The most
+common reason is testing by mentioning yourself, which never sends a mail.

@@ -1962,6 +1962,7 @@ fn pending_migrations_from_applied_skips_versions_already_applied() {
             20261015000300,
             20261016000000,
             20261017000000,
+            20261018000000,
         ]
     );
 }
@@ -2337,6 +2338,78 @@ async fn feedback_number_and_pin_migration_numbers_existing_issues_in_creation_o
         .expect("pin events must satisfy the kind check");
     assert!(
         sqlx::query("INSERT INTO feedback_events(issue_id,kind) VALUES('a-first','bogus')")
+            .execute(&pool)
+            .await
+            .is_err(),
+        "other kinds stay rejected"
+    );
+}
+
+#[tokio::test]
+async fn feedback_edit_delete_migration_adds_columns_and_event_kinds_idempotently() {
+    let Some(server) = ManagedPostgresServer::try_start()
+        .await
+        .expect("postgres test should start or skip")
+    else {
+        return;
+    };
+    let pool = PgPool::connect(server.database_url())
+        .await
+        .expect("pool should connect");
+    // A database as it was after numbers and pinning, before edit/delete existed.
+    sqlx::raw_sql(
+        "CREATE TABLE feedback_issues (
+            id VARCHAR(36) PRIMARY KEY, title VARCHAR(200) NOT NULL, number BIGINT NOT NULL
+         );
+         CREATE TABLE feedback_events (
+            seq BIGSERIAL PRIMARY KEY, issue_id VARCHAR(36) NOT NULL,
+            kind VARCHAR(16) NOT NULL CHECK (kind IN ('created','reply','status','pin')),
+            content TEXT
+         );
+         INSERT INTO feedback_issues VALUES ('i1', 't', 1);
+         INSERT INTO feedback_events(issue_id,kind,content) VALUES ('i1','reply','kept');",
+    )
+    .execute(&pool)
+    .await
+    .expect("legacy feedback fixture should be created");
+
+    let migration = POSTGRES_MIGRATOR
+        .iter()
+        .find(|migration| migration.version == 20261018000000)
+        .expect("feedback edit/delete migration should be registered");
+    for _ in 0..2 {
+        sqlx::raw_sql(&migration.sql)
+            .execute(&pool)
+            .await
+            .expect("feedback edit/delete migration should apply (and re-apply)");
+    }
+    for (table, column) in [
+        ("feedback_issues", "edited_at"),
+        ("feedback_issues", "deleted_at"),
+        ("feedback_events", "target_seq"),
+        ("feedback_events", "edited_at"),
+        ("feedback_events", "deleted_at"),
+    ] {
+        assert!(
+            column_exists(&pool, table, column).await.unwrap(),
+            "{table}.{column} should exist"
+        );
+    }
+    // Existing rows are untouched and the new event kinds are accepted, unknown ones are not.
+    let kept: String = sqlx::query_scalar("SELECT content FROM feedback_events WHERE kind='reply'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(kept, "kept");
+    for kind in ["issue_edit", "issue_delete", "reply_edit", "reply_delete"] {
+        sqlx::query("INSERT INTO feedback_events(issue_id,kind) VALUES('i1',$1)")
+            .bind(kind)
+            .execute(&pool)
+            .await
+            .unwrap_or_else(|error| panic!("{kind} events must satisfy the kind check: {error}"));
+    }
+    assert!(
+        sqlx::query("INSERT INTO feedback_events(issue_id,kind) VALUES('i1','bogus')")
             .execute(&pool)
             .await
             .is_err(),

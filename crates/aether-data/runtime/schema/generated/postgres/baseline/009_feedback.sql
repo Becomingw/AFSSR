@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS public.feedback_issues (
     visibility character varying(16) DEFAULT 'private' NOT NULL,
     number bigint NOT NULL,
     pinned_at bigint,
+    edited_at bigint,
+    deleted_at bigint,
     version bigint NOT NULL,
     activity_seq bigint NOT NULL,
     created_at bigint NOT NULL,
@@ -42,7 +44,10 @@ CREATE TABLE IF NOT EXISTS public.feedback_events (
     to_status character varying(16),
     created_at bigint NOT NULL,
     client_request_id character varying(36),
-    payload_hash character varying(64)
+    payload_hash character varying(64),
+    target_seq bigint,
+    edited_at bigint,
+    deleted_at bigint
 );
 
 ALTER TABLE ONLY public.feedback_events ADD CONSTRAINT feedback_events_pkey PRIMARY KEY (seq);

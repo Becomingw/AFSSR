@@ -20,6 +20,7 @@ export function useFeedback() {
   const mentionable = ref<string[]>([])
   const draft = reactive({ title: '', description: '', category: 'bug' as FeedbackCategory, model: '', request_id: '', visibility: 'private' as FeedbackVisibility })
   const diagnosticId = ref(''), includeDiagnostics = ref(false), attachReply = ref(false)
+  const currentUserId = computed(() => auth.user?.id ?? '')
   const canManageIssue = computed(() => Boolean(detail.value && (manager.value || (auth.user?.id && detail.value.issue.owner_id === auth.user.id))))
   const publicIssue = computed(() => detail.value?.issue.visibility === 'public')
   function createFromDiagnostic() { if (canCreate.value) { draft.request_id = diagnosticId.value.trim(); includeDiagnostics.value = true; creating.value = true } }
@@ -103,10 +104,27 @@ export function useFeedback() {
     } catch (reason) { draftError.value = problem(reason) }
     finally { busy.value = false }
   }
-  async function mutate(action: FeedbackAction) {
-    if (!detail.value || busy.value || detailLoading.value) return
-    const content = action.action === 'reply' ? action.content : action.action === 'set_status' ? action.comment || '' : ''
-    if (new TextEncoder().encode(content).length > 20000) { error.value = '评论最多 20,000 字节'; return }
+  const NOTICES: Record<FeedbackAction['action'], string> = {
+    reply: '回复已发送', set_status: '状态已更新', set_pinned: '状态已更新', edit_issue: '反馈已更新',
+    delete_issue: '反馈已删除', edit_reply: '回复已更新', delete_reply: '回复已删除',
+  }
+  function textOf(action: FeedbackAction) {
+    if (action.action === 'reply' || action.action === 'edit_reply') return action.content
+    if (action.action === 'set_status') return action.comment || ''
+    if (action.action === 'edit_issue') return action.description || ''
+    return ''
+  }
+  /** Applies a just-committed reply change locally: only new events are fetched afterwards, so the changed reply itself must be patched. */
+  function patchReply(action: FeedbackAction, now: number) {
+    if (!detail.value || (action.action !== 'edit_reply' && action.action !== 'delete_reply')) return
+    detail.value.events = detail.value.events.map(event => event.seq !== action.seq ? event
+      : action.action === 'edit_reply' ? { ...event, content: action.content, edited_at: now }
+        : { ...event, content: null, deleted_at: now })
+  }
+  /** Returns true once the change is committed. */
+  async function mutate(action: FeedbackAction): Promise<boolean> {
+    if (!detail.value || busy.value || detailLoading.value) return false
+    if (new TextEncoder().encode(textOf(action)).length > 20000) { error.value = '内容最多 20,000 字节'; return false }
     const id = selectedId.value
     const value = { ...action, expected_version: detail.value.issue.version, visibility: publicIssue.value ? replyVisibility.value : 'private' as FeedbackVisibility, ...(action.action === 'reply' && attachReply.value && diagnosticId.value.trim() ? { diagnostic_request_id: diagnosticId.value.trim() } : {}) }
     busy.value = true; error.value = ''; notice.value = ''
@@ -114,9 +132,16 @@ export function useFeedback() {
     try {
       const result = await commandFeedback(admin.value, id, { ...value, client_request_id: commandId({ id, ...value }) })
       pending = undefined; committed = true
-      notice.value = action.action === 'reply' ? '回复已发送' : action.action === 'set_pinned' ? (action.pinned ? '已置顶' : '已取消置顶') : '状态已更新'
+      notice.value = action.action === 'set_pinned' ? (action.pinned ? '已置顶' : '已取消置顶') : NOTICES[action.action]
+      if (action.action === 'delete_issue') {
+        // The issue no longer exists for anyone: leave its page instead of refetching it.
+        detail.value = undefined; displayedId = ''
+        await router.push(base.value); await loadList()
+        return true
+      }
       if (selectedId.value === id && detail.value) {
         detail.value.issue = result.issue; closing.value = false
+        patchReply(action, Math.floor(Date.now() / 1000))
         if (action.action === 'reply' || (action.action === 'set_status' && action.comment?.trim())) {
           replyText.value = ''; replyingTo.value = ''; replyVisibility.value = 'private'; attachReply.value = false
         }
@@ -130,9 +155,14 @@ export function useFeedback() {
         }
       }
       await loadList()
-    } catch (reason) { error.value = committed ? '内容已保存，但刷新失败，请刷新核对，不要重复提交' : problem(reason) }
+      return true
+    } catch (reason) { error.value = committed ? '内容已保存，但刷新失败，请刷新核对，不要重复提交' : problem(reason); return committed }
     finally { busy.value = false }
   }
+  const editIssue = (fields: { title?: string, description?: string, category?: FeedbackCategory }) => mutate({ action: 'edit_issue', ...fields })
+  const deleteIssue = () => mutate({ action: 'delete_issue' })
+  const editReply = (seq: number, content: string) => mutate({ action: 'edit_reply', seq, content })
+  const deleteReply = (seq: number) => mutate({ action: 'delete_reply', seq })
   async function reply() { if (replyText.value.trim()) await mutate({ action: 'reply', content: replyText.value.trim() }) }
   async function resolve() {
     if (!canManageIssue.value) return
@@ -147,5 +177,5 @@ export function useFeedback() {
   watch(() => [selectedId.value, admin.value], () => { void loadDetail() })
   watch(admin, () => { items.value = []; total.value = 0; page.value = 0; void loadList(); void loadMentionable() })
   onMounted(() => { void refresh(); void loadMentionable() })
-  return { admin, manager, canCreate, selectedId, status, category, search, page, total, items, detail, loading, detailLoading, busy, creating, closing, error, notice, draftError, replyText, replyingTo, replyVisibility, replyInput, mentionable, base, togglePin, draft, diagnosticId, includeDiagnostics, attachReply, canManageIssue, publicIssue, createFromDiagnostic, loadList, refresh, filterChanged, openIssue, showList, replyTo, moreEvents, submit, reply, resolve, reopen, closeIssue }
+  return { admin, manager, canCreate, selectedId, status, category, search, page, total, items, detail, loading, detailLoading, busy, creating, closing, error, notice, draftError, replyText, replyingTo, replyVisibility, replyInput, mentionable, base, togglePin, draft, diagnosticId, includeDiagnostics, attachReply, canManageIssue, currentUserId, editIssue, deleteIssue, editReply, deleteReply, publicIssue, createFromDiagnostic, loadList, refresh, filterChanged, openIssue, showList, replyTo, moreEvents, submit, reply, resolve, reopen, closeIssue }
 }

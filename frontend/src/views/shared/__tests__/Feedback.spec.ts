@@ -135,6 +135,105 @@ describe('feedback workflows', () => {
     expect(mocks.command).toHaveBeenCalledWith(false, 'issue-id', expect.objectContaining({ action: 'reply', visibility: 'public' }))
     expect(root.querySelector<HTMLSelectElement>('[aria-label="回复可见范围"]')!.value).toBe('private')
   })
+  describe('editing and deleting', () => {
+    const reply = (seq: number, actor: string, content: string | null, extra: Record<string, unknown> = {}) => ({ seq, issue_id: 'issue-id', actor_id: actor, actor_username: actor, actor_role: 'user', kind: 'reply', content, from_status: null, to_status: null, created_at: 1700000100 + seq, visibility: 'private', ...extra })
+    const withReplies = async (events: unknown[], user = { id: 'user-1', role: 'user' }) => {
+      mocks.auth.user = user
+      mocks.detail.mockResolvedValue({ issue, events, next_event_cursor: 9, has_more: false })
+      root.querySelector<HTMLButtonElement>('button[title="刷新反馈"]')!.click(); await flush()
+    }
+    const labels = () => [...root.querySelectorAll('button')].map(b => b.getAttribute('aria-label') || b.textContent?.trim())
+
+    it('offers edit and delete only where the server would allow them', async () => {
+      await withReplies([reply(2, 'user-1', 'mine'), reply(3, 'someone-else', 'theirs')])
+      // The owner edits the issue and their own reply; deletes their own reply but not another user's.
+      expect(labels()).toContain('编辑反馈')
+      expect(labels()).toContain('编辑 user-1 的回复')
+      expect(labels()).toContain('删除 user-1 的回复')
+      expect(labels()).not.toContain('编辑 someone-else 的回复')
+      expect(labels()).not.toContain('删除 someone-else 的回复')
+      expect(root.textContent).toContain('删除反馈')
+      // A bystander on a public issue sees neither issue nor foreign-reply controls.
+      mocks.detail.mockResolvedValue({ issue: { ...issue, visibility: 'public' }, events: [reply(3, 'someone-else', 'theirs')], next_event_cursor: 3, has_more: false })
+      mocks.auth.user = { id: 'bystander', role: 'user' }
+      root.querySelector<HTMLButtonElement>('button[title="刷新反馈"]')!.click(); await flush()
+      expect(labels()).not.toContain('编辑反馈'); expect(labels()).not.toContain('删除 someone-else 的回复'); expect(root.textContent).not.toContain('删除反馈')
+      // Administrators moderate: they may delete any reply, but only authors edit replies.
+      mocks.auth.user = { id: 'root', role: 'admin' }; mocks.route.path = '/admin/feedback/issue-id'; await flush()
+      expect(labels()).toContain('删除 someone-else 的回复'); expect(labels()).not.toContain('编辑 someone-else 的回复'); expect(labels()).toContain('编辑反馈')
+    })
+
+    it('edits a reply in place and shows it as edited without refetching old events', async () => {
+      await withReplies([reply(2, 'user-1', 'before')])
+      root.querySelector<HTMLButtonElement>('button[aria-label="编辑 user-1 的回复"]')!.click(); await flush()
+      const form = root.querySelector('form[aria-label="编辑回复"]')!
+      const save = [...form.querySelectorAll('button')].find(b => b.textContent?.trim() === '保存')!
+      expect(save.disabled).toBe(true) // unchanged text is not a change
+      fill(form.querySelector<HTMLTextAreaElement>('textarea')!, 'after'); await flush()
+      mocks.command.mockResolvedValue({ issue: { ...issue, version: 4, activity_seq: 9 }, replayed: false })
+      mocks.detail.mockResolvedValue({ issue, events: [], next_event_cursor: 9, has_more: false })
+      save.click(); await flush()
+      expect(mocks.command).toHaveBeenCalledWith(false, 'issue-id', expect.objectContaining({ action: 'edit_reply', seq: 2, content: 'after', expected_version: 3 }))
+      expect(root.querySelector('form[aria-label="编辑回复"]')).toBeNull()
+      expect(root.textContent).toContain('after'); expect(root.textContent).toContain('已编辑'); expect(root.textContent).not.toContain('before')
+    })
+
+    it('asks for confirmation before deleting a reply and leaves a tombstone', async () => {
+      await withReplies([reply(2, 'user-1', 'secret words')])
+      root.querySelector<HTMLButtonElement>('button[aria-label="删除 user-1 的回复"]')!.click(); await flush()
+      expect(mocks.command).not.toHaveBeenCalled()
+      mocks.command.mockResolvedValue({ issue: { ...issue, version: 4, activity_seq: 9 }, replayed: false })
+      mocks.detail.mockResolvedValue({ issue, events: [], next_event_cursor: 9, has_more: false })
+      click('确认删除'); await flush()
+      expect(mocks.command).toHaveBeenCalledWith(false, 'issue-id', expect.objectContaining({ action: 'delete_reply', seq: 2 }))
+      expect(root.querySelector('[data-testid="deleted-reply"]')?.textContent).toContain('此回复已删除')
+      expect(root.textContent).not.toContain('secret words')
+      expect(labels()).not.toContain('删除 user-1 的回复')
+    })
+
+    it('cancelling a confirmation sends nothing', async () => {
+      await withReplies([reply(2, 'user-1', 'keep me')])
+      root.querySelector<HTMLButtonElement>('button[aria-label="删除 user-1 的回复"]')!.click(); await flush()
+      click('取消'); await flush()
+      expect(mocks.command).not.toHaveBeenCalled(); expect(root.textContent).toContain('keep me')
+    })
+
+    it('edits the issue title, category and description with only the changed fields', async () => {
+      root.querySelector<HTMLButtonElement>('button[aria-label="编辑反馈"]')!.click(); await flush()
+      const form = root.querySelector('form[aria-label="编辑反馈"]')!
+      fill(form.querySelector<HTMLInputElement>('input[aria-label="反馈标题"]')!, 'Renamed'); await flush()
+      mocks.command.mockResolvedValue({ issue: { ...issue, title: 'Renamed', version: 4, activity_seq: 9, edited_at: 1700000200 }, replayed: false })
+      mocks.detail.mockResolvedValue({ issue: { ...issue, title: 'Renamed', version: 4, activity_seq: 9, edited_at: 1700000200 }, events: [], next_event_cursor: 9, has_more: false })
+      click('保存'); await flush()
+      const sent = mocks.command.mock.calls[0]![2]
+      expect(sent).toMatchObject({ action: 'edit_issue', title: 'Renamed', expected_version: 3 })
+      expect(sent).not.toHaveProperty('description'); expect(sent).not.toHaveProperty('category')
+      expect(root.querySelector('h1')?.textContent).toContain('Renamed')
+    })
+
+    it('deleting the issue asks first, then leaves the page and reloads the list', async () => {
+      click('删除反馈'); await flush()
+      expect(mocks.command).not.toHaveBeenCalled()
+      expect(root.querySelector('[role="alertdialog"]')?.textContent).toContain('编号不会被复用')
+      mocks.command.mockResolvedValue({ issue: { ...issue, deleted_at: 1700000300, version: 4 }, replayed: false })
+      mocks.detail.mockClear(); mocks.list.mockClear()
+      click('确认删除'); await flush()
+      expect(mocks.command).toHaveBeenCalledWith(false, 'issue-id', expect.objectContaining({ action: 'delete_issue', expected_version: 3 }))
+      expect(mocks.push).toHaveBeenCalledWith('/dashboard/feedback')
+      expect(mocks.list).toHaveBeenCalled()
+      expect(root.textContent).toContain('反馈已删除')
+    })
+
+    it('shows edits by others as a system line and hides the bookkeeping markers', async () => {
+      await withReplies([
+        { ...reply(2, 'root', 'x'), kind: 'issue_edit', content: 'title,description', actor_role: 'admin' },
+        { ...reply(3, 'root', null), kind: 'reply_edit', target_seq: 2 },
+        { ...reply(4, 'root', null), kind: 'reply_delete', target_seq: 2 },
+      ])
+      expect(root.textContent).toContain('编辑了反馈（标题、描述）')
+      expect(root.querySelectorAll('.timeline-entry').length).toBe(2) // opening post + the edit line
+    })
+  })
   it('defaults new feedback to private and allows explicit public selection', async () => {
     click('提交反馈'); await flush()
     const dialog = root.querySelector('[data-dialog="提交反馈"]')!

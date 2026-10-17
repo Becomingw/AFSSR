@@ -33,6 +33,23 @@ async fn issue_tx(
         .map_err(|_| FeedbackError::Unavailable)
 }
 
+/// Loads (and locks) a reply of the issue; anything that is not a reply is treated as absent.
+async fn load_reply(
+    tx: &mut sqlx::Transaction<'_, Postgres>,
+    issue_id: &str,
+    seq: i64,
+) -> Result<FeedbackEvent, FeedbackError> {
+    let row = sqlx::query("SELECT (to_jsonb(e)-'client_request_id'-'payload_hash') AS data FROM feedback_events e WHERE e.issue_id=$1 AND e.seq=$2 FOR UPDATE")
+        .bind(issue_id)
+        .bind(seq)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(unavailable)?
+        .ok_or(FeedbackError::NotFound)?;
+    serde_json::from_value(row.try_get("data").map_err(unavailable)?)
+        .map_err(|_| FeedbackError::Unavailable)
+}
+
 #[async_trait]
 impl FeedbackRepository for PostgresFeedbackRepository {
     async fn list(&self, q: &FeedbackQuery) -> Result<FeedbackPage, FeedbackError> {
@@ -40,6 +57,10 @@ impl FeedbackRepository for PostgresFeedbackRepository {
             return Err(FeedbackError::Forbidden);
         }
         let mut b=QueryBuilder::<Postgres>::new("WITH filtered AS (SELECT i.*,u.username AS owner_username FROM feedback_issues i LEFT JOIN users u ON u.id=i.owner_id WHERE TRUE");
+        if q.after.is_none() {
+            // Incremental readers also receive deleted issues (as tombstones) so they can drop them.
+            b.push(" AND i.deleted_at IS NULL");
+        }
         if let Some(viewer) = &q.viewer_id {
             b.push(" AND (i.visibility='public' OR i.owner_id=")
                 .push_bind(viewer)
@@ -98,7 +119,7 @@ impl FeedbackRepository for PostgresFeedbackRepository {
             .await
             .map_err(unavailable)?;
         let issue = issue_tx(&mut tx, id).await?;
-        if !can_view_feedback(&issue.summary, viewer) {
+        if issue.summary.deleted_at.is_some() || !can_view_feedback(&issue.summary, viewer) {
             return Err(FeedbackError::NotFound);
         }
         let rows=sqlx::query("SELECT (to_jsonb(e)-'client_request_id'-'payload_hash') || jsonb_build_object('actor_username',u.username) AS data FROM feedback_events e LEFT JOIN users u ON u.id=e.actor_id WHERE e.issue_id=$1 AND e.seq>$2 ORDER BY e.seq LIMIT $3")
@@ -126,7 +147,7 @@ impl FeedbackRepository for PostgresFeedbackRepository {
         })
     }
     async fn id_for_number(&self, number: i64) -> Result<Option<String>, FeedbackError> {
-        sqlx::query_scalar("SELECT id FROM feedback_issues WHERE number=$1")
+        sqlx::query_scalar("SELECT id FROM feedback_issues WHERE number=$1 AND deleted_at IS NULL")
             .bind(number)
             .fetch_optional(&self.pool)
             .await
@@ -222,14 +243,81 @@ impl FeedbackRepository for PostgresFeedbackRepository {
                 replayed: true,
             });
         }
+        // A deleted issue is gone for every new command (a replay above already returned).
+        if issue.summary.deleted_at.is_some() {
+            return Err(FeedbackError::NotFound);
+        }
         // Successful pre-upgrade commands may predate today's write validation.
         validate_command(input)?;
         if issue.summary.version != input.expected_version {
             return Err(FeedbackError::Conflict);
         }
+        let now = chrono::Utc::now().timestamp();
         let mut pin_change: Option<bool> = None;
+        let mut target_seq: Option<i64> = None;
+        let mut edit: (Option<String>, Option<String>, Option<String>) = (None, None, None);
+        let mut edited_issue = false;
+        let mut deleted_issue = false;
+        let owned_content: Option<String>;
         let (kind, content, from_status, to_status) = match &input.action {
             FeedbackAction::Reply { content } => ("reply", Some(content.as_str()), None, None),
+            FeedbackAction::EditIssue {
+                title,
+                description,
+                category,
+            } => {
+                // Only fields that really differ count; an edit that changes nothing is a conflict.
+                edit.0 = title.clone().filter(|v| v != &issue.summary.title);
+                edit.1 = description.clone().filter(|v| v != &issue.description);
+                edit.2 = category.clone().filter(|v| v != &issue.summary.category);
+                let changed: Vec<&str> = [
+                    ("title", edit.0.is_some()),
+                    ("description", edit.1.is_some()),
+                    ("category", edit.2.is_some()),
+                ]
+                .iter()
+                .filter(|(_, c)| *c)
+                .map(|(n, _)| *n)
+                .collect();
+                if changed.is_empty() {
+                    return Err(FeedbackError::Conflict);
+                }
+                edited_issue = true;
+                owned_content = Some(changed.join(","));
+                ("issue_edit", owned_content.as_deref(), None, None)
+            }
+            FeedbackAction::DeleteIssue => {
+                deleted_issue = true;
+                ("issue_delete", None, None, None)
+            }
+            FeedbackAction::EditReply { seq, content } => {
+                let reply = load_reply(&mut tx, id, *seq).await?;
+                authorize_feedback_reply_change(&reply, actor, role, false)?;
+                if reply.content.as_deref() == Some(content.as_str()) {
+                    return Err(FeedbackError::Conflict);
+                }
+                sqlx::query("UPDATE feedback_events SET content=$2,edited_at=$3 WHERE seq=$1")
+                    .bind(seq)
+                    .bind(content)
+                    .bind(now)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(unavailable)?;
+                target_seq = Some(*seq);
+                ("reply_edit", None, None, None)
+            }
+            FeedbackAction::DeleteReply { seq } => {
+                let reply = load_reply(&mut tx, id, *seq).await?;
+                authorize_feedback_reply_change(&reply, actor, role, true)?;
+                sqlx::query("UPDATE feedback_events SET content=NULL,deleted_at=$2 WHERE seq=$1")
+                    .bind(seq)
+                    .bind(now)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(unavailable)?;
+                target_seq = Some(*seq);
+                ("reply_delete", None, None, None)
+            }
             FeedbackAction::SetPinned { pinned } => {
                 if *pinned == issue.summary.pinned_at.is_some() {
                     return Err(FeedbackError::Conflict);
@@ -254,10 +342,15 @@ impl FeedbackRepository for PostgresFeedbackRepository {
                 )
             }
         };
-        let now = chrono::Utc::now().timestamp();
-        let seq:i64=sqlx::query_scalar("INSERT INTO feedback_events(issue_id,actor_id,actor_role,kind,content,from_status,to_status,created_at,client_request_id,payload_hash,visibility) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING seq")
-            .bind(id).bind(actor).bind(role).bind(kind).bind(content).bind(from_status).bind(to_status).bind(now).bind(&input.client_request_id).bind(digest).bind(if kind == "pin" { "public" } else { input.visibility.as_str() }).fetch_one(&mut *tx).await.map_err(unavailable)?;
-        sqlx::query("UPDATE feedback_issues SET status=COALESCE($2,status),version=version+1,activity_seq=$3,updated_at=$4,pinned_at=CASE WHEN $5::boolean IS NULL THEN pinned_at WHEN $5 THEN $4 ELSE NULL END WHERE id=$1").bind(id).bind(to_status).bind(seq).bind(now).bind(pin_change).execute(&mut *tx).await.map_err(unavailable)?;
+        // Pin changes are public system events; edit/delete markers are only for the people involved.
+        let event_visibility = match kind {
+            "pin" => "public",
+            "issue_edit" | "issue_delete" | "reply_edit" | "reply_delete" => "private",
+            _ => input.visibility.as_str(),
+        };
+        let seq:i64=sqlx::query_scalar("INSERT INTO feedback_events(issue_id,actor_id,actor_role,kind,content,from_status,to_status,created_at,client_request_id,payload_hash,visibility,target_seq) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING seq")
+            .bind(id).bind(actor).bind(role).bind(kind).bind(content).bind(from_status).bind(to_status).bind(now).bind(&input.client_request_id).bind(digest).bind(event_visibility).bind(target_seq).fetch_one(&mut *tx).await.map_err(unavailable)?;
+        sqlx::query("UPDATE feedback_issues SET status=COALESCE($2,status),version=version+1,activity_seq=$3,updated_at=$4,pinned_at=CASE WHEN $5::boolean IS NULL THEN pinned_at WHEN $5 THEN $4 ELSE NULL END,title=COALESCE($6,title),description=COALESCE($7,description),category=COALESCE($8,category),edited_at=CASE WHEN $9 THEN $4 ELSE edited_at END,deleted_at=CASE WHEN $10 THEN $4 ELSE deleted_at END WHERE id=$1").bind(id).bind(to_status).bind(seq).bind(now).bind(pin_change).bind(&edit.0).bind(&edit.1).bind(&edit.2).bind(edited_issue).bind(deleted_issue).execute(&mut *tx).await.map_err(unavailable)?;
         let issue = issue_tx(&mut tx, id).await?;
         tx.commit().await.map_err(unavailable)?;
         Ok(FeedbackMutation {

@@ -19,6 +19,13 @@ pub struct FeedbackSummary {
     /// Set while an administrator keeps the issue pinned to the top of the list.
     #[serde(default)]
     pub pinned_at: Option<i64>,
+    /// Set once the owner or an administrator changed the title, description or category.
+    #[serde(default)]
+    pub edited_at: Option<i64>,
+    /// Set when the issue was deleted. Deleted issues are hidden everywhere except as tombstones in
+    /// incremental (`after`) listings, so polling clients learn that they are gone.
+    #[serde(default)]
+    pub deleted_at: Option<i64>,
     pub version: i64,
     pub activity_seq: i64,
     pub created_at: i64,
@@ -44,6 +51,15 @@ pub struct FeedbackEvent {
     pub from_status: Option<String>,
     pub to_status: Option<String>,
     pub created_at: i64,
+    /// `reply_edit` / `reply_delete` markers point at the reply they changed.
+    #[serde(default)]
+    pub target_seq: Option<i64>,
+    /// Set on a reply whose author changed it afterwards.
+    #[serde(default)]
+    pub edited_at: Option<i64>,
+    /// Set on a reply that was deleted; its content is gone.
+    #[serde(default)]
+    pub deleted_at: Option<i64>,
 }
 #[derive(Debug, Clone, Default)]
 pub struct FeedbackQuery {
@@ -100,6 +116,23 @@ pub enum FeedbackAction {
     SetPinned {
         pinned: bool,
     },
+    /// The owner or an administrator changes the issue; at least one field must differ.
+    EditIssue {
+        title: Option<String>,
+        description: Option<String>,
+        category: Option<String>,
+    },
+    /// The owner or an administrator deletes the issue (it stays stored but disappears).
+    DeleteIssue,
+    /// The author of a reply changes its text.
+    EditReply {
+        seq: i64,
+        content: String,
+    },
+    /// The author of a reply, or an administrator, removes its content.
+    DeleteReply {
+        seq: i64,
+    },
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(try_from = "FeedbackCommandWire")]
@@ -126,27 +159,54 @@ struct FeedbackCommandWire {
     status: Option<String>,
     comment: Option<String>,
     pinned: Option<bool>,
+    title: Option<String>,
+    description: Option<String>,
+    category: Option<String>,
+    seq: Option<i64>,
 }
 impl TryFrom<FeedbackCommandWire> for FeedbackCommand {
     type Error = &'static str;
     fn try_from(w: FeedbackCommandWire) -> Result<Self, Self::Error> {
+        // Every action accepts exactly its own fields; anything else is rejected.
+        let present = |names: &[&str]| -> bool {
+            let all = [
+                ("content", w.content.is_some()),
+                ("status", w.status.is_some()),
+                ("comment", w.comment.is_some()),
+                ("pinned", w.pinned.is_some()),
+                ("title", w.title.is_some()),
+                ("description", w.description.is_some()),
+                ("category", w.category.is_some()),
+                ("seq", w.seq.is_some()),
+            ];
+            all.iter().all(|(name, set)| !set || names.contains(name))
+        };
         let action = match w.action.as_str() {
-            "reply" if w.status.is_none() && w.comment.is_none() && w.pinned.is_none() => {
-                FeedbackAction::Reply {
-                    content: w.content.ok_or("Reply content required")?,
+            "reply" if present(&["content"]) => FeedbackAction::Reply {
+                content: w.content.ok_or("Reply content required")?,
+            },
+            "set_status" if present(&["status", "comment"]) => FeedbackAction::SetStatus {
+                status: w.status.ok_or("Status required")?,
+                comment: w.comment,
+            },
+            "set_pinned" if present(&["pinned"]) => FeedbackAction::SetPinned {
+                pinned: w.pinned.ok_or("Pinned flag required")?,
+            },
+            "edit_issue" if present(&["title", "description", "category"]) => {
+                FeedbackAction::EditIssue {
+                    title: w.title,
+                    description: w.description,
+                    category: w.category,
                 }
             }
-            "set_status" if w.content.is_none() && w.pinned.is_none() => {
-                FeedbackAction::SetStatus {
-                    status: w.status.ok_or("Status required")?,
-                    comment: w.comment,
-                }
-            }
-            "set_pinned" if w.content.is_none() && w.status.is_none() && w.comment.is_none() => {
-                FeedbackAction::SetPinned {
-                    pinned: w.pinned.ok_or("Pinned flag required")?,
-                }
-            }
+            "delete_issue" if present(&[]) => FeedbackAction::DeleteIssue,
+            "edit_reply" if present(&["seq", "content"]) => FeedbackAction::EditReply {
+                seq: w.seq.ok_or("Reply seq required")?,
+                content: w.content.ok_or("Reply content required")?,
+            },
+            "delete_reply" if present(&["seq"]) => FeedbackAction::DeleteReply {
+                seq: w.seq.ok_or("Reply seq required")?,
+            },
             _ => return Err("Invalid feedback action fields"),
         };
         Ok(Self {
@@ -212,9 +272,31 @@ pub fn authorize_feedback_command(
             return Err(FeedbackError::Forbidden);
         }
         FeedbackAction::SetPinned { .. } if !admin => return Err(FeedbackError::Forbidden),
+        FeedbackAction::EditIssue { .. } | FeedbackAction::DeleteIssue if !admin && !owner => {
+            return Err(FeedbackError::Forbidden);
+        }
         _ => {}
     }
     Ok(())
+}
+
+/// Reply edits belong to the reply's author; deleting is also open to administrators. Replies that
+/// were already deleted, and every other event kind, cannot be changed.
+pub fn authorize_feedback_reply_change(
+    reply: &FeedbackEvent,
+    actor: &str,
+    role: &str,
+    delete: bool,
+) -> Result<(), FeedbackError> {
+    if reply.kind != "reply" || reply.deleted_at.is_some() {
+        return Err(FeedbackError::NotFound);
+    }
+    let author = reply.actor_id.as_deref() == Some(actor);
+    if author || (delete && is_feedback_admin(role)) {
+        Ok(())
+    } else {
+        Err(FeedbackError::Forbidden)
+    }
 }
 /// Issue visibility must already have been authorized; a public reply never opens a private issue.
 pub fn project_feedback_event(
@@ -279,6 +361,31 @@ pub fn validate_command(value: &FeedbackCommand) -> Result<(), FeedbackError> {
                 || (status == "resolved" && comment.as_ref().is_none_or(|c| c.trim().is_empty())) =>
         {
             Err(FeedbackError::Invalid("Resolve requires a nonblank final solution; comments must not exceed 20000 UTF-8 bytes"))
+        }
+        FeedbackAction::EditReply { seq, content }
+            if *seq < 1 || content.trim().is_empty() || content.len() > 20000 =>
+        {
+            Err(FeedbackError::Invalid("Reply must be 1-20000 bytes"))
+        }
+        FeedbackAction::DeleteReply { seq } if *seq < 1 => {
+            Err(FeedbackError::Invalid("A positive reply seq is required"))
+        }
+        FeedbackAction::EditIssue {
+            title,
+            description,
+            category,
+        } if (title.is_none() && description.is_none() && category.is_none())
+            || title
+                .as_ref()
+                .is_some_and(|t| t.trim().is_empty() || t.chars().count() > 200)
+            || description
+                .as_ref()
+                .is_some_and(|d| d.trim().is_empty() || d.len() > 20000)
+            || category.as_ref().is_some_and(|c| !valid_category(c)) =>
+        {
+            Err(FeedbackError::Invalid(
+                "Edit needs a title (1-200 characters), description (1-20000 bytes) or valid category",
+            ))
         }
         _ => Ok(()),
     }

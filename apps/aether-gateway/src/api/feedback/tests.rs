@@ -864,3 +864,164 @@ fn mentionable_names_are_active_administrators_sorted_and_deduplicated() {
     ];
     assert_eq!(mentionable_names(users), vec!["auditor", "root", "Zed"]);
 }
+
+#[tokio::test]
+async fn feedback_http_owner_and_admin_edit_and_delete_issues_and_replies() {
+    let state = AppState::new().unwrap().with_data_state_for_tests(
+        crate::data::GatewayDataState::disabled()
+            .with_feedback_repository_for_tests(Arc::new(InMemoryFeedbackRepository::default())),
+    );
+    let (_, owner) = user(&state, "user", "owner").await;
+    let (_, helper) = user(&state, "user", "helper").await;
+    let (_, admin) = user(&state, "admin", "root").await;
+    let (url, task) = server(state).await;
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let post = |path: String, headers: &HeaderMap, body: Value| {
+        let client = client.clone();
+        let headers = headers.clone();
+        async move {
+            let response = client
+                .post(path)
+                .headers(headers)
+                .json(&body)
+                .send()
+                .await
+                .unwrap();
+            (response.status(), response.json::<Value>().await.unwrap())
+        }
+    };
+    let command = |version: i64, extra: Value| {
+        let mut body = json!({"expected_version":version,"client_request_id":uuid::Uuid::new_v4().to_string()});
+        body.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        body
+    };
+
+    let mut public = input();
+    public["visibility"] = json!("public");
+    let (_, created) = post(format!("{url}/api/feedback"), &owner, public).await;
+    let id = created["issue"]["id"].as_str().unwrap().to_string();
+    let commands = format!("{url}/api/feedback/{id}/commands");
+
+    // Editing the issue: owner yes, another participant no.
+    let edit = json!({"action":"edit_issue","title":"Renamed","description":"Better words"});
+    let (status, _) = post(commands.clone(), &helper, command(1, edit.clone())).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, edited) = post(commands.clone(), &owner, command(1, edit)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(edited["issue"]["title"], "Renamed");
+    assert!(edited["issue"]["edited_at"].is_i64());
+
+    // Helper replies publicly, then edits and (as an admin would) loses the reply.
+    let (_, replied) = post(
+        commands.clone(),
+        &helper,
+        command(
+            2,
+            json!({"action":"reply","content":"first try","visibility":"public"}),
+        ),
+    )
+    .await;
+    let seq = client
+        .get(format!("{url}/api/feedback/{id}"))
+        .headers(owner.clone())
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap()["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["content"] == "first try")
+        .unwrap()["seq"]
+        .as_i64()
+        .unwrap();
+    let version = replied["issue"]["version"].as_i64().unwrap();
+    let (status, _) = post(
+        commands.clone(),
+        &owner,
+        command(
+            version,
+            json!({"action":"edit_reply","seq":seq,"content":"hijack"}),
+        ),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "the issue owner cannot rewrite another's reply"
+    );
+    let (status, fixed) = post(
+        commands.clone(),
+        &helper,
+        command(
+            version,
+            json!({"action":"edit_reply","seq":seq,"content":"second try"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let version = fixed["issue"]["version"].as_i64().unwrap();
+    let (status, _) = post(
+        commands.clone(),
+        &owner,
+        command(version, json!({"action":"delete_reply","seq":seq})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, removed) = post(
+        format!("{url}/api/admin/feedback/{id}/commands"),
+        &admin,
+        command(version, json!({"action":"delete_reply","seq":seq})),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "administrators can remove any reply: {removed}"
+    );
+    let detail: Value = client
+        .get(format!("{url}/api/feedback/{id}"))
+        .headers(owner.clone())
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let gone = detail["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["seq"] == seq)
+        .unwrap();
+    assert!(gone["content"].is_null() && gone["deleted_at"].is_i64());
+    assert!(
+        !detail.to_string().contains("second try"),
+        "deleted text must not remain"
+    );
+
+    // Deleting the issue: not by helper, by the owner; afterwards it is gone by id and number.
+    let version = removed["issue"]["version"].as_i64().unwrap();
+    let delete = json!({"action":"delete_issue"});
+    let (status, _) = post(commands.clone(), &helper, command(version, delete.clone())).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, deleted) = post(commands.clone(), &owner, command(version, delete)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(deleted["issue"]["deleted_at"].is_i64());
+    for path in [id.clone(), "1".to_string()] {
+        for headers in [&owner, &admin] {
+            let response = client
+                .get(format!("{url}/api/feedback/{path}"))
+                .headers(headers.clone())
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+        }
+    }
+    task.abort();
+}

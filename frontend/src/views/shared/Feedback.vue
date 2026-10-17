@@ -216,6 +216,42 @@
               class="mr-2"
             />{{ detail.issue.pinned_at ? '取消置顶' : '置顶' }}
           </Button>
+          <Button
+            v-if="canManageIssue"
+            variant="outline"
+            size="sm"
+            :disabled="busy"
+            @click="confirmingDelete = true"
+          >
+            <Trash2
+              :size="14"
+              class="mr-2"
+            />删除反馈
+          </Button>
+        </div>
+        <div
+          v-if="confirmingDelete && canManageIssue"
+          class="issue-delete-confirm"
+          role="alertdialog"
+          aria-label="确认删除反馈"
+        >
+          <span>删除后这条反馈及其全部回复对所有人不可见，编号不会被复用，且无法恢复。</span>
+          <Button
+            variant="destructive"
+            size="sm"
+            :disabled="busy"
+            @click="removeIssue"
+          >
+            确认删除
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            :disabled="busy"
+            @click="confirmingDelete = false"
+          >
+            取消
+          </Button>
         </div>
         <div class="issue-meta">
           <span
@@ -246,6 +282,10 @@
             :events="detail.events"
             :issue-base="base"
             :mentionable="mentionable"
+            :current-user-id="currentUserId"
+            :manager="manager"
+            :busy="busy"
+            :actions="{ editIssue, editReply, deleteReply }"
             @reply="replyTo"
           />
           <Button
@@ -504,7 +544,8 @@
 </template>
 
 <script setup lang="ts">
-import { ArrowLeft, CheckCircle2, ChevronLeft, ChevronRight, CircleDot, CircleX, Globe, Lock, Pin, PinOff, Plus, RefreshCw, RotateCcw, Search, Send, X } from 'lucide-vue-next'
+import { ref } from 'vue'
+import { ArrowLeft, CheckCircle2, ChevronLeft, ChevronRight, CircleDot, CircleX, Globe, Lock, Pin, PinOff, Plus, RefreshCw, RotateCcw, Search, Send, Trash2, X } from 'lucide-vue-next'
 import PageContainer from '@/components/layout/PageContainer.vue'
 import { Button, Input } from '@/components/ui'
 import Dialog from '@/components/ui/dialog/Dialog.vue'
@@ -513,7 +554,9 @@ import FeedbackDiagnostics from './FeedbackDiagnostics.vue'
 import FeedbackEditor from './components/FeedbackEditor.vue'
 import { useFeedback } from './useFeedback'
 import { feedbackStatuses as statuses, feedbackCategories as categories, feedbackDate, feedbackRef, feedbackStatusLabel, feedbackCategoryLabel } from './feedback-view'
-const { admin, manager, canCreate, selectedId, status, category, search, page, total, items, detail, loading, detailLoading, busy, creating, closing, error, notice, draftError, replyText, replyingTo, replyVisibility, replyInput, mentionable, base, togglePin, draft, diagnosticId, includeDiagnostics, attachReply, canManageIssue, publicIssue, createFromDiagnostic, loadList, refresh, filterChanged, openIssue, showList, replyTo, moreEvents, submit, reply, resolve, reopen, closeIssue } = useFeedback()
+const { admin, manager, canCreate, selectedId, status, category, search, page, total, items, detail, loading, detailLoading, busy, creating, closing, error, notice, draftError, replyText, replyingTo, replyVisibility, replyInput, mentionable, base, togglePin, draft, diagnosticId, includeDiagnostics, attachReply, canManageIssue, currentUserId, editIssue, deleteIssue, editReply, deleteReply, publicIssue, createFromDiagnostic, loadList, refresh, filterChanged, openIssue, showList, replyTo, moreEvents, submit, reply, resolve, reopen, closeIssue } = useFeedback()
+const confirmingDelete = ref(false)
+async function removeIssue() { if (await deleteIssue()) confirmingDelete.value = false }
 function statusIcon(value: string) { return value === 'open' ? CircleDot : value === 'resolved' ? CheckCircle2 : CircleX }
 </script>
 
@@ -522,5 +565,5 @@ function statusIcon(value: string) { return value === 'open' ? CircleDot : value
 :global(.dark) .feedback-page,:global(body[theme-mode='dark']) .feedback-page{--feedback-resolved:#c4a7ee}
 @media(max-width:1100px){.issue-layout{grid-template-columns:minmax(0,1fr)} .issue-sidebar{grid-row:auto;border-left:0;padding:0 0 22px;border-bottom:1px solid var(--border)}.issue-sidebar dl{grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.issue-sidebar h2{margin-bottom:14px}.list-heading,.row-category,.row-date{display:none}.issue-row{grid-template-columns:18px minmax(0,1fr) 72px 15px}}
 @media(max-width:640px){.feedback-toolbar{margin-bottom:20px}.feedback-toolbar h1,.issue-heading h1{font-size:21px}.issue-heading h1>span{font-size:14px}.issue-row{grid-template-columns:18px minmax(0,1fr) 15px;gap:10px;padding:14px}.row-visibility{grid-column:2;grid-row:2}.row-chevron{grid-column:3;grid-row:1}.issue-sidebar dl{grid-template-columns:repeat(2,minmax(0,1fr))}.issue-meta{gap:10px}.form-pair{grid-template-columns:minmax(0,1fr)}.submit-actions{width:100%;justify-content:flex-start;margin-left:0}.submit-actions :deep(button){font-size:12px}.lifecycle-actions>div{flex-wrap:wrap}.status-tabs{gap:20px}}
-.heading-row{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.heading-row h1{min-width:0}.pin-badge,.pinned-mark{color:var(--primary)}.pin-badge{display:inline-flex;align-items:center;gap:4px}.pinned-mark{display:inline-block;vertical-align:-1px;margin-right:6px;transform:rotate(35deg)}.editor-field{display:grid;gap:8px;font-size:13px}
+.heading-row{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.heading-row h1{min-width:0}.pin-badge,.pinned-mark{color:var(--primary)}.pin-badge{display:inline-flex;align-items:center;gap:4px}.pinned-mark{display:inline-block;vertical-align:-1px;margin-right:6px;transform:rotate(35deg)}.editor-field{display:grid;gap:8px;font-size:13px}.heading-row{flex-wrap:wrap}.issue-delete-confirm{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:14px;padding:10px 14px;font-size:12px;border:1px solid color-mix(in srgb, var(--destructive, #dc2626) 40%, transparent);border-radius:6px;background:color-mix(in srgb, var(--destructive, #dc2626) 8%, transparent)}
 </style>

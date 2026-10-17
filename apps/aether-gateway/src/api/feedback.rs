@@ -328,6 +328,7 @@ async fn dispatch(
         return error(StatusCode::PAYLOAD_TOO_LARGE, "Feedback request too large");
     }
     let mut mention_text: Option<String> = None;
+    let mut audit_action: Option<&'static str> = None;
     let mut mention_source: Option<mentions::MentionSource> = None;
     let result = if parts.is_empty() {
         if authorize_feedback_create(user, role).is_err() {
@@ -429,8 +430,22 @@ async fn dispatch(
         mention_text = match &input.action {
             FeedbackAction::Reply { content } => Some(content.clone()),
             FeedbackAction::SetStatus { comment, .. } => comment.clone(),
-            FeedbackAction::SetPinned { .. } => None,
+            // Edits and deletions never e-mail anyone.
+            FeedbackAction::SetPinned { .. }
+            | FeedbackAction::EditIssue { .. }
+            | FeedbackAction::DeleteIssue
+            | FeedbackAction::EditReply { .. }
+            | FeedbackAction::DeleteReply { .. } => None,
         };
+        audit_action = Some(match &input.action {
+            FeedbackAction::Reply { .. } => "reply",
+            FeedbackAction::SetStatus { .. } => "set_status",
+            FeedbackAction::SetPinned { .. } => "set_pinned",
+            FeedbackAction::EditIssue { .. } => "edit_issue",
+            FeedbackAction::DeleteIssue => "delete_issue",
+            FeedbackAction::EditReply { .. } => "edit_reply",
+            FeedbackAction::DeleteReply { .. } => "delete_reply",
+        });
         repository
             .command(&issue_id, user, role, !admin, &input)
             .await
@@ -442,7 +457,7 @@ async fn dispatch(
     };
     match result {
         Ok(mutation) => {
-            tracing::info!(log_type="audit",event_name="feedback_mutation",user_id=user,role,issue_id=%mutation.issue.summary.id,version=mutation.issue.summary.version,replayed=mutation.replayed,"Feedback changed");
+            tracing::info!(log_type="audit",event_name="feedback_mutation",user_id=user,role,action=audit_action.unwrap_or("create"),issue_id=%mutation.issue.summary.id,version=mutation.issue.summary.version,replayed=mutation.replayed,"Feedback changed");
             if !mutation.replayed {
                 if let (Some(text), Some(source)) = (mention_text.take(), mention_source) {
                     if text.contains('@') {

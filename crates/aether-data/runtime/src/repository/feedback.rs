@@ -37,7 +37,9 @@ impl FeedbackRepository for InMemoryFeedbackRepository {
             .values()
             .map(|i| i.summary.clone())
             .filter(|i| {
-                can_view_feedback(i, q.viewer_id.as_deref())
+                // Incremental readers also receive deleted issues so they can drop them.
+                (q.after.is_some() || i.deleted_at.is_none())
+                    && can_view_feedback(i, q.viewer_id.as_deref())
                     && q.owner_id
                         .as_ref()
                         .is_none_or(|owner| i.owner_id.as_ref() == Some(owner))
@@ -85,7 +87,7 @@ impl FeedbackRepository for InMemoryFeedbackRepository {
         let issue = store
             .issues
             .get(id)
-            .filter(|i| can_view_feedback(&i.summary, viewer))
+            .filter(|i| i.summary.deleted_at.is_none() && can_view_feedback(&i.summary, viewer))
             .ok_or(FeedbackError::NotFound)?
             .clone();
         let events: Vec<_> = store
@@ -114,7 +116,7 @@ impl FeedbackRepository for InMemoryFeedbackRepository {
         Ok(store
             .issues
             .values()
-            .find(|issue| issue.summary.number == number)
+            .find(|issue| issue.summary.number == number && issue.summary.deleted_at.is_none())
             .map(|issue| issue.summary.id.clone()))
     }
     async fn create(
@@ -166,6 +168,8 @@ impl FeedbackRepository for InMemoryFeedbackRepository {
                 visibility: input.visibility.clone(),
                 number,
                 pinned_at: None,
+                edited_at: None,
+                deleted_at: None,
                 version: 1,
                 activity_seq: seq,
                 created_at: now,
@@ -185,6 +189,9 @@ impl FeedbackRepository for InMemoryFeedbackRepository {
             from_status: None,
             to_status: Some("open".into()),
             created_at: now,
+            target_seq: None,
+            edited_at: None,
+            deleted_at: None,
         });
         store.issues.insert(id, issue.clone());
         let result = FeedbackMutation {
@@ -216,16 +223,85 @@ impl FeedbackRepository for InMemoryFeedbackRepository {
                 replayed: true,
             });
         }
+        // A deleted issue is gone for every new command (a replay above already returned).
+        if issue.summary.deleted_at.is_some() {
+            return Err(FeedbackError::NotFound);
+        }
         // Successful pre-upgrade commands may predate today's write validation.
         validate_command(input)?;
         if issue.summary.version != input.expected_version {
             return Err(FeedbackError::Conflict);
         }
-        store.seq += 1;
-        let seq = store.seq;
         let now = chrono::Utc::now().timestamp();
         let mut issue = issue;
+        let mut target_seq: Option<i64> = None;
+        // Replies are changed in place; the marker event below only tells incremental readers.
+        let reply_index = match &input.action {
+            FeedbackAction::EditReply { seq, .. } | FeedbackAction::DeleteReply { seq } => {
+                let index = store
+                    .events
+                    .iter()
+                    .position(|e| e.issue_id == id && e.seq == *seq)
+                    .ok_or(FeedbackError::NotFound)?;
+                let delete = matches!(input.action, FeedbackAction::DeleteReply { .. });
+                authorize_feedback_reply_change(&store.events[index], actor, role, delete)?;
+                target_seq = Some(*seq);
+                Some(index)
+            }
+            _ => None,
+        };
         let (kind, content, from_status, to_status) = match &input.action {
+            FeedbackAction::EditIssue {
+                title,
+                description,
+                category,
+            } => {
+                let title = title.clone().filter(|v| v != &issue.summary.title);
+                let description = description.clone().filter(|v| v != &issue.description);
+                let category = category.clone().filter(|v| v != &issue.summary.category);
+                let changed: Vec<&str> = [
+                    ("title", title.is_some()),
+                    ("description", description.is_some()),
+                    ("category", category.is_some()),
+                ]
+                .iter()
+                .filter(|(_, c)| *c)
+                .map(|(n, _)| *n)
+                .collect();
+                if changed.is_empty() {
+                    return Err(FeedbackError::Conflict);
+                }
+                if let Some(v) = title {
+                    issue.summary.title = v;
+                }
+                if let Some(v) = description {
+                    issue.description = v;
+                }
+                if let Some(v) = category {
+                    issue.summary.category = v;
+                }
+                issue.summary.edited_at = Some(now);
+                ("issue_edit", Some(changed.join(",")), None, None)
+            }
+            FeedbackAction::DeleteIssue => {
+                issue.summary.deleted_at = Some(now);
+                ("issue_delete", None, None, None)
+            }
+            FeedbackAction::EditReply { content, .. } => {
+                let reply = &mut store.events[reply_index.expect("reply located above")];
+                if reply.content.as_deref() == Some(content.as_str()) {
+                    return Err(FeedbackError::Conflict);
+                }
+                reply.content = Some(content.clone());
+                reply.edited_at = Some(now);
+                ("reply_edit", None, None, None)
+            }
+            FeedbackAction::DeleteReply { .. } => {
+                let reply = &mut store.events[reply_index.expect("reply located above")];
+                reply.content = None;
+                reply.deleted_at = Some(now);
+                ("reply_delete", None, None, None)
+            }
             FeedbackAction::Reply { content } => ("reply", Some(content.clone()), None, None),
             FeedbackAction::SetStatus { status, comment } => {
                 if status == &issue.summary.status {
@@ -247,6 +323,8 @@ impl FeedbackRepository for InMemoryFeedbackRepository {
                 )
             }
         };
+        store.seq += 1;
+        let seq = store.seq;
         issue.summary.version += 1;
         issue.summary.activity_seq = seq;
         issue.summary.updated_at = now;
@@ -257,16 +335,20 @@ impl FeedbackRepository for InMemoryFeedbackRepository {
             actor_username: None,
             actor_role: role.into(),
             kind: kind.into(),
-            // Pin changes are system events that every viewer may see.
-            visibility: if kind == "pin" {
-                "public".into()
-            } else {
-                input.visibility.clone()
+            // Pin changes are system events that every viewer may see; edit/delete markers only
+            // concern the people involved.
+            visibility: match kind {
+                "pin" => "public".into(),
+                "issue_edit" | "issue_delete" | "reply_edit" | "reply_delete" => "private".into(),
+                _ => input.visibility.clone(),
             },
             content,
             from_status,
             to_status,
             created_at: now,
+            target_seq,
+            edited_at: None,
+            deleted_at: None,
         });
         store.issues.insert(id.into(), issue.clone());
         let result = FeedbackMutation {
@@ -292,6 +374,316 @@ mod tests {
             client_request_id: uuid::Uuid::new_v4().to_string(),
         }
     }
+    fn cmd(version: i64, action: serde_json::Value) -> FeedbackCommand {
+        let mut value = serde_json::json!({
+            "expected_version": version,
+            "client_request_id": uuid::Uuid::new_v4().to_string(),
+        });
+        value
+            .as_object_mut()
+            .unwrap()
+            .extend(action.as_object().unwrap().clone());
+        serde_json::from_value(value).unwrap()
+    }
+
+    #[test]
+    fn edit_and_delete_commands_accept_only_their_own_fields() {
+        let ok = |v: serde_json::Value| serde_json::from_value::<FeedbackCommand>(v).is_ok();
+        let base = |extra: serde_json::Value| {
+            let mut v = serde_json::json!({"expected_version":1,"client_request_id":uuid::Uuid::new_v4().to_string()});
+            v.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            v
+        };
+        assert!(ok(base(
+            serde_json::json!({"action":"edit_issue","title":"t"})
+        )));
+        assert!(ok(base(
+            serde_json::json!({"action":"edit_reply","seq":3,"content":"c"})
+        )));
+        assert!(ok(base(
+            serde_json::json!({"action":"delete_reply","seq":3})
+        )));
+        assert!(ok(base(serde_json::json!({"action":"delete_issue"}))));
+        // Foreign fields and missing fields are rejected, including on the old actions.
+        assert!(!ok(base(
+            serde_json::json!({"action":"delete_issue","seq":3})
+        )));
+        assert!(!ok(base(serde_json::json!({"action":"delete_reply"}))));
+        assert!(!ok(base(
+            serde_json::json!({"action":"edit_reply","seq":3})
+        )));
+        assert!(!ok(base(
+            serde_json::json!({"action":"edit_issue","seq":3,"title":"t"})
+        )));
+        assert!(!ok(base(
+            serde_json::json!({"action":"reply","content":"c","title":"t"})
+        )));
+        assert!(!ok(base(
+            serde_json::json!({"action":"set_pinned","pinned":true,"seq":1})
+        )));
+    }
+
+    #[tokio::test]
+    async fn owner_and_admin_edit_issue_but_strangers_cannot_and_no_op_conflicts() {
+        let r = InMemoryFeedbackRepository::default();
+        let mut input = create_input();
+        input.visibility = "public".into();
+        let issue = r.create("owner", "user", &input).await.unwrap().issue;
+        let id = issue.summary.id.clone();
+        let edit = |v| {
+            cmd(
+                v,
+                serde_json::json!({"action":"edit_issue","title":"New title","description":"New body","category":"model"}),
+            )
+        };
+        // A different ordinary user can see a public issue but not change it.
+        assert!(matches!(
+            r.command(&id, "stranger", "user", true, &edit(1)).await,
+            Err(FeedbackError::Forbidden)
+        ));
+        let edited = r
+            .command(&id, "owner", "user", true, &edit(1))
+            .await
+            .unwrap()
+            .issue;
+        assert_eq!(edited.summary.title, "New title");
+        assert_eq!(edited.description, "New body");
+        assert_eq!(edited.summary.category, "model");
+        assert!(edited.summary.edited_at.is_some());
+        assert_eq!(edited.summary.version, 2);
+        // Nothing left to change: conflict instead of a silent version bump.
+        let same = cmd(
+            2,
+            serde_json::json!({"action":"edit_issue","title":"New title"}),
+        );
+        assert!(matches!(
+            r.command(&id, "owner", "user", true, &same).await,
+            Err(FeedbackError::Conflict)
+        ));
+        // Administrators may edit any issue; the marker event is visible to the owner only.
+        let by_admin = cmd(
+            2,
+            serde_json::json!({"action":"edit_issue","title":"Triaged"}),
+        );
+        let triaged = r
+            .command(&id, "root", "admin", false, &by_admin)
+            .await
+            .unwrap()
+            .issue;
+        assert_eq!(triaged.summary.title, "Triaged");
+        let events = |viewer: Option<&str>| {
+            let r = &r;
+            let id = id.clone();
+            let viewer = viewer.map(str::to_owned);
+            async move {
+                r.detail(&id, viewer.as_deref(), 0, 100)
+                    .await
+                    .unwrap()
+                    .events
+            }
+        };
+        assert!(events(Some("owner"))
+            .await
+            .iter()
+            .any(|e| e.kind == "issue_edit"));
+        assert!(!events(Some("stranger"))
+            .await
+            .iter()
+            .any(|e| e.kind == "issue_edit"));
+        // Invalid edits never reach storage.
+        for bad in [
+            serde_json::json!({"action":"edit_issue","title":"  "}),
+            serde_json::json!({"action":"edit_issue","category":"nope"}),
+            serde_json::json!({"action":"edit_issue","description":""}),
+        ] {
+            assert!(matches!(
+                r.command(&id, "owner", "user", true, &cmd(3, bad)).await,
+                Err(FeedbackError::Invalid(_))
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn replies_are_edited_by_their_author_and_deleted_by_author_or_admin() {
+        let r = InMemoryFeedbackRepository::default();
+        let mut input = create_input();
+        input.visibility = "public".into();
+        let issue = r.create("owner", "user", &input).await.unwrap().issue;
+        let id = issue.summary.id.clone();
+        let reply = |v, text: &str| {
+            cmd(
+                v,
+                serde_json::json!({"action":"reply","content":text,"visibility":"public"}),
+            )
+        };
+        r.command(&id, "owner", "user", true, &reply(1, "mine"))
+            .await
+            .unwrap();
+        r.command(&id, "helper", "user", true, &reply(2, "theirs"))
+            .await
+            .unwrap();
+        let events = r.detail(&id, None, 0, 100).await.unwrap().events;
+        let mine = events
+            .iter()
+            .find(|e| e.content.as_deref() == Some("mine"))
+            .unwrap()
+            .seq;
+        let theirs = events
+            .iter()
+            .find(|e| e.content.as_deref() == Some("theirs"))
+            .unwrap()
+            .seq;
+
+        // Only the author edits; not the issue owner, not even an administrator.
+        let edit = |v, seq| {
+            cmd(
+                v,
+                serde_json::json!({"action":"edit_reply","seq":seq,"content":"fixed"}),
+            )
+        };
+        assert!(matches!(
+            r.command(&id, "owner", "user", true, &edit(3, theirs))
+                .await,
+            Err(FeedbackError::Forbidden)
+        ));
+        assert!(matches!(
+            r.command(&id, "root", "admin", false, &edit(3, theirs))
+                .await,
+            Err(FeedbackError::Forbidden)
+        ));
+        let after = r
+            .command(&id, "helper", "user", true, &edit(3, theirs))
+            .await
+            .unwrap()
+            .issue;
+        assert_eq!(after.summary.version, 4);
+        let events = r
+            .detail(&id, Some("stranger"), 0, 100)
+            .await
+            .unwrap()
+            .events;
+        let changed = events.iter().find(|e| e.seq == theirs).unwrap();
+        assert_eq!(changed.content.as_deref(), Some("fixed"));
+        assert!(changed.edited_at.is_some());
+        // Repeating the same text is not a change.
+        assert!(matches!(
+            r.command(&id, "helper", "user", true, &edit(4, theirs))
+                .await,
+            Err(FeedbackError::Conflict)
+        ));
+
+        // Deleting: the issue owner cannot remove someone else's reply, an administrator can.
+        let del = |v, seq| cmd(v, serde_json::json!({"action":"delete_reply","seq":seq}));
+        assert!(matches!(
+            r.command(&id, "owner", "user", true, &del(4, theirs)).await,
+            Err(FeedbackError::Forbidden)
+        ));
+        r.command(&id, "root", "admin", false, &del(4, theirs))
+            .await
+            .unwrap();
+        r.command(&id, "owner", "user", true, &del(5, mine))
+            .await
+            .unwrap();
+        let events = r
+            .detail(&id, Some("stranger"), 0, 100)
+            .await
+            .unwrap()
+            .events;
+        for seq in [mine, theirs] {
+            let gone = events.iter().find(|e| e.seq == seq).unwrap();
+            assert_eq!(gone.content, None, "deleted content must not remain");
+            assert!(gone.deleted_at.is_some());
+        }
+        // A deleted reply cannot be edited or deleted again, and other kinds are not replies.
+        assert!(matches!(
+            r.command(&id, "helper", "user", true, &edit(6, theirs))
+                .await,
+            Err(FeedbackError::NotFound)
+        ));
+        assert!(matches!(
+            r.command(&id, "root", "admin", false, &del(6, theirs))
+                .await,
+            Err(FeedbackError::NotFound)
+        ));
+        let created = events.iter().find(|e| e.kind == "created").unwrap().seq;
+        assert!(matches!(
+            r.command(&id, "owner", "user", true, &del(6, created))
+                .await,
+            Err(FeedbackError::NotFound)
+        ));
+        assert!(matches!(
+            r.command(&id, "owner", "user", true, &del(6, 9999)).await,
+            Err(FeedbackError::NotFound)
+        ));
+    }
+
+    #[tokio::test]
+    async fn deleting_an_issue_hides_it_keeps_the_number_and_tells_incremental_readers() {
+        let r = InMemoryFeedbackRepository::default();
+        let first = r
+            .create("owner", "user", &create_input())
+            .await
+            .unwrap()
+            .issue;
+        let id = first.summary.id.clone();
+        let number = first.summary.number;
+        let del = cmd(1, serde_json::json!({"action":"delete_issue"}));
+        // A stranger cannot delete; the owner can.
+        assert!(matches!(
+            r.command(&id, "stranger", "user", true, &del).await,
+            Err(FeedbackError::NotFound) | Err(FeedbackError::Forbidden)
+        ));
+        let deleted = r.command(&id, "owner", "user", true, &del).await.unwrap();
+        assert!(deleted.issue.summary.deleted_at.is_some());
+        // Retrying the same command is a replay, not an error.
+        assert!(
+            r.command(&id, "owner", "user", true, &del)
+                .await
+                .unwrap()
+                .replayed
+        );
+        // Gone for everyone, including administrators; later commands find nothing.
+        for viewer in [Some("owner"), None] {
+            assert!(matches!(
+                r.detail(&id, viewer, 0, 10).await,
+                Err(FeedbackError::NotFound)
+            ));
+        }
+        assert_eq!(r.id_for_number(number).await.unwrap(), None);
+        let reply = cmd(2, serde_json::json!({"action":"reply","content":"late"}));
+        assert!(matches!(
+            r.command(&id, "owner", "user", true, &reply).await,
+            Err(FeedbackError::NotFound)
+        ));
+        let listed = |after: Option<i64>| {
+            let r = &r;
+            async move {
+                r.list(&FeedbackQuery {
+                    viewer_id: None,
+                    after,
+                    limit: 100,
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+            }
+        };
+        assert_eq!(listed(None).await.total, 0);
+        // Incremental readers receive the tombstone so they can drop the issue.
+        let tomb = listed(Some(0)).await;
+        assert_eq!(tomb.items.len(), 1);
+        assert!(tomb.items[0].deleted_at.is_some());
+        // A new issue never reuses the number of a deleted one.
+        let next = r
+            .create("owner", "user", &create_input())
+            .await
+            .unwrap()
+            .issue;
+        assert!(next.summary.number > number);
+    }
+
     #[tokio::test]
     async fn feedback_creation_requires_known_identity_records_role_and_preserves_hashes() {
         let repo = InMemoryFeedbackRepository::default();
