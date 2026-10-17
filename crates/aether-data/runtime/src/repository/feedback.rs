@@ -51,9 +51,14 @@ impl FeedbackRepository for InMemoryFeedbackRepository {
             .collect();
         items.sort_by_key(|i| {
             if q.after.is_some() {
-                i.activity_seq
+                (0, 0, i.activity_seq)
             } else {
-                -i.activity_seq
+                // Pinned issues first (most recently pinned on top), then newest activity.
+                (
+                    i64::from(i.pinned_at.is_none()),
+                    -i.pinned_at.unwrap_or(0),
+                    -i.activity_seq,
+                )
             }
         });
         let total = items.len() as i64;
@@ -104,6 +109,14 @@ impl FeedbackRepository for InMemoryFeedbackRepository {
             has_more,
         })
     }
+    async fn id_for_number(&self, number: i64) -> Result<Option<String>, FeedbackError> {
+        let store = self.inner.lock().map_err(|_| FeedbackError::Unavailable)?;
+        Ok(store
+            .issues
+            .values()
+            .find(|issue| issue.summary.number == number)
+            .map(|issue| issue.summary.id.clone()))
+    }
     async fn create(
         &self,
         owner: &str,
@@ -133,6 +146,13 @@ impl FeedbackRepository for InMemoryFeedbackRepository {
         let seq = store.seq;
         let now = chrono::Utc::now().timestamp();
         let id = uuid::Uuid::new_v4().to_string();
+        let number = store
+            .issues
+            .values()
+            .map(|issue| issue.summary.number)
+            .max()
+            .unwrap_or(0)
+            + 1;
         let issue = FeedbackIssue {
             summary: FeedbackSummary {
                 id: id.clone(),
@@ -144,6 +164,8 @@ impl FeedbackRepository for InMemoryFeedbackRepository {
                 request_id: input.request_id.clone(),
                 status: "open".into(),
                 visibility: input.visibility.clone(),
+                number,
+                pinned_at: None,
                 version: 1,
                 activity_seq: seq,
                 created_at: now,
@@ -212,6 +234,18 @@ impl FeedbackRepository for InMemoryFeedbackRepository {
                 let old = std::mem::replace(&mut issue.summary.status, status.clone());
                 ("status", comment.clone(), Some(old), Some(status.clone()))
             }
+            FeedbackAction::SetPinned { pinned } => {
+                if *pinned == issue.summary.pinned_at.is_some() {
+                    return Err(FeedbackError::Conflict);
+                }
+                issue.summary.pinned_at = pinned.then_some(now);
+                (
+                    "pin",
+                    Some(if *pinned { "pinned" } else { "unpinned" }.to_string()),
+                    None,
+                    None,
+                )
+            }
         };
         issue.summary.version += 1;
         issue.summary.activity_seq = seq;
@@ -223,7 +257,12 @@ impl FeedbackRepository for InMemoryFeedbackRepository {
             actor_username: None,
             actor_role: role.into(),
             kind: kind.into(),
-            visibility: input.visibility.clone(),
+            // Pin changes are system events that every viewer may see.
+            visibility: if kind == "pin" {
+                "public".into()
+            } else {
+                input.visibility.clone()
+            },
             content,
             from_status,
             to_status,
@@ -529,6 +568,56 @@ mod tests {
         serde_json::from_value(action).unwrap()
     }
 
+    #[tokio::test]
+    async fn in_memory_feedback_numbers_issues_and_only_admins_can_pin() {
+        let repo = InMemoryFeedbackRepository::default();
+        let first = repo.create("owner", "user", &create_input()).await.unwrap();
+        let second = repo.create("owner", "user", &create_input()).await.unwrap();
+        assert_eq!(
+            (first.issue.summary.number, second.issue.summary.number),
+            (1, 2)
+        );
+        assert_eq!(
+            repo.id_for_number(1).await.unwrap().as_deref(),
+            Some(first.issue.summary.id.as_str())
+        );
+        assert_eq!(repo.id_for_number(7).await.unwrap(), None);
+
+        let pin = |version: i64, pinned: bool| FeedbackCommand {
+            visibility: private_visibility(),
+            expected_version: version,
+            client_request_id: uuid::Uuid::new_v4().to_string(),
+            action: FeedbackAction::SetPinned { pinned },
+        };
+        let id = &first.issue.summary.id;
+        assert!(matches!(
+            repo.command(id, "owner", "user", true, &pin(1, true)).await,
+            Err(FeedbackError::Forbidden)
+        ));
+        let pinned = repo
+            .command(id, "root", "admin", false, &pin(1, true))
+            .await
+            .unwrap();
+        assert!(pinned.issue.summary.pinned_at.is_some());
+        assert!(matches!(
+            repo.command(id, "root", "admin", false, &pin(2, true))
+                .await,
+            Err(FeedbackError::Conflict)
+        ));
+        let page = repo
+            .list(&FeedbackQuery {
+                limit: 10,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(page.items[0].id, *id, "pinned issue sorts first");
+        let detail = repo.detail(id, Some("owner"), 0, 50).await.unwrap();
+        assert!(detail
+            .events
+            .iter()
+            .any(|event| event.kind == "pin" && event.content.as_deref() == Some("pinned")));
+    }
     #[tokio::test]
     async fn feedback_public_visibility_private_events_cursor_and_lifecycle_are_authoritative() {
         use serde_json::json;

@@ -741,3 +741,126 @@ async fn feedback_http_public_participation_private_event_projection_and_owner_f
     );
     task.abort();
 }
+
+#[tokio::test]
+async fn feedback_http_numbers_pinning_and_mentionable_administrators() {
+    let state = AppState::new().unwrap().with_data_state_for_tests(
+        crate::data::GatewayDataState::disabled()
+            .with_feedback_repository_for_tests(Arc::new(InMemoryFeedbackRepository::default())),
+    );
+    let (_, owner) = user(&state, "user", "owner").await;
+    let (_, stranger) = user(&state, "user", "stranger").await;
+    let (_, admin) = user(&state, "admin", "root").await;
+    let (_, auditor) = user(&state, "audit_admin", "auditor").await;
+    let (url, task) = server(state).await;
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+
+    // The first issue is #1 and can be opened by number; private issues stay hidden from others.
+    let created: Value = client
+        .post(format!("{url}/api/feedback"))
+        .headers(owner.clone())
+        .json(&input())
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(created["issue"]["number"], 1);
+    let id = created["issue"]["id"].as_str().unwrap().to_string();
+    let by_number = client
+        .get(format!("{url}/api/feedback/1"))
+        .headers(owner.clone())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(by_number.status(), StatusCode::OK);
+    let by_number: Value = by_number.json().await.unwrap();
+    assert_eq!(by_number["issue"]["id"], id);
+    for number in ["1", "999"] {
+        assert_eq!(
+            client
+                .get(format!("{url}/api/feedback/{number}"))
+                .headers(stranger.clone())
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::NOT_FOUND,
+            "number {number} must not reveal a private issue or whether it exists"
+        );
+    }
+
+    // Only administrators can pin, and the pin is visible in the list and history.
+    let pin = |expected_version: i64, pinned: bool| json!({"action":"set_pinned","pinned":pinned,"expected_version":expected_version,"client_request_id":uuid::Uuid::new_v4().to_string()});
+    let denied = client
+        .post(format!("{url}/api/feedback/1/commands"))
+        .headers(owner.clone())
+        .json(&pin(1, true))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+    let pinned = client
+        .post(format!("{url}/api/feedback/1/commands"))
+        .headers(admin.clone())
+        .json(&pin(1, true))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(pinned.status(), StatusCode::OK);
+    let pinned: Value = pinned.json().await.unwrap();
+    assert!(pinned["issue"]["pinned_at"].is_i64());
+    let detail: Value = client
+        .get(format!("{url}/api/feedback/{id}"))
+        .headers(owner.clone())
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(detail["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|event| event["kind"] == "pin" && event["content"] == "pinned"));
+
+    // Replies may mention administrators; without SMTP the notification is a silent no-op.
+    let reply = client
+        .post(format!("{url}/api/feedback/1/commands"))
+        .headers(owner.clone())
+        .json(&json!({"action":"reply","content":"cc @root and @ghost #1","expected_version":2,"client_request_id":uuid::Uuid::new_v4().to_string()}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(reply.status(), StatusCode::OK);
+
+    // The mentionable endpoint answers for any signed-in user (the list itself comes from the
+    // user directory, which is empty in this fixture).
+    let names = client
+        .get(format!("{url}/api/feedback/mentionable"))
+        .headers(stranger)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(names.status(), StatusCode::OK);
+    let names: Value = names.json().await.unwrap();
+    assert!(names["items"].is_array());
+    let _ = auditor;
+    task.abort();
+}
+
+#[test]
+fn mentionable_names_are_active_administrators_sorted_and_deduplicated() {
+    let users = [
+        ("root", "admin", true),
+        ("alice", "user", true),
+        ("Zed", "service_admin", true),
+        ("gone", "admin", false),
+        ("auditor", "audit_admin", true),
+        ("ROOT", "user_admin", true),
+        ("guest", "super", true),
+    ];
+    assert_eq!(mentionable_names(users), vec!["auditor", "root", "Zed"]);
+}

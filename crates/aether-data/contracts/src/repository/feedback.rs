@@ -13,6 +13,12 @@ pub struct FeedbackSummary {
     pub status: String,
     #[serde(default = "private_visibility")]
     pub visibility: String,
+    /// Human-friendly issue number (`#N`), unique and assigned in creation order.
+    #[serde(default)]
+    pub number: i64,
+    /// Set while an administrator keeps the issue pinned to the top of the list.
+    #[serde(default)]
+    pub pinned_at: Option<i64>,
     pub version: i64,
     pub activity_seq: i64,
     pub created_at: i64,
@@ -90,6 +96,10 @@ pub enum FeedbackAction {
         status: String,
         comment: Option<String>,
     },
+    /// Administrators only: keep the issue at the top of the list (or release it).
+    SetPinned {
+        pinned: bool,
+    },
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(try_from = "FeedbackCommandWire")]
@@ -115,18 +125,28 @@ struct FeedbackCommandWire {
     content: Option<String>,
     status: Option<String>,
     comment: Option<String>,
+    pinned: Option<bool>,
 }
 impl TryFrom<FeedbackCommandWire> for FeedbackCommand {
     type Error = &'static str;
     fn try_from(w: FeedbackCommandWire) -> Result<Self, Self::Error> {
         let action = match w.action.as_str() {
-            "reply" if w.status.is_none() && w.comment.is_none() => FeedbackAction::Reply {
-                content: w.content.ok_or("Reply content required")?,
-            },
-            "set_status" if w.content.is_none() => FeedbackAction::SetStatus {
-                status: w.status.ok_or("Status required")?,
-                comment: w.comment,
-            },
+            "reply" if w.status.is_none() && w.comment.is_none() && w.pinned.is_none() => {
+                FeedbackAction::Reply {
+                    content: w.content.ok_or("Reply content required")?,
+                }
+            }
+            "set_status" if w.content.is_none() && w.pinned.is_none() => {
+                FeedbackAction::SetStatus {
+                    status: w.status.ok_or("Status required")?,
+                    comment: w.comment,
+                }
+            }
+            "set_pinned" if w.content.is_none() && w.status.is_none() && w.comment.is_none() => {
+                FeedbackAction::SetPinned {
+                    pinned: w.pinned.ok_or("Pinned flag required")?,
+                }
+            }
             _ => return Err("Invalid feedback action fields"),
         };
         Ok(Self {
@@ -187,10 +207,12 @@ pub fn authorize_feedback_command(
     if !admin && !can_view_feedback(issue, Some(actor)) {
         return Err(FeedbackError::NotFound);
     }
-    if let FeedbackAction::SetStatus { status, .. } = &command.action {
-        if !admin && (!owner || status == "closed") {
+    match &command.action {
+        FeedbackAction::SetStatus { status, .. } if !admin && (!owner || status == "closed") => {
             return Err(FeedbackError::Forbidden);
         }
+        FeedbackAction::SetPinned { .. } if !admin => return Err(FeedbackError::Forbidden),
+        _ => {}
     }
     Ok(())
 }
@@ -206,7 +228,7 @@ pub fn project_feedback_event(
     if privileged || event.visibility == "public" {
         return Some(event.clone());
     }
-    if !matches!(event.kind.as_str(), "status" | "created") {
+    if !matches!(event.kind.as_str(), "status" | "created" | "pin") {
         return None;
     }
     let mut event = event.clone();
@@ -273,6 +295,9 @@ pub trait FeedbackRepository: Send + Sync + std::fmt::Debug {
         after: i64,
         limit: usize,
     ) -> Result<FeedbackDetail, FeedbackError>;
+    /// Resolves a human-friendly issue number (`#N`) to the issue id. No visibility is checked
+    /// here: callers must read the issue through `detail`, which enforces it.
+    async fn id_for_number(&self, number: i64) -> Result<Option<String>, FeedbackError>;
     async fn create(
         &self,
         owner: &str,
@@ -287,4 +312,55 @@ pub trait FeedbackRepository: Send + Sync + std::fmt::Debug {
         owner_only: bool, // Legacy route hint only; implementations MUST derive administrator authority from role.
         input: &FeedbackCommand,
     ) -> Result<FeedbackMutation, FeedbackError>;
+}
+
+/// Usernames mentioned as `@name` in markdown text. An `@` only counts when it starts a word, so
+/// e-mail addresses (`a@b.com`) are ignored. Names are returned once each, in order of first use.
+pub fn extract_mentions(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut prev: Option<char> = None;
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '@' && prev.is_none_or(|p| !(p.is_alphanumeric() || p == '_')) {
+            let mut name = String::new();
+            while let Some(&next) = chars.peek() {
+                if next.is_alphanumeric() || matches!(next, '_' | '.' | '-') {
+                    name.push(next);
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+            let name = name.trim_end_matches(['.', '-']).to_string();
+            if !name.is_empty()
+                && name.chars().count() <= 64
+                && !out.iter().any(|seen| seen.eq_ignore_ascii_case(&name))
+            {
+                out.push(name);
+            }
+            prev = Some('@');
+            continue;
+        }
+        prev = Some(ch);
+    }
+    out
+}
+
+#[cfg(test)]
+mod mention_tests {
+    use super::extract_mentions;
+
+    #[test]
+    fn extracts_mentions_once_in_order_and_ignores_email_addresses() {
+        assert_eq!(
+            extract_mentions("请 @alice 和 @Bob.Lee 看下，cc @alice，联系 ops@example.com"),
+            vec!["alice", "Bob.Lee"]
+        );
+    }
+
+    #[test]
+    fn trailing_punctuation_and_bare_at_signs_are_not_part_of_the_name() {
+        assert_eq!(extract_mentions("(@root). @ @- 结束@"), vec!["root"]);
+        assert!(extract_mentions("no mentions here").is_empty());
+    }
 }

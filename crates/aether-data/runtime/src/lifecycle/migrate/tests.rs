@@ -1961,6 +1961,7 @@ fn pending_migrations_from_applied_skips_versions_already_applied() {
             20261015000200,
             20261015000300,
             20261016000000,
+            20261017000000,
         ]
     );
 }
@@ -2262,6 +2263,239 @@ WHERE id = 'metadata-migration-key'
 }
 
 #[tokio::test]
+async fn feedback_number_and_pin_migration_numbers_existing_issues_in_creation_order() {
+    let Some(server) = ManagedPostgresServer::try_start()
+        .await
+        .expect("postgres test should start or skip")
+    else {
+        return;
+    };
+    let pool = PgPool::connect(server.database_url())
+        .await
+        .expect("pool should connect");
+    // A database as it was before issue numbers and pinning existed.
+    sqlx::raw_sql(
+        "CREATE TABLE users(id VARCHAR(36) PRIMARY KEY, username VARCHAR(200) NOT NULL);
+         CREATE TABLE feedback_issues (
+            id VARCHAR(36) PRIMARY KEY, owner_id VARCHAR(36), title VARCHAR(200) NOT NULL,
+            description TEXT NOT NULL, category VARCHAR(32) NOT NULL, status VARCHAR(16) NOT NULL,
+            version BIGINT NOT NULL, activity_seq BIGINT NOT NULL,
+            created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL
+         );
+         CREATE TABLE feedback_events (
+            seq BIGSERIAL PRIMARY KEY, issue_id VARCHAR(36) NOT NULL,
+            kind VARCHAR(16) NOT NULL CHECK (kind IN ('created','reply','status'))
+         );
+         INSERT INTO feedback_issues VALUES
+            ('b-second', NULL, 't2', 'd', 'bug', 'open', 1, 0, 200, 200),
+            ('a-first',  NULL, 't1', 'd', 'bug', 'open', 1, 0, 100, 100),
+            ('c-third',  NULL, 't3', 'd', 'bug', 'open', 1, 0, 300, 300);",
+    )
+    .execute(&pool)
+    .await
+    .expect("legacy feedback fixture should be created");
+
+    let migration = POSTGRES_MIGRATOR
+        .iter()
+        .find(|migration| migration.version == 20261017000000)
+        .expect("feedback number/pin migration should be registered");
+    // Applying it twice must be harmless (clean databases already contain the columns).
+    for _ in 0..2 {
+        sqlx::raw_sql(&migration.sql)
+            .execute(&pool)
+            .await
+            .expect("feedback number/pin migration should apply");
+    }
+
+    let numbers: Vec<(String, i64)> =
+        sqlx::query_as("SELECT id, number FROM feedback_issues ORDER BY number")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        numbers,
+        vec![
+            ("a-first".to_string(), 1),
+            ("b-second".to_string(), 2),
+            ("c-third".to_string(), 3)
+        ]
+    );
+    assert!(column_exists(&pool, "feedback_issues", "pinned_at")
+        .await
+        .unwrap());
+    // Numbers are unique and the pin event kind is now accepted.
+    assert!(sqlx::query(
+        "INSERT INTO feedback_issues(id,title,description,category,status,version,activity_seq,created_at,updated_at,number)
+         VALUES('dup','t','d','bug','open',1,0,1,1,2)"
+    )
+    .execute(&pool)
+    .await
+    .is_err());
+    sqlx::query("INSERT INTO feedback_events(issue_id,kind) VALUES('a-first','pin')")
+        .execute(&pool)
+        .await
+        .expect("pin events must satisfy the kind check");
+    assert!(
+        sqlx::query("INSERT INTO feedback_events(issue_id,kind) VALUES('a-first','bogus')")
+            .execute(&pool)
+            .await
+            .is_err(),
+        "other kinds stay rejected"
+    );
+}
+
+#[tokio::test]
+async fn feedback_repository_numbers_pins_and_orders_issues_on_postgres() {
+    use aether_data_contracts::repository::feedback::{
+        CreateFeedback, FeedbackAction, FeedbackCommand, FeedbackError, FeedbackQuery,
+        FeedbackRepository,
+    };
+    use aether_data_postgres::PostgresFeedbackRepository;
+
+    let Some(server) = ManagedPostgresServer::try_start()
+        .await
+        .expect("postgres test should start or skip")
+    else {
+        return;
+    };
+    let pool = PgPool::connect(server.database_url())
+        .await
+        .expect("pool should connect");
+    prepare_and_apply_clean_postgres_database(&pool).await;
+    query("INSERT INTO public.users (id, username, email_verified) VALUES ('fb-owner','fb-owner',TRUE),('fb-admin','fb-admin',TRUE)")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let repo = PostgresFeedbackRepository::new(pool.clone());
+    let create = |title: &str| CreateFeedback {
+        visibility: "public".into(),
+        title: title.into(),
+        description: format!("{title} body"),
+        category: "bug".into(),
+        model: None,
+        request_id: None,
+        client_request_id: uuid::Uuid::new_v4().to_string(),
+    };
+    let first = repo
+        .create("fb-owner", "user", &create("first"))
+        .await
+        .unwrap();
+    let second = repo
+        .create("fb-owner", "user", &create("second"))
+        .await
+        .unwrap();
+    assert_eq!(
+        (first.issue.summary.number, second.issue.summary.number),
+        (1, 2)
+    );
+    assert_eq!(
+        repo.id_for_number(2).await.unwrap().as_deref(),
+        Some(second.issue.summary.id.as_str())
+    );
+    assert_eq!(repo.id_for_number(99).await.unwrap(), None);
+
+    let pin = |version: i64, pinned: bool| FeedbackCommand {
+        visibility: "private".into(),
+        expected_version: version,
+        client_request_id: uuid::Uuid::new_v4().to_string(),
+        action: FeedbackAction::SetPinned { pinned },
+    };
+    // Ordinary users (even the owner) cannot pin.
+    assert_eq!(
+        repo.command(
+            &first.issue.summary.id,
+            "fb-owner",
+            "user",
+            true,
+            &pin(1, true)
+        )
+        .await
+        .unwrap_err(),
+        FeedbackError::Forbidden
+    );
+    let pinned = repo
+        .command(
+            &first.issue.summary.id,
+            "fb-admin",
+            "admin",
+            false,
+            &pin(1, true),
+        )
+        .await
+        .unwrap();
+    assert!(pinned.issue.summary.pinned_at.is_some());
+    assert_eq!(pinned.issue.summary.version, 2);
+    // Pinning twice is a conflict, not a silent no-op.
+    assert_eq!(
+        repo.command(
+            &first.issue.summary.id,
+            "fb-admin",
+            "admin",
+            false,
+            &pin(2, true)
+        )
+        .await
+        .unwrap_err(),
+        FeedbackError::Conflict
+    );
+
+    let list = |viewer: Option<&str>| FeedbackQuery {
+        viewer_id: viewer.map(str::to_owned),
+        limit: 20,
+        ..Default::default()
+    };
+    // The pinned (older) issue now comes first; the owner sees the same order.
+    for viewer in [None, Some("fb-owner")] {
+        let titles: Vec<_> = repo
+            .list(&list(viewer))
+            .await
+            .unwrap()
+            .items
+            .into_iter()
+            .map(|item| item.title)
+            .collect();
+        assert_eq!(titles, vec!["first", "second"], "viewer {viewer:?}");
+    }
+    // The pin shows up as a system event the owner can read.
+    let detail = repo
+        .detail(&first.issue.summary.id, Some("fb-owner"), 0, 50)
+        .await
+        .unwrap();
+    let pin_event = detail
+        .events
+        .iter()
+        .find(|event| event.kind == "pin")
+        .expect("owner should see the pin event");
+    assert_eq!(pin_event.content.as_deref(), Some("pinned"));
+
+    let unpinned = repo
+        .command(
+            &first.issue.summary.id,
+            "fb-admin",
+            "admin",
+            false,
+            &pin(2, false),
+        )
+        .await
+        .unwrap();
+    assert!(unpinned.issue.summary.pinned_at.is_none());
+    let titles: Vec<_> = repo
+        .list(&list(None))
+        .await
+        .unwrap()
+        .items
+        .into_iter()
+        .map(|item| item.title)
+        .collect();
+    assert_eq!(
+        titles,
+        vec!["first", "second"],
+        "unpinned issues sort by activity"
+    );
+}
+
+#[tokio::test]
 async fn prepare_database_for_startup_bootstraps_clean_database() {
     let Some(server) = ManagedPostgresServer::try_start()
         .await
@@ -2297,7 +2531,7 @@ async fn prepare_database_for_startup_bootstraps_clean_database() {
     .await
     .unwrap();
     assert_eq!(private_defaults, 2);
-    for version in [20261015000300, 20261016000000] {
+    for version in [20261015000300, 20261016000000, 20261017000000] {
         let migration = POSTGRES_MIGRATOR
             .iter()
             .find(|migration| migration.version == version)

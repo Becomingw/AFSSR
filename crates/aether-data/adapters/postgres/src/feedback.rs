@@ -62,13 +62,17 @@ impl FeedbackRepository for PostgresFeedbackRepository {
                 .push_bind(search)
                 .push("))>0");
         }
-        b.push(") SELECT jsonb_build_object('total',(SELECT COUNT(*) FROM filtered),'items',COALESCE((SELECT jsonb_agg(to_jsonb(p)-'description'-'creation_key'-'creation_hash') FROM (SELECT * FROM filtered ORDER BY activity_seq ");
-        b.push(if q.after.is_some() { "ASC" } else { "DESC" })
-            .push(" LIMIT ")
-            .push_bind(q.limit.clamp(1, 100) as i64)
-            .push(" OFFSET ")
-            .push_bind(q.offset as i64)
-            .push(") p),'[]'::jsonb)) AS data");
+        b.push(") SELECT jsonb_build_object('total',(SELECT COUNT(*) FROM filtered),'items',COALESCE((SELECT jsonb_agg(to_jsonb(p)-'description'-'creation_key'-'creation_hash') FROM (SELECT * FROM filtered ORDER BY ");
+        b.push(if q.after.is_some() {
+            "activity_seq ASC"
+        } else {
+            "(pinned_at IS NULL), pinned_at DESC, activity_seq DESC"
+        })
+        .push(" LIMIT ")
+        .push_bind(q.limit.clamp(1, 100) as i64)
+        .push(" OFFSET ")
+        .push_bind(q.offset as i64)
+        .push(") p),'[]'::jsonb)) AS data");
         let row = b.build().fetch_one(&self.pool).await.map_err(unavailable)?;
         let data: serde_json::Value = row.try_get("data").map_err(unavailable)?;
         let items: Vec<FeedbackSummary> = serde_json::from_value(data["items"].clone())
@@ -121,6 +125,13 @@ impl FeedbackRepository for PostgresFeedbackRepository {
             has_more,
         })
     }
+    async fn id_for_number(&self, number: i64) -> Result<Option<String>, FeedbackError> {
+        sqlx::query_scalar("SELECT id FROM feedback_issues WHERE number=$1")
+            .bind(number)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(unavailable)
+    }
     async fn create(
         &self,
         owner: &str,
@@ -138,7 +149,7 @@ impl FeedbackRepository for PostgresFeedbackRepository {
         let digest = hash(serde_json::to_value(input).expect("feedback input serializes"));
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().timestamp();
-        let inserted=sqlx::query("INSERT INTO feedback_issues(id,owner_id,title,description,category,model,request_id,status,version,activity_seq,created_at,updated_at,creation_key,creation_hash,visibility) VALUES($1,$2,$3,$4,$5,$6,$7,'open',1,0,$8,$8,$9,$10,$11) ON CONFLICT(owner_id,creation_key) DO NOTHING RETURNING id")
+        let inserted=sqlx::query("INSERT INTO feedback_issues(id,owner_id,title,description,category,model,request_id,status,version,activity_seq,created_at,updated_at,creation_key,creation_hash,visibility,number) VALUES($1,$2,$3,$4,$5,$6,$7,'open',1,0,$8,$8,$9,$10,$11,(SELECT COALESCE(MAX(number),0)+1 FROM feedback_issues)) ON CONFLICT(owner_id,creation_key) DO NOTHING RETURNING id")
             .bind(&id).bind(owner).bind(&input.title).bind(&input.description).bind(&input.category).bind(&input.model).bind(&input.request_id).bind(now).bind(&input.client_request_id).bind(&digest).bind(&input.visibility).fetch_optional(&mut *tx).await.map_err(unavailable)?;
         let (id, replayed) = if inserted.is_some() {
             let seq:i64=sqlx::query_scalar("INSERT INTO feedback_events(issue_id,actor_id,actor_role,kind,to_status,created_at) VALUES($1,$2,$3,'created','open',$4) RETURNING seq").bind(&id).bind(owner).bind(role).bind(now).fetch_one(&mut *tx).await.map_err(unavailable)?;
@@ -216,8 +227,21 @@ impl FeedbackRepository for PostgresFeedbackRepository {
         if issue.summary.version != input.expected_version {
             return Err(FeedbackError::Conflict);
         }
+        let mut pin_change: Option<bool> = None;
         let (kind, content, from_status, to_status) = match &input.action {
             FeedbackAction::Reply { content } => ("reply", Some(content.as_str()), None, None),
+            FeedbackAction::SetPinned { pinned } => {
+                if *pinned == issue.summary.pinned_at.is_some() {
+                    return Err(FeedbackError::Conflict);
+                }
+                pin_change = Some(*pinned);
+                (
+                    "pin",
+                    Some(if *pinned { "pinned" } else { "unpinned" }),
+                    None,
+                    None,
+                )
+            }
             FeedbackAction::SetStatus { status, comment } => {
                 if status == &issue.summary.status {
                     return Err(FeedbackError::Conflict);
@@ -232,8 +256,8 @@ impl FeedbackRepository for PostgresFeedbackRepository {
         };
         let now = chrono::Utc::now().timestamp();
         let seq:i64=sqlx::query_scalar("INSERT INTO feedback_events(issue_id,actor_id,actor_role,kind,content,from_status,to_status,created_at,client_request_id,payload_hash,visibility) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING seq")
-            .bind(id).bind(actor).bind(role).bind(kind).bind(content).bind(from_status).bind(to_status).bind(now).bind(&input.client_request_id).bind(digest).bind(&input.visibility).fetch_one(&mut *tx).await.map_err(unavailable)?;
-        sqlx::query("UPDATE feedback_issues SET status=COALESCE($2,status),version=version+1,activity_seq=$3,updated_at=$4 WHERE id=$1").bind(id).bind(to_status).bind(seq).bind(now).execute(&mut *tx).await.map_err(unavailable)?;
+            .bind(id).bind(actor).bind(role).bind(kind).bind(content).bind(from_status).bind(to_status).bind(now).bind(&input.client_request_id).bind(digest).bind(if kind == "pin" { "public" } else { input.visibility.as_str() }).fetch_one(&mut *tx).await.map_err(unavailable)?;
+        sqlx::query("UPDATE feedback_issues SET status=COALESCE($2,status),version=version+1,activity_seq=$3,updated_at=$4,pinned_at=CASE WHEN $5::boolean IS NULL THEN pinned_at WHEN $5 THEN $4 ELSE NULL END WHERE id=$1").bind(id).bind(to_status).bind(seq).bind(now).bind(pin_change).execute(&mut *tx).await.map_err(unavailable)?;
         let issue = issue_tx(&mut tx, id).await?;
         tx.commit().await.map_err(unavailable)?;
         Ok(FeedbackMutation {

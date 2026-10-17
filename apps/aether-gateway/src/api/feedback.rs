@@ -10,6 +10,7 @@ use axum::{
 };
 use serde_json::json;
 
+mod mentions;
 #[cfg(test)]
 mod tests;
 
@@ -198,10 +199,16 @@ async fn dispatch(
     } else {
         suffix.split('/').collect()
     };
+    let mentionable = parts == ["mentionable"];
+    let numbered = parts.first().is_some_and(|id| {
+        !id.is_empty() && id.len() <= 9 && id.chars().all(|c| c.is_ascii_digit())
+    });
     if parts.len() > 2
-        || parts
-            .first()
-            .is_some_and(|id| uuid::Uuid::parse_str(id).is_err())
+        || (!mentionable
+            && !numbered
+            && parts
+                .first()
+                .is_some_and(|id| uuid::Uuid::parse_str(id).is_err()))
         || (parts.len() == 2 && parts[1] != "commands")
     {
         return error(StatusCode::NOT_FOUND, "Feedback route not found");
@@ -211,6 +218,19 @@ async fn dispatch(
             StatusCode::SERVICE_UNAVAILABLE,
             "Feedback storage unavailable; apply the feedback migration",
         );
+    };
+    if method == Method::GET && mentionable {
+        return list_mentionable_admins(state).await;
+    }
+    // `#12` style numbers resolve to the issue id; visibility is still enforced by the repository.
+    let issue_id: String = match parts.first() {
+        Some(id) if numbered => match repository.id_for_number(id.parse().unwrap_or(0)).await {
+            Ok(Some(found)) => found,
+            Ok(None) => return error(StatusCode::NOT_FOUND, "Feedback not found"),
+            Err(e) => return store_error(e),
+        },
+        Some(id) => (*id).to_string(),
+        None => String::new(),
     };
     let mut query = std::collections::BTreeMap::new();
     for (k, v) in url::form_urlencoded::parse(uri.query().unwrap_or("").as_bytes()) {
@@ -293,7 +313,7 @@ async fn dispatch(
             Ok(v) if v >= 0 => v,
             _ => return error(StatusCode::BAD_REQUEST, "Invalid event cursor"),
         };
-        return match repository.detail(parts[0], viewer, after, limit).await {
+        return match repository.detail(&issue_id, viewer, after, limit).await {
             Ok(detail) => response(StatusCode::OK, serde_json::to_value(detail).unwrap()),
             Err(e) => store_error(e),
         };
@@ -307,6 +327,8 @@ async fn dispatch(
     if body.len() > 64 * 1024 {
         return error(StatusCode::PAYLOAD_TOO_LARGE, "Feedback request too large");
     }
+    let mut mention_text: Option<String> = None;
+    let mut mention_source: Option<mentions::MentionSource> = None;
     let result = if parts.is_empty() {
         if authorize_feedback_create(user, role).is_err() {
             return error(
@@ -337,6 +359,8 @@ async fn dispatch(
         };
         input.title = input.title.trim().to_owned();
         input.description = input.description.trim().to_owned();
+        mention_text = Some(input.description.clone());
+        mention_source = Some(mentions::MentionSource::Created);
         if let Some(id) = input.request_id.as_deref() {
             let summary = match crate::api::diagnostics::feedback_summary(
                 state,
@@ -380,7 +404,7 @@ async fn dispatch(
                 );
             };
             // Check feedback visibility before reading another request or its evidence.
-            if let Err(e) = repository.detail(parts[0], viewer, 0, 1).await {
+            if let Err(e) = repository.detail(&issue_id, viewer, 0, 1).await {
                 return store_error(e);
             }
             let summary = match crate::api::diagnostics::feedback_summary(
@@ -395,8 +419,20 @@ async fn dispatch(
             };
             content.push_str(&format!("\n\n{summary}"));
         }
+        mention_source = match &input.action {
+            FeedbackAction::Reply { .. } => Some(mentions::MentionSource::Reply),
+            FeedbackAction::SetStatus {
+                comment: Some(_), ..
+            } => Some(mentions::MentionSource::StatusComment),
+            _ => None,
+        };
+        mention_text = match &input.action {
+            FeedbackAction::Reply { content } => Some(content.clone()),
+            FeedbackAction::SetStatus { comment, .. } => comment.clone(),
+            FeedbackAction::SetPinned { .. } => None,
+        };
         repository
-            .command(parts[0], user, role, !admin, &input)
+            .command(&issue_id, user, role, !admin, &input)
             .await
     } else {
         return error(
@@ -407,6 +443,19 @@ async fn dispatch(
     match result {
         Ok(mutation) => {
             tracing::info!(log_type="audit",event_name="feedback_mutation",user_id=user,role,issue_id=%mutation.issue.summary.id,version=mutation.issue.summary.version,replayed=mutation.replayed,"Feedback changed");
+            if !mutation.replayed {
+                if let (Some(text), Some(source)) = (mention_text.take(), mention_source) {
+                    if text.contains('@') {
+                        tokio::spawn(mentions::notify_mentions(
+                            state.clone(),
+                            mutation.issue.summary.clone(),
+                            user.to_owned(),
+                            source,
+                            text,
+                        ));
+                    }
+                }
+            }
             response(
                 if parts.is_empty() && !mutation.replayed {
                     StatusCode::CREATED
@@ -417,5 +466,35 @@ async fn dispatch(
             )
         }
         Err(e) => store_error(e),
+    }
+}
+
+/// Administrator usernames that can be `@`-mentioned: active administrators only, sorted,
+/// case-insensitively de-duplicated. Only usernames are exposed, never e-mail addresses or ids.
+fn mentionable_names<'a>(users: impl IntoIterator<Item = (&'a str, &'a str, bool)>) -> Vec<String> {
+    let mut names: Vec<String> = users
+        .into_iter()
+        .filter(|(_, role, active)| *active && is_feedback_admin(role))
+        .map(|(username, _, _)| username.to_string())
+        .collect();
+    names.sort_by_key(|name| name.to_lowercase());
+    names.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+    names
+}
+
+async fn list_mentionable_admins(state: &AppState) -> Response {
+    match state.data.list_export_users().await {
+        Ok(users) => {
+            let names = mentionable_names(
+                users
+                    .iter()
+                    .map(|user| (user.username.as_str(), user.role.as_str(), user.is_active)),
+            );
+            response(StatusCode::OK, json!({ "items": names }))
+        }
+        Err(_) => error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "User directory unavailable",
+        ),
     }
 }

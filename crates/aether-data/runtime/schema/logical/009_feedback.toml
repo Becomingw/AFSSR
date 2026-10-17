@@ -52,6 +52,15 @@ length = 16
 default = "private"
 
 [[table.feedback_issues.columns]]
+name = "number"
+type = "int64"
+
+[[table.feedback_issues.columns]]
+name = "pinned_at"
+type = "unix_seconds"
+nullable = true
+
+[[table.feedback_issues.columns]]
 name = "version"
 type = "int64"
 
@@ -150,6 +159,14 @@ nullable = true
 [[table.feedback_issues.uniques]]
 name = "uq_feedback_creation"
 columns = ["owner_id", "creation_key"]
+
+[[table.feedback_issues.uniques]]
+name = "uq_feedback_number"
+columns = ["number"]
+
+[[table.feedback_issues.indexes]]
+name = "idx_feedback_pinned"
+columns = ["pinned_at"]
 
 [[table.feedback_issues.indexes]]
 name = "idx_feedback_owner_activity"

@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS public.feedback_issues (
     request_id character varying(128),
     status character varying(16) NOT NULL,
     visibility character varying(16) DEFAULT 'private' NOT NULL,
+    number bigint NOT NULL,
+    pinned_at bigint,
     version bigint NOT NULL,
     activity_seq bigint NOT NULL,
     created_at bigint NOT NULL,
@@ -21,6 +23,8 @@ CREATE TABLE IF NOT EXISTS public.feedback_issues (
 
 ALTER TABLE ONLY public.feedback_issues ADD CONSTRAINT feedback_issues_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY public.feedback_issues ADD CONSTRAINT uq_feedback_creation UNIQUE (owner_id, creation_key);
+ALTER TABLE ONLY public.feedback_issues ADD CONSTRAINT uq_feedback_number UNIQUE (number);
+CREATE INDEX IF NOT EXISTS idx_feedback_pinned ON public.feedback_issues USING btree (pinned_at);
 CREATE INDEX IF NOT EXISTS idx_feedback_owner_activity ON public.feedback_issues USING btree (owner_id, activity_seq);
 CREATE INDEX IF NOT EXISTS idx_feedback_activity ON public.feedback_issues USING btree (activity_seq);
 CREATE INDEX IF NOT EXISTS idx_feedback_public_activity ON public.feedback_issues USING btree (visibility, activity_seq);

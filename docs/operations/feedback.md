@@ -105,6 +105,12 @@ For transitions use `action:"set_status"`, `status:"resolved"` (or `closed`/`ope
 and `comment` (required and nonblank for resolved, otherwise optional). Use flat
 `visibility:"public"` only when intentionally publishing that comment/reply.
 Do not send reply-only fields on a status command.
+
+Administrators can pin an issue to the top of the list with `action:"set_pinned"` and
+`pinned:true` (or `false` to release it). It requires the current `expected_version`, bumps
+the version like any other command and is recorded as a public, content-free `pin` event
+(`content` is `pinned` or `unpinned`). Pinning twice is a 409. Ordinary users, including the
+issue owner, get 403.
 The example UUID is a placeholder: generate and persist one per logical command.
 An authorized exact retry by the same actor returns `replayed:true`, without
 another event, and returns the **current** issue status/version, not the historic
@@ -229,3 +235,23 @@ creation or reply. Ownership checks for user request references and monitoring
 read checks for administrator attachments are unchanged. A diagnostic attached
 to a reply on a public issue remains a private event unless explicitly public;
 safe diagnostic projection is not itself permission to publish it.
+
+## Markdown, references and mentions
+
+Issue descriptions and replies are rendered as Markdown (GitHub flavored: lists, tables, code,
+quotes). Images (`![alt](https://…)`) are rendered inline; only `http`/`https` addresses are
+accepted, are loaded lazily and without a referrer, and anything else (including `data:` and
+`javascript:` URLs) is dropped. Raw HTML is never interpreted: it is shown as plain text. The
+stored content stays the Markdown source, so the API, MCP and e-mails see exactly what was typed.
+
+Every issue has a human-friendly number. `#12` in any text links to issue 12, and the API and
+console accept the number wherever an issue id is expected (`GET /api/feedback/12`). Numbers
+never bypass visibility: a private issue of someone else still answers 404.
+
+`@username` mentions an administrator (the editor suggests names from
+`GET /api/feedback/mentionable`, which returns usernames only). When a new issue or a reply
+mentions an active administrator who has an e-mail address, the gateway sends that administrator
+an e-mail with the issue subject, number and the mentioning text, plus a link when
+`ARCA_PUBLIC_BASE_URL` is configured. Mails are best-effort: they need working SMTP
+settings, never block or fail the feedback request, are sent once per administrator and message,
+and are never sent to the author themself or to non-administrators.

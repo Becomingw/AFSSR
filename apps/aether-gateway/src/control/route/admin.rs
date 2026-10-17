@@ -112,6 +112,12 @@ fn classify_compatibility(method: &http::Method, path: &str) -> Option<Classifie
     ))
 }
 
+/// A feedback id is a UUID or the human-friendly issue number (`#N`).
+fn feedback_id_is_valid(id: &str) -> bool {
+    uuid::Uuid::parse_str(id).is_ok()
+        || (!id.is_empty() && id.len() <= 9 && id.chars().all(|c| c.is_ascii_digit()))
+}
+
 fn classify_feedback(method: &http::Method, path: &str) -> Option<ClassifiedRoute> {
     let tail = path.strip_prefix("/api/admin/feedback")?;
     let parts: Vec<_> = tail
@@ -123,10 +129,9 @@ fn classify_feedback(method: &http::Method, path: &str) -> Option<ClassifiedRout
     let kind = match (method, parts.as_slice()) {
         (&http::Method::GET, []) if tail.is_empty() => "feedback_list",
         (&http::Method::POST, []) if tail.is_empty() => "feedback_create",
-        (&http::Method::GET, [id]) if uuid::Uuid::parse_str(id).is_ok() => "feedback_detail",
-        (&http::Method::POST, [id, "commands"]) if uuid::Uuid::parse_str(id).is_ok() => {
-            "feedback_command"
-        }
+        (&http::Method::GET, ["mentionable"]) => "feedback_detail",
+        (&http::Method::GET, [id]) if feedback_id_is_valid(id) => "feedback_detail",
+        (&http::Method::POST, [id, "commands"]) if feedback_id_is_valid(id) => "feedback_command",
         _ => return None,
     };
     Some(classified(
