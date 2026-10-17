@@ -27,7 +27,7 @@ export interface CreateMcpKey {
   allowed_ips?: string[]
   permissions?: string[]
 }
-const headers = { 'X-AFSSR-MCP-Key-Management': '1' }
+const headers = { 'X-Arca-MCP-Key-Management': '1' }
 export async function listMcpKeys(): Promise<McpKeysResponse> {
   return (await apiClient.get<McpKeysResponse>('/api/mcp/keys')).data
 }

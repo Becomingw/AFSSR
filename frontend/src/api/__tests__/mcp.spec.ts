@@ -15,8 +15,8 @@ describe('MCP self-service API', () => {
     client.delete.mockResolvedValue({})
     const input = { name: 'Agent', read_only: true, expires_in_days: 30 }
     expect(await createMcpKey(input)).toEqual({ token: 'fixture-only' })
-    expect(client.post).toHaveBeenCalledWith('/api/mcp/keys', input, { headers: { 'X-AFSSR-MCP-Key-Management': '1' } })
+    expect(client.post).toHaveBeenCalledWith('/api/mcp/keys', input, { headers: { 'X-Arca-MCP-Key-Management': '1' } })
     await revokeMcpKey('id/1')
-    expect(client.delete).toHaveBeenCalledWith('/api/mcp/keys/id%2F1', { headers: { 'X-AFSSR-MCP-Key-Management': '1' } })
+    expect(client.delete).toHaveBeenCalledWith('/api/mcp/keys/id%2F1', { headers: { 'X-Arca-MCP-Key-Management': '1' } })
   })
 })

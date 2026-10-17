@@ -54,7 +54,7 @@ loop:
 
 ## 4. 命令样例
 
-调用 `afssr_feedback_command`：`path:{issue_id}`、`body`，写操作先预览再确认，参数完全一致。
+调用 `arca_feedback_command`：`path:{issue_id}`、`body`，写操作先预览再确认，参数完全一致。
 
 回复（默认私有）：
 

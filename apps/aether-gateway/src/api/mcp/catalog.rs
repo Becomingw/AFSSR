@@ -26,7 +26,7 @@ pub(super) struct Operation {
 macro_rules! op {
     ($name:literal, $method:literal, $path:literal, $impact:ident, $description:literal) => {
         Operation {
-            name: concat!("afssr_", $name),
+            name: concat!("arca_", $name),
             method: $method,
             path: $path,
             impact: Impact::$impact,
@@ -270,13 +270,13 @@ impl Operation {
             properties.insert("path".into(), json!({"type":"object","properties":path_properties,"required":self.parameters(),"additionalProperties":false}));
         }
         properties.insert("query".into(), json!({"type":"object","description":"API filters and pagination. Scalar values or arrays of scalars; never credentials. Use limit <= 500."}));
-        if self.name.starts_with("afssr_compatibility_") {
+        if self.name.starts_with("arca_compatibility_") {
             properties.insert(
                 "query".into(),
                 json!({"type":"object","maxProperties":0,"additionalProperties":false}),
             );
         }
-        if self.name == "afssr_benefits_preview" {
+        if self.name == "arca_benefits_preview" {
             properties.insert("body".into(), json!({"type":"object","properties":{"user_id":{"type":"string","minLength":1,"maxLength":128},"api_key_id":{"type":"string","maxLength":128},"config":{"type":"object"}},"required":["user_id"],"additionalProperties":false}));
             required.push("body");
         }
@@ -284,9 +284,9 @@ impl Operation {
             properties.insert("body".into(), self.body_schema());
             if matches!(
                 self.name,
-                "afssr_compatibility_profile_save"
-                    | "afssr_compatibility_run"
-                    | "afssr_feedback_create"
+                "arca_compatibility_profile_save"
+                    | "arca_compatibility_run"
+                    | "arca_feedback_create"
             ) {
                 required.push("body");
             }
@@ -309,35 +309,35 @@ impl Operation {
     }
 
     fn body_schema(&self) -> Value {
-        let description = "JSON body using the corresponding AFSSR management API fields. Existing API validation remains authoritative.";
+        let description = "JSON body using the corresponding Arca management API fields. Existing API validation remains authoritative.";
         match self.name {
-            "afssr_feedback_create" => {
+            "arca_feedback_create" => {
                 json!({"type":"object","properties":{"title":{"type":"string","minLength":1,"maxLength":200},"description":{"type":"string","minLength":1,"maxLength":20000,"description":"Server enforces at most 20000 UTF-8 bytes, including attached diagnostic summary."},"category":{"type":"string","enum":["bug","model","access","suggestion","other"]},"client_request_id":{"type":"string","format":"uuid"},"visibility":{"type":"string","enum":["public","private"],"default":"private"},"model":{"type":["string","null"],"maxLength":200},"request_id":{"type":["string","null"],"maxLength":128,"description":"Requires monitoring read in management context; no bypass of request diagnostic access."},"include_diagnostics":{"type":"boolean","default":false,"description":"Requires request_id and monitoring read. Safe summary only; does not make a private issue public."}},"required":["title","description","category","client_request_id"],"additionalProperties":false})
             }
-            "afssr_compatibility_profile_save" | "afssr_compatibility_run" => {
+            "arca_compatibility_profile_save" | "arca_compatibility_run" => {
                 compatibility_body_schema(self.name.ends_with("profile_save"))
             }
-            "afssr_feedback_command" => {
+            "arca_feedback_command" => {
                 json!({"type":"object","properties":{"pinned":{"type":"boolean","description":"Required for action set_pinned: true pins the issue to the top of the list, false releases it. Administrators only."},"expected_version":{"type":"integer","minimum":1},"client_request_id":{"type":"string","format":"uuid"},"action":{"type":"string","enum":["reply","set_status","set_pinned"]},"visibility":{"type":"string","enum":["public","private"],"default":"private","description":"Reply/status-comment visibility only. Public diagnostic sharing must be an explicit choice; never inherit issue visibility."},"content":{"type":"string","maxLength":20000},"status":{"type":"string","enum":["open","resolved","closed"]},"comment":{"type":"string","maxLength":20000,"description":"Required nonblank final solution for resolve; server enforces <=20000 UTF-8 bytes."},"diagnostic_request_id":{"type":"string","maxLength":128,"description":"Attach safe summary to a reply; requires feedback write and monitoring read. Defaults to a private event even on public issues."}},"required":["expected_version","client_request_id","action"],"allOf":[{"if":{"properties":{"action":{"const":"set_status"},"status":{"const":"resolved"}},"required":["action","status"]},"then":{"required":["comment"],"properties":{"comment":{"type":"string","minLength":1,"pattern":"\\S","maxLength":20000}}}}],"additionalProperties":false})
             }
-            "afssr_provider_models_create" | "afssr_provider_models_update" => {
+            "arca_provider_models_create" | "arca_provider_models_update" => {
                 json!({"type":"object","description":description,"properties":{
                 "provider_model_name":{"type":"string"},"global_model_id":{"type":"string"},"provider_model_mappings":{"type":["array","null"],"items":{"type":"object"}},
                 "tiered_pricing":{"type":["object","null"]},"is_active":{"type":"boolean"},"is_available":{"type":"boolean"},"supports_function_calling":{"type":"boolean"},"supports_streaming":{"type":"boolean"},"config":{"type":["object","null"]}
             },"required":if self.name.ends_with("create") {vec!["provider_model_name","global_model_id"]} else {vec![]},"additionalProperties":true})
             }
-            "afssr_provider_models_fetch" => {
+            "arca_provider_models_fetch" => {
                 json!({"type":"object","description":description,"properties":{"provider_id":{"type":"string"},"api_key_id":{"type":"string"},"api_key_ids":{"type":"array","items":{"type":"string"}},"force_refresh":{"type":"boolean","default":false}},"required":["provider_id"],"additionalProperties":false})
             }
-            "afssr_model_test" | "afssr_model_test_failover" => {
+            "arca_model_test" | "arca_model_test_failover" => {
                 json!({"type":"object","description":"Synthetic test only. Stored credentials may be used and charges may apply. Never send historic/private conversations without explicit authorization.","properties":{
                 "provider_id":{"type":"string"},"model_name":{"type":"string"},"mode":{"type":"string","enum":["global","direct","pool"]},"api_key_id":{"type":"string"},"api_key_ids":{"type":"array","items":{"type":"string"}},"endpoint_id":{"type":"string"},"message":{"type":"string","maxLength":16384},"api_format":{"type":"string"},"apply_model_mapping":{"type":"boolean"},"mapped_model_name":{"type":"string"},"failover_models":{"type":"array","items":{"type":"string"}},"request_headers":{"type":"object"},"request_body":{"type":"object"},"request_id":{"type":"string"}
             },"required":if self.name.ends_with("failover") {vec!["provider_id","model_name","mode"]} else {vec!["provider_id","model_name"]},"additionalProperties":false})
             }
-            "afssr_benefits_set" | "afssr_system_config_set" => {
-                json!({"type":"object","description":description,"properties":{"value":{},"expected_value":{},"description":{"type":"string"}},"required":if self.name=="afssr_benefits_set" {vec!["value","expected_value"]} else {vec!["value"]},"additionalProperties":false})
+            "arca_benefits_set" | "arca_system_config_set" => {
+                json!({"type":"object","description":description,"properties":{"value":{},"expected_value":{},"description":{"type":"string"}},"required":if self.name=="arca_benefits_set" {vec!["value","expected_value"]} else {vec!["value"]},"additionalProperties":false})
             }
-            "afssr_users_create" | "afssr_users_update" => {
+            "arca_users_create" | "arca_users_update" => {
                 json!({"type":"object","description":description,"properties":{"username":{"type":"string"},"email":{"type":["string","null"]},"password":{"type":"string"},"role":{"type":"string","enum":["user","admin","audit_admin","user_admin","service_admin"]},"is_active":{"type":"boolean"},"allowed_models":{"type":["array","null"],"items":{"type":"string"}},"group_ids":{"type":"array","items":{"type":"string"}}},"additionalProperties":true})
             }
             _ => json!({"type":"object","description":description}),
@@ -345,7 +345,23 @@ impl Operation {
     }
 }
 
+pub(super) const LEGACY_PREFIX: &str = "afssr_";
+
+/// Tool names used the `afssr_` prefix before the rename to Arca; they are still accepted.
+pub(super) fn is_legacy_name(name: &str) -> bool {
+    name.starts_with(LEGACY_PREFIX)
+}
+
+/// Maps a legacy `afssr_*` tool name onto its `arca_*` name; other names pass through unchanged.
+pub(super) fn canonical_name(name: &str) -> std::borrow::Cow<'_, str> {
+    match name.strip_prefix(LEGACY_PREFIX) {
+        Some(rest) => std::borrow::Cow::Owned(format!("arca_{rest}")),
+        None => std::borrow::Cow::Borrowed(name),
+    }
+}
+
 pub(super) fn find(name: &str) -> Option<&'static Operation> {
+    let name = canonical_name(name);
     OPERATIONS.iter().find(|op| op.name == name)
 }
 

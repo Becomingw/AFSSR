@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn benefit_preview_accepts_a_read_only_post_body_without_write_confirmation() {
-    let op = catalog::find("afssr_benefits_preview").unwrap();
+    let op = catalog::find("arca_benefits_preview").unwrap();
     assert!(op.read_only());
     assert!(op.tool().input_schema["properties"]["body"].is_object());
     assert!(op.tool().input_schema["properties"]
@@ -70,7 +70,7 @@ fn mcp_catalog_routes_are_registered_and_names_unique() {
 
 #[test]
 fn mcp_compatibility_is_readonly_and_requires_its_own_scope() {
-    let op = catalog::find("afssr_compatibility_list").unwrap();
+    let op = catalog::find("arca_compatibility_list").unwrap();
     assert!(op.read_only());
     assert!(!op.tool().input_schema["properties"]
         .as_object()
@@ -118,8 +118,8 @@ fn compatibility_mcp_body(save: bool) -> Value {
 #[test]
 fn mcp_compatibility_changes_require_service_role_write_scope_and_strict_bodies() {
     for (name, save) in [
-        ("afssr_compatibility_profile_save", true),
-        ("afssr_compatibility_run", false),
+        ("arca_compatibility_profile_save", true),
+        ("arca_compatibility_run", false),
     ] {
         let op = catalog::find(name).unwrap();
         assert_eq!(op.impact, catalog::Impact::Change);
@@ -215,8 +215,8 @@ async fn mcp_compatibility_confirmation_is_exact_single_use_and_checks_before_pr
         remote: "127.0.0.1:12345".parse().unwrap(),
     };
     for (name, save) in [
-        ("afssr_compatibility_profile_save", true),
-        ("afssr_compatibility_run", false),
+        ("arca_compatibility_profile_save", true),
+        ("arca_compatibility_run", false),
     ] {
         let op = catalog::find(name).unwrap();
         let args = json!({"body":compatibility_mcp_body(save)});
@@ -312,7 +312,7 @@ async fn mcp_compatibility_confirmation_is_exact_single_use_and_checks_before_pr
 
 #[test]
 fn mcp_diagnostic_is_read_only_and_does_not_inherit_feedback_write_scope() {
-    let op = catalog::find("afssr_request_diagnostics").unwrap();
+    let op = catalog::find("arca_request_diagnostics").unwrap();
     assert!(op.read_only());
     assert!(!op.tool().input_schema["properties"]
         .as_object()
@@ -325,7 +325,7 @@ fn mcp_diagnostic_is_read_only_and_does_not_inherit_feedback_write_scope() {
     p.management_token_permissions = Some(vec!["admin:feedback:write".into()]);
     assert!(!execution::authorized(op, &op.sample_uri(), &p));
     assert!(!crate::api::diagnostics::can_read_admin(&p));
-    let feedback = catalog::find("afssr_feedback_command").unwrap();
+    let feedback = catalog::find("arca_feedback_command").unwrap();
     assert!(execution::authorized(feedback, &feedback.sample_uri(), &p));
     p.user_role = "user".into();
     p.management_token_permissions = Some(vec!["admin:monitoring:read".into()]);
@@ -336,7 +336,7 @@ fn mcp_diagnostic_is_read_only_and_does_not_inherit_feedback_write_scope() {
 async fn feedback_diagnostic_attachment_requires_monitoring_even_with_feedback_write() {
     let mut p = principal("admin");
     p.management_token_permissions = Some(vec!["admin:feedback:write".into()]);
-    let op = catalog::find("afssr_feedback_command").unwrap();
+    let op = catalog::find("arca_feedback_command").unwrap();
     let uri = op.sample_uri();
     let context = GatewayPublicRequestContext::from_request_parts(
         "fixture",
@@ -376,7 +376,7 @@ async fn mcp_read_scoped_diagnostics_use_safe_projection_and_no_inference() {
     };
     let mut p = principal("audit_admin");
     p.management_token_permissions = Some(vec!["admin:monitoring:read".into()]);
-    let op = catalog::find("afssr_request_diagnostics").unwrap();
+    let op = catalog::find("arca_request_diagnostics").unwrap();
     let args = json!({"path":{"request_id":"fixture-request"}});
     let result = handler
         .execute(op, args.as_object().unwrap().clone(), &identity, &p)
@@ -397,8 +397,8 @@ async fn mcp_read_scoped_diagnostics_use_safe_projection_and_no_inference() {
 
 #[test]
 fn mcp_discovery_and_execution_obey_role_and_key_scope() {
-    let users = catalog::find("afssr_users_update").unwrap();
-    let providers = catalog::find("afssr_providers_update").unwrap();
+    let users = catalog::find("arca_users_update").unwrap();
+    let providers = catalog::find("arca_providers_update").unwrap();
     for (role, users_allowed, providers_allowed) in [
         ("admin", true, true),
         ("audit_admin", false, false),
@@ -421,7 +421,7 @@ fn mcp_discovery_and_execution_obey_role_and_key_scope() {
     let mut p = principal("admin");
     p.management_token_permissions = Some(crate::control::read_only_management_token_permissions());
     assert!(!execution::authorized(users, &users.sample_uri(), &p));
-    let op = catalog::find("afssr_users_list").unwrap();
+    let op = catalog::find("arca_users_list").unwrap();
     assert!(execution::authorized(op, &op.sample_uri(), &p));
     p.management_token_permissions = Some(vec![]);
     assert!(!execution::authorized(op, &op.sample_uri(), &p));
@@ -442,7 +442,7 @@ fn mcp_discovery_and_execution_obey_role_and_key_scope() {
 
 #[test]
 fn mcp_uri_rejects_path_injection_secrets_and_unbounded_queries() {
-    let op = catalog::find("afssr_users_get").unwrap();
+    let op = catalog::find("arca_users_get").unwrap();
     for id in [
         "../providers",
         "x%2freveal",
@@ -500,17 +500,17 @@ fn mcp_redacts_secrets_and_bodies_without_hiding_usage_or_ids() {
     assert_eq!(value["api_key_id"], "id-1");
     for (name, path, body) in [
         (
-            "afssr_system_config_set",
+            "arca_system_config_set",
             "/api/admin/system/configs/bark_device_key",
             json!({"value":"secret-canary"}),
         ),
         (
-            "afssr_pool_batch_import",
+            "arca_pool_batch_import",
             "/api/admin/pool/p/keys/batch-import",
             json!({"content":"secret-canary"}),
         ),
         (
-            "afssr_proxy_create",
+            "arca_proxy_create",
             "/api/admin/proxy-nodes/manual",
             json!({"proxy_url":"socks5://u:secret-canary@example.test"}),
         ),
@@ -656,16 +656,13 @@ async fn mcp_http_protocol_auth_discovery_and_read_round_trip() {
             break;
         }
     }
-    assert!(names.contains(&"afssr_users_update".into()));
-    assert!(!names.contains(&"afssr_providers_update".into()));
+    assert!(names.contains(&"arca_users_update".into()));
+    assert!(!names.contains(&"arca_providers_update".into()));
     let response: Value = post(
         &client,
         &url,
         &raw,
-        rpc(
-            "tools/call",
-            json!({"name":"afssr_identity","arguments":{}}),
-        ),
+        rpc("tools/call", json!({"name":"arca_identity","arguments":{}})),
     )
     .send()
     .await
@@ -677,7 +674,7 @@ async fn mcp_http_protocol_auth_discovery_and_read_round_trip() {
         response["result"]["structuredContent"]["user_id"], user_id,
         "{response}"
     );
-    let denied:Value=post(&client,&url,&raw,rpc("tools/call",json!({"name":"afssr_providers_update","arguments":{"path":{"provider_id":"provider-1"},"body":{}}}))).send().await.unwrap().json().await.unwrap();
+    let denied:Value=post(&client,&url,&raw,rpc("tools/call",json!({"name":"arca_providers_update","arguments":{"path":{"provider_id":"provider-1"},"body":{}}}))).send().await.unwrap().json().await.unwrap();
     assert_eq!(denied["result"]["isError"], true, "{denied}");
     let response: Value = post(
         &client,
@@ -685,7 +682,7 @@ async fn mcp_http_protocol_auth_discovery_and_read_round_trip() {
         &raw,
         rpc(
             "tools/call",
-            json!({"name":"afssr_benefits_get","arguments":{}}),
+            json!({"name":"arca_benefits_get","arguments":{}}),
         ),
     )
     .send()
@@ -741,7 +738,7 @@ async fn mcp_http_protocol_auth_discovery_and_read_round_trip() {
         &raw,
         rpc(
             "tools/call",
-            json!({"name":"afssr_users_update","arguments":{"path":{"user_id":"other"}}}),
+            json!({"name":"arca_users_update","arguments":{"path":{"user_id":"other"}}}),
         ),
     )
     .send()
@@ -778,7 +775,7 @@ async fn mcp_http_write_round_trip_and_resource_bounds() {
         &raw,
         rpc(
             "tools/call",
-            json!({"name":"afssr_system_config_set","arguments":arguments}),
+            json!({"name":"arca_system_config_set","arguments":arguments}),
         ),
     )
     .send()
@@ -799,7 +796,7 @@ async fn mcp_http_write_round_trip_and_resource_bounds() {
         &raw,
         rpc(
             "tools/call",
-            json!({"name":"afssr_system_config_set","arguments":execution}),
+            json!({"name":"arca_system_config_set","arguments":execution}),
         ),
     )
     .send()
@@ -818,7 +815,7 @@ async fn mcp_http_write_round_trip_and_resource_bounds() {
         &raw,
         rpc(
             "tools/call",
-            json!({"name":"afssr_system_config","arguments":{"path":{"config_key":"site_name"}}}),
+            json!({"name":"arca_system_config","arguments":{"path":{"config_key":"site_name"}}}),
         ),
     )
     .send()
@@ -837,7 +834,7 @@ async fn mcp_http_write_round_trip_and_resource_bounds() {
         &raw,
         rpc(
             "tools/call",
-            json!({"name":"afssr_system_config_set","arguments":execution}),
+            json!({"name":"arca_system_config_set","arguments":execution}),
         ),
     )
     .send()
@@ -882,7 +879,7 @@ async fn mcp_write_requires_exact_single_use_ticket_and_live_permissions() {
         remote: "127.0.0.1:12345".parse().unwrap(),
     };
     let p = principal("admin");
-    let op = catalog::find("afssr_system_config_set").unwrap();
+    let op = catalog::find("arca_system_config_set").unwrap();
     let args = json!({"path":{"config_key":"site_name"},"body":{"value":"After","expected_value":"Before"}});
     let preview = handler
         .execute(op, args.as_object().unwrap().clone(), &identity, &p)
@@ -995,7 +992,7 @@ pub(crate) async fn session_headers(state: &AppState, user_id: &str) -> axum::ht
         "x-client-device-id",
         HeaderValue::from_static("mcp-test-device"),
     );
-    headers.insert("x-afssr-mcp-key-management", HeaderValue::from_static("1"));
+    headers.insert("x-arca-mcp-key-management", HeaderValue::from_static("1"));
     headers
 }
 
@@ -1041,6 +1038,7 @@ async fn mcp_self_service_keys_bind_owner_limit_scopes_and_revoke() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
     let mut missing_header = headers.clone();
+    missing_header.remove("x-arca-mcp-key-management");
     missing_header.remove("x-afssr-mcp-key-management");
     assert_eq!(
         client
@@ -1075,7 +1073,7 @@ async fn mcp_self_service_keys_bind_owner_limit_scopes_and_revoke() {
         &client,
         &url,
         raw,
-        rpc("tools/call", json!({"name":"afssr_identity"})),
+        rpc("tools/call", json!({"name":"arca_identity"})),
     )
     .send()
     .await
@@ -1179,7 +1177,7 @@ async fn mcp_feedback_agent_can_read_reply_and_resolve_without_other_admin_write
         &raw,
         rpc(
             "tools/call",
-            json!({"name":"afssr_feedback_list","arguments":{"query":{"after":0}}}),
+            json!({"name":"arca_feedback_list","arguments":{"query":{"after":0}}}),
         ),
     )
     .send()
@@ -1207,7 +1205,7 @@ async fn mcp_feedback_agent_can_read_reply_and_resolve_without_other_admin_write
             &raw,
             rpc(
                 "tools/call",
-                json!({"name":"afssr_feedback_command","arguments":args}),
+                json!({"name":"arca_feedback_command","arguments":args}),
             ),
         )
         .send()
@@ -1224,7 +1222,7 @@ async fn mcp_feedback_agent_can_read_reply_and_resolve_without_other_admin_write
             &raw,
             rpc(
                 "tools/call",
-                json!({"name":"afssr_feedback_command","arguments":args}),
+                json!({"name":"arca_feedback_command","arguments":args}),
             ),
         )
         .send()
@@ -1245,7 +1243,7 @@ async fn mcp_feedback_agent_can_read_reply_and_resolve_without_other_admin_write
         &raw,
         rpc(
             "tools/call",
-            json!({"name":"afssr_providers_update","arguments":{"path":{"provider_id":"fixture"}}}),
+            json!({"name":"arca_providers_update","arguments":{"path":{"provider_id":"fixture"}}}),
         ),
     )
     .send()
@@ -1261,7 +1259,7 @@ async fn mcp_feedback_agent_can_read_reply_and_resolve_without_other_admin_write
         &raw,
         rpc(
             "tools/call",
-            json!({"name":"afssr_feedback_get","arguments":{"path":{"issue_id":id}}}),
+            json!({"name":"arca_feedback_get","arguments":{"path":{"issue_id":id}}}),
         ),
     )
     .send()
@@ -1305,7 +1303,7 @@ async fn mcp_feedback_create_is_scoped_confirmed_self_owned_and_diagnostic_safe(
         hash: VerifiedManagementTokenHash::new("synthetic-feedback-create".into()),
         remote: "127.0.0.1:12345".parse().unwrap(),
     };
-    let op = catalog::find("afssr_feedback_create").unwrap();
+    let op = catalog::find("arca_feedback_create").unwrap();
     assert_eq!(op.impact, catalog::Impact::Change);
     let schema = op.tool().input_schema;
     assert_eq!(schema["required"], json!(["body"]));
@@ -1606,7 +1604,7 @@ async fn mcp_feedback_visibility_final_solution_and_diagnostic_sharing_use_repos
         hash: VerifiedManagementTokenHash::new("synthetic-feedback-dispatch".into()),
         remote: "127.0.0.1:12345".parse().unwrap(),
     };
-    let op = catalog::find("afssr_feedback_command").unwrap();
+    let op = catalog::find("arca_feedback_command").unwrap();
     let tool = op.tool();
     assert_eq!(
         tool.input_schema["properties"]["body"]["properties"]["visibility"]["default"],
@@ -1701,4 +1699,138 @@ async fn mcp_feedback_visibility_final_solution_and_diagnostic_sharing_use_repos
         .await["status"],
         403
     );
+}
+
+#[test]
+fn legacy_afssr_tool_names_map_onto_arca_names() {
+    assert!(catalog::is_legacy_name("afssr_users_get"));
+    assert!(!catalog::is_legacy_name("arca_users_get"));
+    assert_eq!(catalog::canonical_name("afssr_identity"), "arca_identity");
+    assert_eq!(catalog::canonical_name("arca_identity"), "arca_identity");
+    for op in catalog::OPERATIONS {
+        assert!(op.name.starts_with("arca_"), "{}", op.name);
+        let legacy = op.name.replacen("arca_", "afssr_", 1);
+        assert_eq!(
+            catalog::find(&legacy).map(|found| found.name),
+            Some(op.name),
+            "legacy alias of {} must resolve to it",
+            op.name
+        );
+    }
+    assert!(catalog::find("afssr_no_such_tool").is_none());
+    assert!(catalog::find("users_get").is_none());
+}
+
+#[tokio::test]
+async fn mcp_accepts_legacy_tool_names_but_only_lists_arca_names() {
+    let (state, raw, user_id) = fixture("admin").await;
+    let (url, handle) = start(state).await;
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let call = |name: &str, arguments: Value| {
+        post(
+            &client,
+            &url,
+            &raw,
+            rpc("tools/call", json!({"name":name,"arguments":arguments})),
+        )
+        .send()
+    };
+
+    let listed: Value = post(&client, &url, &raw, rpc("tools/list", json!({})))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let names: Vec<_> = listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"arca_identity"));
+    assert!(
+        names.iter().all(|name| name.starts_with("arca_")),
+        "{names:?}"
+    );
+
+    let identity: Value = call("afssr_identity", json!({}))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        identity["result"]["structuredContent"]["user_id"], user_id,
+        "{identity}"
+    );
+    let read: Value = call("afssr_benefits_get", json!({}))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(read["result"]["structuredContent"].is_object(), "{read}");
+
+    // A ticket binds the canonical tool, so a preview made under the old name confirms under
+    // the new one and the other way round.
+    let arguments = json!({"path":{"config_key":"site_name"},"body":{"value":"Legacy alias","expected_value":"Before"}});
+    let preview: Value = call("afssr_system_config_set", arguments.clone())
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let ticket = preview["result"]["structuredContent"]["confirmation"]
+        .as_str()
+        .expect("preview ticket")
+        .to_owned();
+    let mut execution = arguments.clone();
+    execution["dry_run"] = json!(false);
+    execution["confirmation"] = json!(ticket);
+    let done: Value = call("arca_system_config_set", execution)
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(done["result"]["structuredContent"]["ok"], true, "{done}");
+
+    let unknown: Value = call("afssr_no_such_tool", json!({}))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(unknown.get("error").is_some(), "{unknown}");
+    handle.abort();
+}
+
+#[tokio::test]
+async fn mcp_key_management_accepts_the_legacy_header_name() {
+    let (state, _, user_id) = fixture("user_admin").await;
+    let mut headers = session_headers(&state, &user_id).await;
+    headers.remove("x-arca-mcp-key-management");
+    let (url, handle) = start(state).await;
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let endpoint = format!("{url}/api/mcp/keys");
+    let without = client
+        .post(&endpoint)
+        .headers(headers.clone())
+        .json(&json!({"name":"No header"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(without.status(), StatusCode::FORBIDDEN);
+    headers.insert("x-afssr-mcp-key-management", HeaderValue::from_static("1"));
+    let legacy = client
+        .post(&endpoint)
+        .headers(headers)
+        .json(&json!({"name":"Legacy header"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(legacy.status(), StatusCode::CREATED);
+    handle.abort();
 }

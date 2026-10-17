@@ -5,7 +5,7 @@ Routes: `/admin/leaderboard` (all four admin roles) and
 The read-only API is `/api/admin/stats/leaderboard/overview` for administrators
 and `/api/leaderboard` for ordinary sessions. The latter always masks, even
 when an administrator calls it. No new tables, migrations or production writes.
-The MCP tool `afssr_leaderboard_overview` uses the existing `admin:stats:read`
+The MCP tool `arca_leaderboard_overview` uses the existing `admin:stats:read`
 permission intersected with the key owner's current role.
 
 ## Metrics

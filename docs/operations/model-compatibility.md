@@ -77,9 +77,9 @@ SQL, transport or paid-test execution:
 
 | MCP Tool | Impact / Scope | Confirmation |
 | --- | --- | --- |
-| `afssr_compatibility_list` | Read / `admin:compatibility:read`; four administrator roles | No body, dry_run or confirmation accepted |
-| `afssr_compatibility_profile_save` | Change / `admin:compatibility:write`; service/super only | Required body matches profile API above; default dry_run previews only |
-| `afssr_compatibility_run` | Change / `admin:compatibility:write`; service/super only | Required body matches run API above; default dry_run previews only |
+| `arca_compatibility_list` | Read / `admin:compatibility:read`; four administrator roles | No body, dry_run or confirmation accepted |
+| `arca_compatibility_profile_save` | Change / `admin:compatibility:write`; service/super only | Required body matches profile API above; default dry_run previews only |
+| `arca_compatibility_run` | Change / `admin:compatibility:write`; service/super only | Required body matches run API above; default dry_run previews only |
 
 For both Change tools, call with `body` first, then submit the exact same body
 with `dry_run:false` and the returned `confirmation`. Existing tickets are
@@ -209,7 +209,7 @@ Changes remain local. No production deployment or production migration was perfo
 
 ### Controlled MCP Follow-Up
 
-`afssr_compatibility_profile_save` and `afssr_compatibility_run` are included in the
+`arca_compatibility_profile_save` and `arca_compatibility_run` are included in the
 final passing API/MCP regression. Their tests verify role/scope checks, strict
 body validation before preview, exact ticket binding and single-use confirmation.
 Read-only assertions explicitly allow these two Change operations but continue

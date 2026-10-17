@@ -310,7 +310,7 @@ const purpose = ref('role')
 const revoking = ref<McpKey>()
 const endpoint = computed(() => new URL(config.value?.endpoint || '/mcp', window.location.origin).href)
 const canWrite = computed(() => config.value?.write_permissions.some(p => !p.endsWith(':read')) ?? false)
-const clientConfig = computed(() => JSON.stringify({ mcpServers: { afssr: { url: endpoint.value, headers: { Authorization: 'Bearer <API_KEY>' } } } }, null, 2))
+const clientConfig = computed(() => JSON.stringify({ mcpServers: { arca: { url: endpoint.value, headers: { Authorization: 'Bearer <API_KEY>' } } } }, null, 2))
 function date(value?: number) { return value ? new Date(value * 1000).toLocaleString() : '—' }
 function active(key: McpKey) { return key.is_active && (!key.expires_at_unix_secs || key.expires_at_unix_secs * 1000 > Date.now()) }
 async function copy(value: string) { try { await navigator.clipboard.writeText(value) } catch { error.value = '复制失败' } }

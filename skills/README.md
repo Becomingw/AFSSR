@@ -25,7 +25,7 @@ Use two keys with different authority:
 | Unattended feedback worker | **仅用户反馈** | read and reply to feedback, change feedback status; cannot touch providers, models, users |
 | Interactive operations | read/write (still bounded by your role) | the full change protocol in the skill |
 
-Generic client configuration (the tools keep their `afssr_` prefix whatever you name the server):
+Generic client configuration (tools are named `arca_*`; the old `afssr_*` names still work as deprecated aliases):
 
 ```json
 {

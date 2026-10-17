@@ -59,7 +59,7 @@ Storage failures return unavailable, never invented zero usage.
 Super, audit and user administrators require `admin:users:read`. Service admins and
 ordinary users cannot preview other users. The POST is classified as read-only;
 `admin:users:write` alone is not a read grant. MCP exposes the identical operation as
-`afssr_benefits_preview`, accepting a body but no write confirmation ticket.
+`arca_benefits_preview`, accepting a body but no write confirmation ticket.
 
 The frontend calls the same `buildDraft()` used by Save, including changes to other
 subjects and definitions. Editing or switching the subject invalidates the displayed

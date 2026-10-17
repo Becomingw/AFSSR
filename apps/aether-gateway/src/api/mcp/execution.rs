@@ -50,7 +50,7 @@ pub(super) fn authorized(
 
 // Paths never come from the caller: only scalar substitutions in a static catalog.
 pub(super) fn build_uri(op: &Operation, args: &Map<String, Value>) -> Result<Uri, &'static str> {
-    let allowed = if op.name == "afssr_benefits_preview" {
+    let allowed = if op.name == "arca_benefits_preview" {
         &["path", "query", "body"][..]
     } else if op.read_only() {
         &["path", "query"][..]
@@ -60,7 +60,7 @@ pub(super) fn build_uri(op: &Operation, args: &Map<String, Value>) -> Result<Uri
     if args.keys().any(|key| !allowed.contains(&key.as_str())) {
         return Err("Unknown argument");
     }
-    if op.name.starts_with("afssr_compatibility_")
+    if op.name.starts_with("arca_compatibility_")
         && args
             .get("query")
             .is_some_and(|q| !q.as_object().is_some_and(Map::is_empty))
@@ -214,7 +214,7 @@ impl McpHandler {
         }
         if matches!(
             op.name,
-            "afssr_compatibility_profile_save" | "afssr_compatibility_run"
+            "arca_compatibility_profile_save" | "arca_compatibility_run"
         ) {
             if let Err(error) = crate::api::compatibility::validate_mcp_body(op.name, &body) {
                 return json!({"ok":false,"status":400,"error":error});
@@ -322,14 +322,14 @@ impl McpHandler {
 pub(super) fn redact_preview(op: &Operation, uri: &Uri, preview: &mut Value) {
     let credential_operation = matches!(
         op.name,
-        "afssr_upstream_keys_create"
-            | "afssr_upstream_keys_update"
-            | "afssr_pool_batch_import"
-            | "afssr_ops_configure"
-            | "afssr_proxy_create"
-            | "afssr_proxy_update"
-            | "afssr_proxy_config_set"
-            | "afssr_ldap_set"
+        "arca_upstream_keys_create"
+            | "arca_upstream_keys_update"
+            | "arca_pool_batch_import"
+            | "arca_ops_configure"
+            | "arca_proxy_create"
+            | "arca_proxy_update"
+            | "arca_proxy_config_set"
+            | "arca_ldap_set"
     );
     let sensitive_config = uri
         .path()

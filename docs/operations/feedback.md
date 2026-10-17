@@ -145,12 +145,12 @@ values and forged identity fields are rejected. No nested action DTO was added.
 
 The embedded MCP has these administrative tools:
 
-- `afssr_feedback_create`: creates an issue owned by the current administrator;
+- `arca_feedback_create`: creates an issue owned by the current administrator;
   feedback write scope and exact preview/confirmation are required, visibility
   defaults private. Required body: title, description, category, client_request_id.
-- `afssr_feedback_list`: lists issues, including an incremental polling cursor.
-- `afssr_feedback_get`: reads the issue, visibility, version and authorized history.
-- `afssr_feedback_command`: replies, resolves with a required final solution,
+- `arca_feedback_list`: lists issues, including an incremental polling cursor.
+- `arca_feedback_get`: reads the issue, visibility, version and authorized history.
+- `arca_feedback_command`: replies, resolves with a required final solution,
   closes or reopens under the same actual-role/domain checks and flat visibility.
 
 All writes retain MCP preview/confirmation, user-role checks and key scopes.

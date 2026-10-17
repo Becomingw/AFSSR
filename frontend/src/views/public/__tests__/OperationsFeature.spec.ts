@@ -47,8 +47,8 @@ describe('feedback and Agent operations feature', () => {
     const catalog = readFileSync(resolve(process.cwd(), '../apps/aether-gateway/src/api/mcp/catalog.rs'), 'utf8')
     for (const step of operationSteps) {
       for (const tool of step.tools) {
-        if (tool.name === 'afssr_identity') continue
-        expect(catalog).toContain(`op!("${tool.name.replace('afssr_', '')}"`)
+        if (tool.name === 'arca_identity') continue
+        expect(catalog).toContain(`op!("${tool.name.replace('arca_', '')}"`)
       }
     }
   })

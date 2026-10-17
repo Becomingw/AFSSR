@@ -62,7 +62,7 @@ vary by client):
 ```json
 {
   "mcpServers": {
-    "afssr": {
+    "arca": {
       "url": "https://gateway.example.org/mcp",
       "headers": { "Authorization": "Bearer <API_KEY>" }
     }
@@ -78,7 +78,13 @@ initialization, tool schemas and Streamable HTTP framing, in stateless JSON mode
 
 ## Operations
 
-`afssr_identity` reports the current actor, role, key ID and effective scopes.
+Tool names use the `arca_` prefix. The earlier `afssr_` prefix is still accepted as a
+deprecated alias (a call under the old name is logged once as `mcp_legacy_tool_name`; previews and
+confirmation tickets are bound to the `arca_` name, so a preview made under one spelling confirms
+under the other). `tools/list` only shows `arca_` names. Likewise the key-management header is
+`X-Arca-MCP-Key-Management`; `X-AFSSR-MCP-Key-Management` is still accepted.
+
+`arca_identity` reports the current actor, role, key ID and effective scopes.
 `tools/list` is permission-filtered and paginated, 40 operations at a time.
 Follow `nextCursor` until absent. The authoritative static operation catalog is
 `apps/aether-gateway/src/api/mcp/catalog.rs`; each tool maps to exactly one local
@@ -99,7 +105,7 @@ and command idempotency. The console offers a feedback-only key preset. See
 [User feedback and agent handoff](feedback.md) for the permission matrix and
 unattended-worker safety contract. Feedback content is never execution authority.
 
-`afssr_feedback_create` is a controlled Change operation requiring feedback write,
+`arca_feedback_create` is a controlled Change operation requiring feedback write,
 default dry-run and exact single-use confirmation. Its required body fields are
 `title`, `description`, `category` and a stable `client_request_id` UUID; visibility
 defaults private. The issue belongs to the current administrator principal and
@@ -111,7 +117,7 @@ monitoring read and existing management diagnostic access; safe summaries are no
 permission to publish privately visible evidence.
 
 Feedback issues and event bodies now carry `visibility:public/private`, defaulting
-to private. `afssr_feedback_command` accepts this field flat beside `action`; it
+to private. `arca_feedback_command` accepts this field flat beside `action`; it
 controls only the reply/status-comment body, not the issue. Administrators may
 see private discussions through MCP, but must not republish them automatically.
 Resolve requires a nonblank final-solution `comment` of at most 20,000 UTF-8 bytes;

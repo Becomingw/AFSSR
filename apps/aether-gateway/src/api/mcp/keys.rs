@@ -50,7 +50,8 @@ async fn session(
     }
     if mutation {
         if headers
-            .get("x-afssr-mcp-key-management")
+            .get("x-arca-mcp-key-management")
+            .or_else(|| headers.get("x-afssr-mcp-key-management"))
             .and_then(|v| v.to_str().ok())
             != Some("1")
         {

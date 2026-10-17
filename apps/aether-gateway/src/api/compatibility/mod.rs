@@ -26,7 +26,7 @@ pub(crate) fn validate_mcp_body(operation: &str, body: &Value) -> Result<(), &'s
         return Err("Compatibility body exceeds 8 KiB");
     }
     let revision = match operation {
-        "afssr_compatibility_profile_save" => {
+        "arca_compatibility_profile_save" => {
             let input: SaveProfile = serde_json::from_value(body.clone())
                 .map_err(|_| "Invalid compatibility profile schema")?;
             if input.profile.id.to_string().len()
@@ -37,7 +37,7 @@ pub(crate) fn validate_mcp_body(operation: &str, body: &Value) -> Result<(), &'s
             input.profile.config.validate()?;
             input.expected_revision
         }
-        "afssr_compatibility_run" => {
+        "arca_compatibility_run" => {
             let input: RunInput =
                 serde_json::from_value(body.clone()).map_err(|_| "Invalid offline run schema")?;
             if body["profile_id"].as_str().unwrap_or_default().len() != 36

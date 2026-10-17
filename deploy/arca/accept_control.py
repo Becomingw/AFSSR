@@ -217,14 +217,14 @@ def main():
             cursor = listing.get('nextCursor')
             if not cursor:
                 break
-        check('afssr_feedback_create' in tools and 'afssr_providers_update' not in tools, 'MCP key scope filtering ' + role)
+        check('arca_feedback_create' in tools and 'arca_providers_update' not in tools, 'MCP key scope filtering ' + role)
         args = {'body': {'title': 'MCP acceptance ' + role, 'description': 'Synthetic feedback only', 'category': 'suggestion', 'client_request_id': str(uuid.uuid4())}}
-        preview = mcp.rpc('tools/call', {'name': 'afssr_feedback_create', 'arguments': args})
+        preview = mcp.rpc('tools/call', {'name': 'arca_feedback_create', 'arguments': args})
         check(not preview.get('isError') and bool(preview.get('structuredContent', {}).get('confirmation')), 'MCP feedback dry-run ' + role)
         args.update({'dry_run': False, 'confirmation': preview['structuredContent']['confirmation']})
-        result = mcp.rpc('tools/call', {'name': 'afssr_feedback_create', 'arguments': args})
+        result = mcp.rpc('tools/call', {'name': 'arca_feedback_create', 'arguments': args})
         check(not result.get('isError'), 'MCP confirmed feedback create ' + role)
-        reused = mcp.rpc('tools/call', {'name': 'afssr_feedback_create', 'arguments': args})
+        reused = mcp.rpc('tools/call', {'name': 'arca_feedback_create', 'arguments': args})
         check(reused.get('isError'), 'MCP confirmation single-use ' + role)
         client.request('DELETE', '/api/mcp/keys/' + key['data']['id'], statuses=(200, 204), headers={'X-AFSSR-MCP-Key-Management': '1'})
         mcp.request('POST', '/mcp', {'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list', 'params': {}}, statuses=(401, 403), headers={'Accept': 'application/json, text/event-stream'})
