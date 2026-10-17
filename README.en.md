@@ -152,19 +152,4 @@ Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) (Ch
 
 ## License and acknowledgements
 
-Arca is built on [Aether](https://github.com/fawney19/Aether). The copyright and attribution of the original Aether project and its contributors are preserved; this repository is not an official Aether release.
-
-It keeps the original [Aether Non-Commercial License](LICENSE): personal study and research, educational institutions, non-profit organizations and non-profit internal company use are allowed; **use for profit is prohibited**, distribution must use the same terms, and sublicensing is not allowed. Renaming does not change the license terms or grant commercial rights.
-
-For a commercial license, contact the original copyright holder (the Aether author):
-
-<details>
-<summary>Original author contact</summary>
-
-<p align="center">
-  <img src="docs/author/qq_qrcode.jpg" width="200" alt="QQ QR code">
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="docs/author/qrcode_1770574997172.jpg" width="200" alt="QQ group QR code">
-</p>
-
-</details>
+Arca is a downstream fork of [Aether](https://github.com/fawney19/Aether) and keeps its [non-commercial license](LICENSE); the original authors' and contributors' copyright and attribution are preserved. This repository is not an official Aether release, and renaming does not change the license terms.

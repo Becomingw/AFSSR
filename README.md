@@ -152,19 +152,4 @@ make db-prepare     # 预先执行迁移与回填
 
 ## 许可证与致谢
 
-Arca 基于 [Aether](https://github.com/fawney19/Aether) 开发，原 Aether 及其贡献者的版权与署名保留，本仓库不是 Aether 官方版本。
-
-本项目沿用原有的 [Aether 非商业开源许可证](LICENSE)：允许个人学习研究、教育机构、非盈利组织及企业内部非盈利性质的使用；**禁止用于盈利目的**，分发须使用相同许可条款，且不得再许可。更名不改变许可条件，也不授予商业使用权。
-
-需要商业许可请联系原版权持有人（Aether 作者）：
-
-<details>
-<summary>原作者联系方式</summary>
-
-<p align="center">
-  <img src="docs/author/qq_qrcode.jpg" width="200" alt="QQ 二维码">
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="docs/author/qrcode_1770574997172.jpg" width="200" alt="QQ 群二维码">
-</p>
-
-</details>
+Arca 是 [Aether](https://github.com/fawney19/Aether) 的下游分支，沿用其[非商业开源许可证](LICENSE)，原作者与贡献者的版权和署名保留。本仓库不是 Aether 官方版本，更名也不改变许可条件。
