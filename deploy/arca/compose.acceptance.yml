@@ -1,0 +1,94 @@
+name: arca-acceptance-20261016
+services:
+  postgres:
+    image: sha256:5f72c7b5bd616308ccfd2e74d6be16fb06364e5eecbb815fe9dc6ab9761d2111
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${ARCA_TEST_DB_PASSWORD:?test setup required}
+      POSTGRES_DB: arca_test
+    command: [postgres, -c, shared_buffers=32MB, -c, max_connections=40, -c, max_wal_size=256MB]
+    ports: ["127.0.0.1:15433:5432"]
+    volumes: ["../../test-data/postgres:/var/lib/postgresql/data"]
+    mem_limit: 192m
+    cpus: 0.5
+    pids_limit: 100
+    networks: [acceptance]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U postgres -d arca_test]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  redis:
+    image: sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
+    command: [redis-server, --requirepass, "${ARCA_TEST_REDIS_PASSWORD:?test setup required}", --maxmemory, 32mb, --maxmemory-policy, noeviction]
+    ports: ["127.0.0.1:16380:6379"]
+    mem_limit: 64m
+    cpus: 0.25
+    pids_limit: 40
+    networks: [acceptance]
+  app:
+    # Acceptance only: bind the current candidate over the existing toolchain-compatible runtime.
+    # The production Arca image is assembled on 12 only after Korean acceptance.
+    image: afssr-local:go-fix15-20261015
+    entrypoint: [/opt/aether/releases/image/bin/aether-gateway]
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      APP_PORT: "8084"
+      AETHER_PUBLIC_BASE_URL: http://127.0.0.1:18085
+      AETHER_BASE_DIR: /tmp/arca
+      AETHER_GATEWAY_STATIC_DIR: /opt/aether/frontend/dist
+      AETHER_DATABASE_DRIVER: postgres
+      AETHER_DATABASE_URL: postgresql://postgres:${ARCA_TEST_DB_PASSWORD}@postgres:5432/arca_test
+      DATABASE_URL: postgresql://postgres:${ARCA_TEST_DB_PASSWORD}@postgres:5432/arca_test
+      REDIS_URL: redis://:${ARCA_TEST_REDIS_PASSWORD}@redis:6379/0
+      AETHER_RUNTIME_BACKEND: redis
+      AETHER_GATEWAY_DATABASE_MODE: auto
+      AETHER_GATEWAY_DEPLOYMENT_TOPOLOGY: single-node
+      AETHER_GATEWAY_NODE_ROLE: all
+      AETHER_GATEWAY_DATA_ENCRYPTION_KEY: ${ARCA_TEST_ENCRYPTION_KEY:?test setup required}
+      ENCRYPTION_KEY: ${ARCA_TEST_ENCRYPTION_KEY}
+      JWT_SECRET_KEY: ${ARCA_TEST_JWT_SECRET:?test setup required}
+      ADMIN_USERNAME: arca_accept_admin
+      ADMIN_EMAIL: arca-accept-admin@example.invalid
+      ADMIN_PASSWORD: ${ARCA_TEST_ADMIN_PASSWORD:?test setup required}
+      AETHER_TUNNEL_RELAY_AUTH_SECRET: ${ARCA_TEST_RELAY_SECRET:?test setup required}
+      AFSSR_INTERNAL_MODE: "true"
+      AFSSR_MCP_ENABLED: "true"
+      AFSSR_MCP_ALLOWED_HOSTS: 127.0.0.1,localhost
+      AETHER_UPDATE_STRATEGY: manual
+      AETHER_LOG_DESTINATION: stdout
+      AETHER_LOG_FORMAT: json
+      RUST_LOG: info
+      TZ: Asia/Shanghai
+    ports: ["127.0.0.1:18085:8084"]
+    volumes:
+      - type: bind
+        source: ../../arca-artifacts/aether-gateway
+        target: /opt/aether/releases/image/bin/aether-gateway
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ../../frontend/dist
+        target: /opt/aether/frontend/dist
+        read_only: true
+        bind:
+          create_host_path: false
+    tmpfs: ["/tmp:rw,nosuid,nodev,size=128m,mode=1777"]
+    mem_limit: 384m
+    cpus: 0.75
+    pids_limit: 120
+    networks: [acceptance]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+networks:
+  acceptance:
+    # Current Docker does not publish loopback ports on an internal-only bridge.
+    # Keep host bindings loopback-only; this project contains synthetic data only.
+    internal: false
