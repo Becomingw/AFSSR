@@ -1809,7 +1809,7 @@ function applyEndpointRulesJsonDraft(
 
 // {{$original}} 占位符处理
 const ORIGINAL_PLACEHOLDER = '{{$original}}'
-const ORIGINAL_SENTINEL = '__AETHER_ORIGINAL__'
+const ORIGINAL_SENTINEL = '__ARCA_ORIGINAL__'
 
 // 将 {{$original}} 替换为合法 JSON 以便 JSON.parse 校验
 // 处理三种写法：裸占位符 {{$original}}、带引号 "{{$original}}"、引号内拼接 "prefix_{{$original}}_suffix"

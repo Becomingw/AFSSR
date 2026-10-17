@@ -20,19 +20,19 @@ function mountTurnstileWidget() {
 
 function turnstileScripts() {
   return Array.from(
-    document.querySelectorAll<HTMLScriptElement>('script[data-aether-turnstile="true"]')
+    document.querySelectorAll<HTMLScriptElement>('script[data-arca-turnstile="true"]')
   )
 }
 
 describe('TurnstileWidget script loading', () => {
   afterEach(() => {
     document.body.innerHTML = ''
-    document.head.querySelectorAll('script[data-aether-turnstile="true"]').forEach((script) => {
+    document.head.querySelectorAll('script[data-arca-turnstile="true"]').forEach((script) => {
       script.remove()
     })
     delete (window as unknown as { turnstile?: unknown }).turnstile
-    delete (window as unknown as { __aetherTurnstileScriptPromise?: Promise<void> })
-      .__aetherTurnstileScriptPromise
+    delete (window as unknown as { __arcaTurnstileScriptPromise?: Promise<void> })
+      .__arcaTurnstileScriptPromise
   })
 
   it('retries loading the Turnstile script after a transient load failure', async () => {

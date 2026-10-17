@@ -1173,8 +1173,8 @@ onMounted(() => {
   }, 2000)
 
   if (import.meta.env.DEV) {
-    window.__aetherShowUpdateDialog = showDebugUpdateDialog
-    window.__aetherMockVersionStatus = showDebugVersionStatus
+    window.__arcaShowUpdateDialog = showDebugUpdateDialog
+    window.__arcaMockVersionStatus = showDebugVersionStatus
   }
 })
 
@@ -1185,11 +1185,11 @@ onUnmounted(() => {
     updateCheckTimer = null
   }
   stopUpdateStatusPolling()
-  if (import.meta.env.DEV && window.__aetherShowUpdateDialog === showDebugUpdateDialog) {
-    delete window.__aetherShowUpdateDialog
+  if (import.meta.env.DEV && window.__arcaShowUpdateDialog === showDebugUpdateDialog) {
+    delete window.__arcaShowUpdateDialog
   }
-  if (import.meta.env.DEV && window.__aetherMockVersionStatus === showDebugVersionStatus) {
-    delete window.__aetherMockVersionStatus
+  if (import.meta.env.DEV && window.__arcaMockVersionStatus === showDebugVersionStatus) {
+    delete window.__arcaMockVersionStatus
   }
 })
 

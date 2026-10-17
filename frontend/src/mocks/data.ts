@@ -50,7 +50,7 @@ const MOCK_USER_BILLING = {
 export const MOCK_ADMIN_USER: User = {
   id: 'demo-admin-uuid-0001',
   username: 'Demo Admin',
-  email: 'admin@demo.aether.io',
+  email: 'admin@demo.arca.io',
   role: 'admin',
   is_active: true,
   billing: MOCK_ADMIN_BILLING,
@@ -64,7 +64,7 @@ export const MOCK_ADMIN_USER: User = {
 export const MOCK_NORMAL_USER: User = {
   id: 'demo-user-uuid-0002',
   username: 'Demo User',
-  email: 'user@demo.aether.io',
+  email: 'user@demo.arca.io',
   role: 'user',
   is_active: true,
   billing: MOCK_USER_BILLING,
@@ -296,7 +296,7 @@ export const MOCK_ALL_USERS: AdminUser[] = [
   {
     id: 'demo-admin-uuid-0001',
     username: 'Demo Admin',
-    email: 'admin@demo.aether.io',
+    email: 'admin@demo.arca.io',
     role: 'admin',
     unlimited: true,
     is_active: true,
@@ -308,7 +308,7 @@ export const MOCK_ALL_USERS: AdminUser[] = [
   {
     id: 'demo-user-uuid-0002',
     username: 'Demo User',
-    email: 'user@demo.aether.io',
+    email: 'user@demo.arca.io',
     role: 'user',
     unlimited: false,
     is_active: true,
@@ -400,7 +400,7 @@ export const MOCK_ADMIN_API_KEYS: AdminApiKeysResponse = {
     {
       id: 'standalone-key-001',
       user_id: 'demo-user-uuid-0002',
-      user_email: 'user@demo.aether.io',
+      user_email: 'user@demo.arca.io',
       username: 'Demo User',
       name: '独立余额 Key #1',
       key_display: 'sk-sa...abc1',

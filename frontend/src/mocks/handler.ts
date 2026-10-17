@@ -792,10 +792,10 @@ function generateMockUsageRecords(count: number = 100) {
   ]
 
   const users = [
-    { id: 'demo-admin-uuid-0001', username: 'Demo Admin', email: 'admin@demo.aether.ai' },
-    { id: 'demo-user-uuid-0002', username: 'Demo User', email: 'user@demo.aether.ai' },
-    { id: 'demo-user-uuid-0003', username: 'Alice Chen', email: 'alice@demo.aether.ai' },
-    { id: 'demo-user-uuid-0004', username: 'Bob Zhang', email: 'bob@demo.aether.ai' }
+    { id: 'demo-admin-uuid-0001', username: 'Demo Admin', email: 'admin@demo.arca.ai' },
+    { id: 'demo-user-uuid-0002', username: 'Demo User', email: 'user@demo.arca.ai' },
+    { id: 'demo-user-uuid-0003', username: 'Alice Chen', email: 'alice@demo.arca.ai' },
+    { id: 'demo-user-uuid-0004', username: 'Bob Zhang', email: 'bob@demo.arca.ai' }
   ]
 
   const apiFormats = ['claude:messages', 'openai:chat', 'openai:responses', 'gemini:generate_content']
@@ -875,7 +875,7 @@ function generateMockUsageRecords(count: number = 100) {
     id: MOCK_CYBER_POLICY_USAGE_ID,
     user_id: 'demo-admin-uuid-0001',
     username: 'Demo Admin',
-    user_email: 'admin@demo.aether.ai',
+    user_email: 'admin@demo.arca.ai',
     api_key: {
       id: 'key-demo-cyber-risk',
       name: 'OpenAI Cyber Risk Demo',
@@ -1079,7 +1079,7 @@ function getMockEndpointExtras(apiFormat: string) {
 const MOCK_ENDPOINT_KEYS = [
   { id: 'ekey-001', provider_id: 'provider-001', api_formats: ['claude:messages'], api_key_masked: 'sk-ant...abc1', auth_type: 'api_key', name: 'Primary Key', rate_multiplier: 1.0, internal_priority: 1, health_score: 0.98, consecutive_failures: 0, request_count: 5000, success_count: 4950, error_count: 50, success_rate: 0.99, avg_response_time_ms: 1200, cache_ttl_minutes: 5, max_probe_interval_minutes: 32, is_active: true, created_at: '2024-01-01T00:00:00Z', updated_at: new Date().toISOString() },
   { id: 'ekey-002', provider_id: 'provider-001', api_formats: ['claude:messages'], api_key_masked: 'sk-ant...def2', auth_type: 'api_key', name: 'Backup Key', rate_multiplier: 1.0, internal_priority: 2, health_score: 0.95, consecutive_failures: 1, request_count: 2000, success_count: 1950, error_count: 50, success_rate: 0.975, avg_response_time_ms: 1350, cache_ttl_minutes: 5, max_probe_interval_minutes: 32, is_active: true, created_at: '2024-02-01T00:00:00Z', updated_at: new Date().toISOString() },
-  { id: 'ekey-003', provider_id: 'provider-002', api_formats: ['openai:chat'], api_key_masked: 'sk-oai...ghi3', auth_type: 'oauth', name: 'OpenAI OAuth', oauth_email: 'oauth-demo@aether.dev', oauth_expires_at: Math.floor(Date.now() / 1000) + 6 * 3600, oauth_plan_type: 'pro', oauth_account_id: 'acct-demo-002', rate_multiplier: 1.0, internal_priority: 1, health_score: 0.97, consecutive_failures: 0, request_count: 3500, success_count: 3450, error_count: 50, success_rate: 0.986, avg_response_time_ms: 900, cache_ttl_minutes: 5, max_probe_interval_minutes: 32, is_active: true, created_at: '2024-01-15T00:00:00Z', updated_at: new Date().toISOString() }
+  { id: 'ekey-003', provider_id: 'provider-002', api_formats: ['openai:chat'], api_key_masked: 'sk-oai...ghi3', auth_type: 'oauth', name: 'OpenAI OAuth', oauth_email: 'oauth-demo@arca.dev', oauth_expires_at: Math.floor(Date.now() / 1000) + 6 * 3600, oauth_plan_type: 'pro', oauth_account_id: 'acct-demo-002', rate_multiplier: 1.0, internal_priority: 1, health_score: 0.97, consecutive_failures: 0, request_count: 3500, success_count: 3450, error_count: 50, success_rate: 0.986, avg_response_time_ms: 900, cache_ttl_minutes: 5, max_probe_interval_minutes: 32, is_active: true, created_at: '2024-01-15T00:00:00Z', updated_at: new Date().toISOString() }
 ]
 
 // Mock Endpoints
@@ -1425,7 +1425,7 @@ const mockHandlers: Record<string, (config: AxiosRequestConfig) => Promise<Axios
     await delay()
     const baseUrl = typeof window !== 'undefined'
       ? window.location.origin
-      : 'https://demo.aether.local'
+      : 'https://demo.arca.local'
     return createMockResponse({
       base_url: baseUrl,
       site_name: 'Aether Demo',
@@ -2389,7 +2389,7 @@ function generateMockKeysForProvider(providerId: string, count: number = 2) {
     const markInvalid = isOAuth && providerId.endsWith('3')
     const oauthFields = isOAuth ? {
       auth_type: 'oauth',
-      oauth_email: 'oauth-demo@aether.dev',
+      oauth_email: 'oauth-demo@arca.dev',
       oauth_expires_at: markInvalid ? null : nowSec + 6 * 3600,
       oauth_invalid_at: markInvalid ? nowSec - 3600 : null,
       oauth_invalid_reason: markInvalid ? '[ACCOUNT_BLOCK] Demo verification required' : null,
@@ -3073,7 +3073,7 @@ registerDynamicRoute('POST', '/api/admin/provider-oauth/keys/:keyId/refresh', as
     provider_type: 'codex',
     expires_at: Math.floor(Date.now() / 1000) + 6 * 3600,
     has_refresh_token: true,
-    email: 'oauth-demo@aether.dev',
+    email: 'oauth-demo@arca.dev',
     key_id: params.keyId
   })
 })
@@ -3098,7 +3098,7 @@ registerDynamicRoute('POST', '/api/admin/provider-oauth/providers/:providerId/co
     provider_type: 'codex',
     expires_at: Math.floor(Date.now() / 1000) + 24 * 3600,
     has_refresh_token: true,
-    email: body.name ? `${body.name}@demo.dev` : 'oauth-demo@aether.dev'
+    email: body.name ? `${body.name}@demo.dev` : 'oauth-demo@arca.dev'
   })
 })
 
@@ -3177,7 +3177,7 @@ registerDynamicRoute('POST', '/api/admin/provider-oauth/providers/:providerId/co
     provider_type: 'claude_code',
     expires_at: Math.floor(Date.now() / 1000) + 24 * 3600,
     has_refresh_token: true,
-    email: body.name ? `${body.name}@demo.dev` : 'claude-oauth-demo@aether.dev'
+    email: body.name ? `${body.name}@demo.dev` : 'claude-oauth-demo@arca.dev'
   })
 })
 
@@ -3190,7 +3190,7 @@ registerDynamicRoute('POST', '/api/admin/provider-oauth/providers/:providerId/im
     provider_type: 'codex',
     expires_at: Math.floor(Date.now() / 1000) + 24 * 3600,
     has_refresh_token: true,
-    email: body.name ? `${body.name}@demo.dev` : 'oauth-demo@aether.dev'
+    email: body.name ? `${body.name}@demo.dev` : 'oauth-demo@arca.dev'
   })
 })
 
@@ -3250,7 +3250,7 @@ registerDynamicRoute('GET', '/api/admin/endpoints/keys/:keyId/export', async (_c
     provider_type: 'codex',
     auth_method: 'oauth',
     refresh_token: 'rt-demo',
-    email: 'oauth-demo@aether.dev',
+    email: 'oauth-demo@arca.dev',
     exported_at: new Date().toISOString()
   })
 })
@@ -4014,10 +4014,10 @@ registerDynamicRoute('GET', '/api/admin/usage/:requestId', async (config, params
 
   // 生成详细的请求信息
   const users = [
-    { id: 'demo-admin-uuid-0001', username: 'Demo Admin', email: 'admin@demo.aether.ai' },
-    { id: 'demo-user-uuid-0002', username: 'Demo User', email: 'user@demo.aether.ai' },
-    { id: 'demo-user-uuid-0003', username: 'Alice Chen', email: 'alice@demo.aether.ai' },
-    { id: 'demo-user-uuid-0004', username: 'Bob Zhang', email: 'bob@demo.aether.ai' }
+    { id: 'demo-admin-uuid-0001', username: 'Demo Admin', email: 'admin@demo.arca.ai' },
+    { id: 'demo-user-uuid-0002', username: 'Demo User', email: 'user@demo.arca.ai' },
+    { id: 'demo-user-uuid-0003', username: 'Alice Chen', email: 'alice@demo.arca.ai' },
+    { id: 'demo-user-uuid-0004', username: 'Bob Zhang', email: 'bob@demo.arca.ai' }
   ]
   const user = users.find(u => u.id === record.user_id) || users[0]
 
@@ -4560,10 +4560,10 @@ mockHandlers['GET /api/admin/usage/cache-affinity/interval-timeline'] = async (c
 // 生成 TTL 分析数据
 function generateTTLAnalysisData(hours: number = 168) {
   const users = [
-    { id: 'demo-admin-uuid-0001', username: 'Demo Admin', email: 'admin@demo.aether.io' },
-    { id: 'demo-user-uuid-0002', username: 'Demo User', email: 'user@demo.aether.io' },
-    { id: 'demo-user-uuid-0003', username: 'Alice Chen', email: 'alice@demo.aether.io' },
-    { id: 'demo-user-uuid-0004', username: 'Bob Zhang', email: 'bob@demo.aether.io' }
+    { id: 'demo-admin-uuid-0001', username: 'Demo Admin', email: 'admin@demo.arca.io' },
+    { id: 'demo-user-uuid-0002', username: 'Demo User', email: 'user@demo.arca.io' },
+    { id: 'demo-user-uuid-0003', username: 'Alice Chen', email: 'alice@demo.arca.io' },
+    { id: 'demo-user-uuid-0004', username: 'Bob Zhang', email: 'bob@demo.arca.io' }
   ]
 
   const usersAnalysis = users.map(user => {

@@ -3,6 +3,6 @@
 declare const __APP_VERSION__: string
 
 interface Window {
-  __aetherShowUpdateDialog?: () => void
-  __aetherMockVersionStatus?: (hasUpdate?: boolean) => void
+  __arcaShowUpdateDialog?: () => void
+  __arcaMockVersionStatus?: (hasUpdate?: boolean) => void
 }

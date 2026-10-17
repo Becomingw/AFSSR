@@ -37,7 +37,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     // GitHub Pages 部署时使用仓库名作为 base
-    base: process.env.GITHUB_PAGES === 'true' ? '/Aether/' : '/',
+    base: process.env.GITHUB_PAGES === 'true' ? '/Arca/' : '/',
     plugins: [legacyTemplateI18nPlugin(), vue()],
     define: {
       __APP_VERSION__: JSON.stringify(getGitVersion()),

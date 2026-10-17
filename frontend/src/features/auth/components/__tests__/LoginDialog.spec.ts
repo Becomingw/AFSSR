@@ -58,8 +58,8 @@ vi.mock('@/composables/useSiteInfo', () => ({
 vi.mock('@/config/demo', () => ({
   isDemoMode: () => false,
   DEMO_ACCOUNTS: {
-    admin: { email: 'admin@demo.aether.io', password: 'demo123' },
-    user: { email: 'user@demo.aether.io', password: 'demo123' },
+    admin: { email: 'admin@demo.arca.io', password: 'demo123' },
+    user: { email: 'user@demo.arca.io', password: 'demo123' },
   },
 }))
 

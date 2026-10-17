@@ -32,7 +32,7 @@
             @click="fillDemoAccount('admin')"
           >
             <span class="inline-flex items-center justify-center w-4 h-4 rounded bg-primary/20 text-primary text-[10px] font-bold">A</span>
-            <span>admin@demo.aether.io / demo123</span>
+            <span>admin@demo.arca.io / demo123</span>
           </button>
           <button
             type="button"
@@ -40,7 +40,7 @@
             @click="fillDemoAccount('user')"
           >
             <span class="inline-flex items-center justify-center w-4 h-4 rounded bg-muted text-muted-foreground text-[10px] font-bold">U</span>
-            <span>user@demo.aether.io / demo123</span>
+            <span>user@demo.arca.io / demo123</span>
           </button>
         </div>
       </div>

@@ -3,8 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@/config/demo', () => ({
   isDemoMode: () => true,
   DEMO_ACCOUNTS: {
-    admin: { email: 'admin@demo.aether.io', password: 'demo123' },
-    user: { email: 'user@demo.aether.io', password: 'demo123' },
+    admin: { email: 'admin@demo.arca.io', password: 'demo123' },
+    user: { email: 'user@demo.arca.io', password: 'demo123' },
   },
 }))
 

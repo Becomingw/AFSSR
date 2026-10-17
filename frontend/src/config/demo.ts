@@ -18,12 +18,12 @@ export function isDemoMode(): boolean {
 // Demo 账号配置
 export const DEMO_ACCOUNTS = {
   admin: {
-    email: 'admin@demo.aether.io',
+    email: 'admin@demo.arca.io',
     password: 'demo123',
     hint: '管理员账号'
   },
   user: {
-    email: 'user@demo.aether.io',
+    email: 'user@demo.arca.io',
     password: 'demo123',
     hint: '普通用户'
   }
