@@ -8,6 +8,26 @@ use aether_ai_formats::{convert_request_pure_with_context, FormatContext, Format
 
 use crate::{CandidateFailureDiagnostic, CandidateFailureDiagnosticKind};
 
+/// Diagnose with the same runtime policy and scoped history as the planner.
+/// Pure conversion intentionally rejects transport fields, so its error can
+/// differ from the error that actually prevented a candidate from executing.
+pub fn runtime_request_conversion_failure_extra_data(
+    body: &Value,
+    source_format: &str,
+    target_format: &str,
+    context: &FormatContext,
+    source: &str,
+) -> Option<Value> {
+    let error =
+        aether_ai_formats::convert_request(source_format, target_format, body, context).err()?;
+    Some(
+        diagnostic_from_format_error(&error, source_format, target_format)
+            .formats(source_format, target_format)
+            .source(source)
+            .to_extra_data(),
+    )
+}
+
 pub fn request_body_build_failure_extra_data(
     body_json: &Value,
     client_api_format: &str,
@@ -833,6 +853,26 @@ fn request_body_build_source(client_api_format: &str, provider_api_format: &str)
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn runtime_diagnostic_identifies_replay_policy_not_transport_stream() {
+        let body = serde_json::json!({"model":"gpt-6.1-sol", "input":"hello", "stream":true,
+            "reasoning":{"effort":"medium", "context":"current_turn"}});
+        let ctx = aether_ai_formats::FormatContext::default()
+            .with_mapped_model("claude-haiku-5-5")
+            .with_upstream_stream(true);
+        let diagnostic = super::runtime_request_conversion_failure_extra_data(
+            &body,
+            "openai:responses",
+            "claude:messages",
+            &ctx,
+            "synthetic-runtime",
+        )
+        .unwrap();
+        assert!(diagnostic
+            .to_string()
+            .contains("thinking.openai_responses.context"));
+        assert!(!diagnostic.to_string().contains("openai_responses.stream"));
+    }
     use serde_json::json;
 
     use super::{

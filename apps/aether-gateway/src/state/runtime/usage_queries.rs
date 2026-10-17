@@ -301,6 +301,16 @@ impl AppState {
             .map_err(|err| GatewayError::Internal(err.to_string()))
     }
 
+    pub(crate) async fn summarize_usage_activity(
+        &self,
+        q: &usage::UsageActivityQuery,
+    ) -> Result<Vec<usage::UsageActivityRow>, GatewayError> {
+        self.data
+            .summarize_usage_activity(q)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
     pub(crate) async fn summarize_usage_daily_heatmap(
         &self,
         query: &UsageDailyHeatmapQuery,

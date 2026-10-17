@@ -1131,6 +1131,23 @@ async fn pg_table_has_columns(
 }
 
 impl PostgresBackend {
+    /// Atomic JSON snapshot CAS, including first insert. No upsert on a stale expectation.
+    pub async fn compare_and_swap_system_config_json(
+        &self,
+        key: &str,
+        expected: Option<&serde_json::Value>,
+        replacement: &serde_json::Value,
+    ) -> Result<bool, DataLayerError> {
+        let result = if let Some(expected) = expected {
+            sqlx::query("UPDATE system_configs SET value = $3, updated_at = NOW() WHERE key = $1 AND value::jsonb = $2::jsonb")
+                .bind(key).bind(expected).bind(replacement).execute(self.pool()).await
+        } else {
+            sqlx::query("INSERT INTO system_configs (id, key, value, description, created_at, updated_at) VALUES ($1, $2, $3, 'Offline compatibility workbench; controlled snapshot', NOW(), NOW()) ON CONFLICT (key) DO NOTHING")
+                .bind(uuid::Uuid::new_v4().to_string()).bind(key).bind(replacement).execute(self.pool()).await
+        }.map_postgres_err()?;
+        Ok(result.rows_affected() == 1)
+    }
+
     pub async fn purge_admin_system_data(
         &self,
         target: AdminSystemPurgeTarget,

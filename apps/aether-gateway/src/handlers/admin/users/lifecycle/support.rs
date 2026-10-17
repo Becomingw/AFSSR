@@ -1,7 +1,7 @@
 use super::super::format_optional_datetime_iso8601;
 use crate::handlers::admin::request::AdminAppState;
 use crate::GatewayError;
-use serde_json::json;
+use serde_json::{json, Value};
 
 pub(super) async fn admin_user_password_policy(
     state: &AdminAppState<'_>,
@@ -166,14 +166,71 @@ fn effective_policy_payload(
             &sorted_groups,
             |group| (&group.allowed_api_formats_mode, group.allowed_api_formats.as_ref()),
         ),
-        "allowed_models": effective_list_policy_payload(
+        "allowed_models": effective_model_policy_payload(
             allowed_models,
             allowed_models_mode,
             &sorted_groups,
-            |group| (&group.allowed_models_mode, group.allowed_models.as_ref()),
         ),
         "rate_limit": effective_rate_limit_policy_payload(rate_limit, rate_limit_mode, &sorted_groups),
     })
+}
+
+fn effective_model_policy_payload(
+    user_values: Option<&Vec<String>>,
+    user_mode: &str,
+    groups: &[aether_data::repository::users::StoredUserGroup],
+) -> serde_json::Value {
+    if !crate::internal_access::enabled() {
+        return effective_list_policy_payload(user_values, user_mode, groups, |group| {
+            (&group.allowed_models_mode, group.allowed_models.as_ref())
+        });
+    }
+    if matches!(user_mode, "specific" | "deny_all") {
+        let values = if user_mode == "deny_all" {
+            Vec::new()
+        } else {
+            user_values.cloned().unwrap_or_default()
+        };
+        return policy_payload(
+            if values.is_empty() {
+                "deny_all"
+            } else {
+                "specific"
+            },
+            json!(values),
+            "user",
+            &[],
+        );
+    }
+    let mut values = std::collections::BTreeSet::new();
+    let mut sources = Vec::new();
+    for group in groups {
+        match group.allowed_models_mode.as_str() {
+            "unrestricted" => {
+                return policy_payload("unrestricted", Value::Null, "group", &[group])
+            }
+            "specific" => {
+                values.extend(group.allowed_models.clone().unwrap_or_default());
+                sources.push(group);
+            }
+            "deny_all" => sources.push(group),
+            _ => {}
+        }
+    }
+    if sources.is_empty() {
+        policy_payload("unrestricted", Value::Null, "fallback", &[])
+    } else {
+        policy_payload(
+            if values.is_empty() {
+                "deny_all"
+            } else {
+                "specific"
+            },
+            json!(values.into_iter().collect::<Vec<_>>()),
+            combined_policy_source(false, sources.len(), "fallback"),
+            &sources,
+        )
+    }
 }
 
 fn effective_list_policy_payload(

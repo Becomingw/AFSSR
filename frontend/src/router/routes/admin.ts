@@ -7,6 +7,19 @@ export const adminRoutes: RouteRecordRaw[] = [
     component: view(() => import('@/layouts/MainLayout.vue')),
     meta: { requiresAuth: true, requiresAdmin: true },
     children: [
+      { path: 'leaderboard', name: 'AdminLeaderboard', component: view(() => import('@/views/shared/Leaderboard.vue')) },
+      { path: 'compatibility', name: 'AdminCompatibility', component: view(() => import('@/views/admin/Compatibility.vue')) },
+      { path: 'feedback/:issueId?', name: 'AdminFeedback', component: view(() => import('@/views/shared/Feedback.vue')) },
+      {
+        path: 'mcp',
+        name: 'AgentMcp',
+        component: view(() => import('@/views/admin/AgentMcp.vue')),
+      },
+      {
+        path: 'access-policies',
+        name: 'InternalAccessPolicies',
+        component: view(() => import('@/views/admin/InternalAccessPolicies.vue')),
+      },
       {
         path: 'dashboard',
         name: 'AdminDashboard',
@@ -26,26 +39,6 @@ export const adminRoutes: RouteRecordRaw[] = [
         path: 'keys',
         name: 'ApiKeys',
         component: view(() => import('@/views/admin/ApiKeys.vue'))
-      },
-      {
-        path: 'wallets',
-        name: 'WalletsManagement',
-        component: view(() => import('@/views/admin/WalletsManagement.vue'))
-      },
-      {
-        path: 'payment-gateways',
-        name: 'PaymentGatewaySettings',
-        component: view(() => import('@/views/admin/PaymentGatewaySettings.vue'))
-      },
-      {
-        path: 'billing-plans',
-        name: 'BillingPlansManagement',
-        component: view(() => import('@/views/admin/BillingPlansManagement.vue'))
-      },
-      {
-        path: 'referrals',
-        name: 'ReferralManagement',
-        component: view(() => import('@/views/admin/ReferralManagement.vue'))
       },
       {
         path: 'management-tokens',

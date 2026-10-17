@@ -122,7 +122,7 @@ pub fn convert_request_pure_with_context(
     let pure_ctx = ctx.without_runtime_request_edits();
     let source = parse_format(source_format)?;
     let target = parse_format(target_format)?;
-    let normalized_body = normalize_openai_responses_to_chat_body(source, target, body)?;
+    let normalized_body = normalize_openai_responses_to_chat_body(source, target, body, ctx)?;
     let mut request = parse_request(source_format, &normalized_body, &pure_ctx)?;
     if source == FormatId::OpenAiResponses && target == FormatId::ClaudeMessages {
         crate::formats::claude::responses_tools::ClaudeResponsesTools::attach_native_web_tools(
@@ -152,15 +152,26 @@ pub fn convert_request(
     let source = parse_format(source_format)?;
     let target = parse_format(target_format)?;
     // Lite definitions must stay outside the transcript when previous-response history is expanded.
-    let lifted_body = if source == FormatId::OpenAiResponses && target == FormatId::ClaudeMessages {
+    let lifted_body = if source == FormatId::OpenAiResponses
+        && (target == FormatId::ClaudeMessages
+            || (target == FormatId::GeminiGenerateContent
+                && crate::formats::claude::responses_tools::is_go_gemini_provider(
+                    &ctx.report_context_value(),
+                ))
+            || (target == FormatId::OpenAiChat
+                && crate::formats::claude::responses_tools::is_go_chat_provider(
+                    &ctx.report_context_value(),
+                ))) {
         Some(crate::formats::claude::responses_tools::ClaudeResponsesTools::lift_lite_tools(body)?)
     } else {
         None
     };
     let body = lifted_body.as_ref().unwrap_or(body);
     let expanded_body = if source == FormatId::OpenAiResponses
-        && matches!(target, FormatId::OpenAiChat | FormatId::ClaudeMessages)
-    {
+        && (matches!(target, FormatId::OpenAiChat | FormatId::ClaudeMessages)
+            || crate::formats::claude::responses_tools::is_go_gemini_provider(
+                &ctx.report_context_value(),
+            )) {
         Some(
             openai_responses::history::expand_previous_response_for_chat(
                 body,
@@ -176,7 +187,48 @@ pub fn convert_request(
         None
     };
     let body = expanded_body.as_ref().unwrap_or(body);
-    let normalized_body = normalize_openai_responses_to_chat_body(source, target, body)?;
+    let mut normalized_body = normalize_openai_responses_to_chat_body(source, target, body, ctx)?;
+    if (crate::formats::claude::responses_tools::is_go_chat_provider(&ctx.report_context_value())
+        || crate::formats::claude::responses_tools::is_go_gemini_provider(
+            &ctx.report_context_value(),
+        ))
+        && normalized_body["store"] == true
+    {
+        if ctx
+            .history_scope
+            .as_deref()
+            .is_none_or(|scope| scope.trim().is_empty())
+        {
+            return Err(FormatError::UnsupportedField {
+                format: source.as_str().to_string(),
+                field: "store".to_string(),
+                reason: "Go Chat persistence requires scoped gateway response history".to_string(),
+            });
+        }
+        // Persistence is implemented by scoped gateway history, not Chat's
+        // differently-defined training/distillation storage flag.
+        normalized_body.as_object_mut().unwrap().remove("store");
+    }
+    if source == FormatId::OpenAiResponses
+        && (matches!(target, FormatId::OpenAiChat | FormatId::ClaudeMessages)
+            || crate::formats::claude::responses_tools::is_go_gemini_provider(
+                &ctx.report_context_value(),
+            ))
+    {
+        // The expanded transcript already replays every prior turn. Keep all
+        // reasoning carriers/signatures; only consume the replay-policy selector.
+        if let Some(reasoning) = normalized_body
+            .get_mut("reasoning")
+            .and_then(Value::as_object_mut)
+        {
+            if reasoning
+                .get("context")
+                .is_some_and(|value| value == "all_turns")
+            {
+                reasoning.remove("context");
+            }
+        }
+    }
     validate_openai_responses_target_contract(target_format, &normalized_body)?;
     let mut request = parse_request(source_format, &normalized_body, ctx)?;
     validate_runtime_request_conversion(
@@ -199,19 +251,64 @@ pub fn convert_request(
             &mut request,
         )?;
     }
-    emit_request_inner(target_format, &request, ctx)
+    let mut emitted = emit_request_inner(target_format, &request, ctx)?;
+    if target == FormatId::GeminiGenerateContent
+        && crate::formats::claude::responses_tools::is_go_gemini_provider(
+            &ctx.report_context_value(),
+        )
+    {
+        crate::provider_compat::opencode_go::adapt_gemini_request(&mut emitted, &request);
+    }
+    if crate::formats::claude::responses_tools::is_go_chat_provider(&ctx.report_context_value()) {
+        crate::provider_compat::opencode_go::adapt_chat_request(&mut emitted)?;
+    }
+    if target == FormatId::ClaudeMessages
+        && ctx.report_context_value()["provider_type"] == "opencode_go"
+    {
+        crate::provider_compat::opencode_go::adapt_messages_request(
+            &mut emitted,
+            &normalized_body,
+            &request.model,
+        );
+    }
+    Ok(emitted)
 }
 
 fn normalize_openai_responses_to_chat_body(
     source: FormatId,
     target: FormatId,
     body: &Value,
+    ctx: &FormatContext,
 ) -> Result<Value, FormatError> {
+    if source == FormatId::OpenAiResponses
+        && target == FormatId::GeminiGenerateContent
+        && crate::formats::claude::responses_tools::is_go_gemini_provider(
+            &ctx.report_context_value(),
+        )
+    {
+        return crate::formats::claude::responses_tools::ClaudeResponsesTools::normalize_go_gemini(
+            body,
+        );
+    }
+    if source == FormatId::OpenAiResponses
+        && target == FormatId::OpenAiChat
+        && crate::formats::claude::responses_tools::is_go_chat_provider(&ctx.report_context_value())
+    {
+        return crate::formats::claude::responses_tools::ClaudeResponsesTools::normalize_go_chat(
+            body,
+            ctx.mapped_model.as_deref(),
+        );
+    }
     if matches!(
         source,
         FormatId::OpenAiResponses | FormatId::OpenAiResponsesCompact
     ) && target == FormatId::ClaudeMessages
     {
+        if ctx.report_context_value()["provider_type"] == "opencode_go" {
+            return crate::formats::claude::responses_tools::ClaudeResponsesTools::normalize_go_messages(
+                body, ctx.mapped_model.as_deref(),
+            );
+        }
         return crate::formats::claude::responses_tools::ClaudeResponsesTools::normalize(body);
     }
     if !matches!(
@@ -521,7 +618,16 @@ pub fn convert_response(
         }
     }
     let mut emitted = emit_response_inner(target_format, &response, ctx)?;
-    if parse_format(source_format)? == FormatId::ClaudeMessages
+    if (parse_format(source_format)? == FormatId::ClaudeMessages
+        || crate::formats::claude::responses_tools::is_go_gemini_provider(
+            &ctx.report_context_value(),
+        )
+        || crate::formats::claude::responses_tools::is_go_functionized_responses_provider(
+            &ctx.report_context_value(),
+        )
+        || crate::formats::claude::responses_tools::is_go_chat_provider(
+            &ctx.report_context_value(),
+        ))
         && matches!(
             parse_format(target_format)?,
             FormatId::OpenAiResponses | FormatId::OpenAiResponsesCompact
@@ -531,7 +637,18 @@ pub fn convert_response(
             &ctx.report_context_value(),
         )
         .restore_response(&mut emitted)?;
-        crate::formats::claude::responses_tools::restore_native_web_response(body, &mut emitted)?;
+        if parse_format(source_format)? == FormatId::ClaudeMessages {
+            crate::formats::claude::responses_tools::restore_native_web_response(
+                body,
+                &mut emitted,
+            )?;
+        }
+        // History must contain the client-visible custom/namespace/schema
+        // identities, not the upstream function wrappers emitted above.
+        openai_responses::history::record_converted_response_history(
+            &ctx.report_context_value(),
+            &emitted,
+        );
     }
     Ok(emitted)
 }
@@ -5955,7 +6072,7 @@ mod tests {
                 json!({
                     "model": "gpt-5.6-sol",
                     "input": "hello",
-                    "reasoning": {"effort": "high", "context": "all_turns"}
+                    "reasoning": {"effort": "high", "context": "current_turn"}
                 }),
                 "thinking.openai_responses.context",
             ),

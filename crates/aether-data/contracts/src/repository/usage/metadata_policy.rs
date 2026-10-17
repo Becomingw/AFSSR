@@ -52,6 +52,7 @@ pub fn sanitize_usage_request_metadata_object(source: &Map<String, Value>) -> Op
         "client_requested_stream",
         UPSTREAM_IS_STREAM_KEY,
         "api_key_is_standalone",
+        "internal_accounting",
         WEBSOCKET_MODE_METADATA_KEY,
         PLAN_USAGE_RESERVATION_DEFERRED_METADATA_KEY,
         "transport_error",
@@ -1282,6 +1283,7 @@ mod tests {
     #[test]
     fn persistence_projection_keeps_only_bounded_settlement_facts() {
         let metadata = sanitize_usage_request_metadata(Some(json!({
+            "internal_accounting": true,
             "plan_usage_reservation_token": "550e8400-e29b-41d4-a716-446655440000",
             "billing_snapshot": {
                 "schema_version": "2.0",
@@ -1344,6 +1346,7 @@ mod tests {
             "550e8400-e29b-41d4-a716-446655440000"
         );
         assert_eq!(metadata["billing_snapshot_schema_version"], "2.0");
+        assert_eq!(metadata["internal_accounting"], true);
         assert_eq!(metadata["billing_snapshot_status"], "complete");
         assert_eq!(metadata["settlement_snapshot_schema_version"], "3.0");
         assert_eq!(

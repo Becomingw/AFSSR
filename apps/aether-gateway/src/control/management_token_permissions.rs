@@ -28,6 +28,16 @@ pub(crate) struct ManagementTokenPermissionDenied {
 
 const PERMISSION_GROUPS: &[PermissionGroup] = &[
     PermissionGroup {
+        scope: "compatibility",
+        label: "模型兼容性",
+        assignable: true,
+    },
+    PermissionGroup {
+        scope: "feedback",
+        label: "用户反馈",
+        assignable: true,
+    },
+    PermissionGroup {
         scope: "adaptive",
         label: "自适应调度",
         assignable: true,
@@ -379,6 +389,21 @@ pub(crate) fn management_token_required_permission(
     method: &http::Method,
     decision: &GatewayControlDecision,
 ) -> Option<String> {
+    if decision.public_path == "/api/admin/system/configs/internal_access_policy"
+        || (decision.public_path == "/api/admin/system/configs/password_policy_level"
+            && *method == http::Method::GET)
+    {
+        return Some(format!("admin:users:{}", access_for_method(method)));
+    }
+    if decision.public_path == "/api/admin/user-groups"
+        && *method == http::Method::GET
+        && decision
+            .admin_principal
+            .as_ref()
+            .is_some_and(|principal| principal.user_role == crate::roles::ROLE_SERVICE_ADMIN)
+    {
+        return Some("admin:models:read".into());
+    }
     let signature = decision.auth_endpoint_signature.as_deref()?.trim();
     let scope = signature.strip_prefix("admin:")?.trim();
     if scope.is_empty() {
@@ -431,6 +456,9 @@ pub(crate) fn management_token_principal_has_permission(
     let Some(principal) = decision.admin_principal.as_ref() else {
         return false;
     };
+    if !crate::roles::role_has_management_permission(&principal.user_role, required_permission) {
+        return false;
+    }
     if principal.management_token_id.is_none() {
         return true;
     }
@@ -448,6 +476,42 @@ pub(crate) fn management_token_principal_has_permission(
         .any(|permission| permission == required_permission)
 }
 
+pub(crate) fn validate_admin_role_route_permission(
+    method: &http::Method,
+    decision: &GatewayControlDecision,
+) -> Result<(), ManagementTokenPermissionDenied> {
+    let Some(principal) = decision.admin_principal.as_ref() else {
+        return Err(ManagementTokenPermissionDenied {
+            required_permission: "admin:unknown:admin".into(),
+        });
+    };
+    if crate::roles::is_full_admin_role(&principal.user_role) {
+        return Ok(());
+    }
+    // Shared configuration remains super-admin-owned, except these exact user settings.
+    if decision.public_path == "/api/admin/system/configs/password_policy_level"
+        && *method == http::Method::GET
+        && crate::roles::can_manage_users(&principal.user_role)
+    {
+        return Ok(());
+    }
+    if decision.public_path == "/api/admin/user-groups"
+        && *method == http::Method::GET
+        && crate::roles::can_manage_services(&principal.user_role)
+    {
+        return Ok(());
+    }
+    let required_permission = management_token_required_permission(method, decision)
+        .unwrap_or_else(|| "admin:unknown:admin".into());
+    if crate::roles::role_has_management_permission(&principal.user_role, &required_permission) {
+        Ok(())
+    } else {
+        Err(ManagementTokenPermissionDenied {
+            required_permission,
+        })
+    }
+}
+
 fn access_for_method(method: &http::Method) -> &'static str {
     if matches!(
         *method,
@@ -460,6 +524,9 @@ fn access_for_method(method: &http::Method) -> &'static str {
 }
 
 fn access_for_route(method: &http::Method, decision: &GatewayControlDecision) -> &'static str {
+    if method == http::Method::POST && decision.route_kind.as_deref() == Some("access_preview") {
+        return "read";
+    }
     let signature = decision.auth_endpoint_signature.as_deref();
     let route_kind = decision.route_kind.as_deref();
     let requires_admin_permission = matches!(
@@ -603,6 +670,9 @@ fn query_param_enabled(query: Option<&str>, key: &str) -> bool {
 
 fn permission_key(scope: &str, access: &str) -> &'static str {
     match (scope, access) {
+        ("compatibility", "read") => "admin:compatibility:read",
+        ("compatibility", "write") => "admin:compatibility:write",
+        ("compatibility", "admin") => "admin:compatibility:admin",
         ("adaptive", "read") => "admin:adaptive:read",
         ("adaptive", "write") => "admin:adaptive:write",
         ("adaptive", "admin") => "admin:adaptive:admin",
@@ -624,6 +694,9 @@ fn permission_key(scope: &str, access: &str) -> &'static str {
         ("endpoints_rpm", "read") => "admin:endpoints_rpm:read",
         ("endpoints_rpm", "write") => "admin:endpoints_rpm:write",
         ("endpoints_rpm", "admin") => "admin:endpoints_rpm:admin",
+        ("feedback", "read") => "admin:feedback:read",
+        ("feedback", "write") => "admin:feedback:write",
+        ("feedback", "admin") => "admin:feedback:admin",
         ("gemini_files", "read") => "admin:gemini_files:read",
         ("gemini_files", "write") => "admin:gemini_files:write",
         ("gemini_files", "admin") => "admin:gemini_files:admin",
@@ -713,6 +786,155 @@ fn is_assignable_management_token_permission(key: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn feedback_permissions_have_distinct_assignable_keys() {
+        let keys = all_assignable_management_token_permissions();
+        for access in ["read", "write", "admin"] {
+            let key = format!("admin:feedback:{access}");
+            assert!(keys.contains(&key), "missing {key}");
+        }
+        assert!(!keys.iter().any(|key| key.starts_with("admin:unknown:")));
+    }
+
+    #[test]
+    fn scoped_admin_real_routes_apply_role_then_token_ceiling() {
+        for (method, path, user_allowed, service_allowed, audit_allowed) in [
+            (http::Method::GET, "/api/admin/users", true, false, true),
+            (http::Method::POST, "/api/admin/users", true, false, false),
+            (
+                http::Method::PUT,
+                "/api/admin/system/configs/internal_access_policy",
+                true,
+                false,
+                false,
+            ),
+            (
+                http::Method::GET,
+                "/api/admin/system/configs/internal_access_policy",
+                true,
+                false,
+                true,
+            ),
+            (
+                http::Method::GET,
+                "/api/admin/user-groups",
+                true,
+                true,
+                true,
+            ),
+            (
+                http::Method::POST,
+                "/api/admin/user-groups",
+                true,
+                false,
+                false,
+            ),
+            (
+                http::Method::GET,
+                "/api/admin/models/global",
+                true,
+                true,
+                true,
+            ),
+            (
+                http::Method::POST,
+                "/api/admin/providers",
+                false,
+                true,
+                false,
+            ),
+            (
+                http::Method::PATCH,
+                "/api/admin/providers/provider-1",
+                false,
+                true,
+                false,
+            ),
+            (
+                http::Method::GET,
+                "/api/admin/system/data/export",
+                false,
+                false,
+                false,
+            ),
+            (
+                http::Method::POST,
+                "/api/admin/management-tokens",
+                false,
+                false,
+                false,
+            ),
+        ] {
+            for (role, allowed) in [
+                ("admin", true),
+                ("user_admin", user_allowed),
+                ("service_admin", service_allowed),
+                ("audit_admin", audit_allowed),
+            ] {
+                let mut decision = crate::control::classify_control_route(
+                    &method,
+                    &path.parse().unwrap(),
+                    &http::HeaderMap::new(),
+                )
+                .expect(path);
+                decision.admin_principal = Some(crate::control::GatewayAdminPrincipalContext {
+                    user_id: "role-fixture".into(),
+                    user_role: role.into(),
+                    session_id: Some("fixture".into()),
+                    management_token_id: None,
+                    management_token_permissions: None,
+                });
+                assert_eq!(
+                    validate_admin_role_route_permission(&method, &decision).is_ok(),
+                    allowed,
+                    "{role} {method} {path}"
+                );
+                // A full historical token does not expand the holder's role.
+                decision
+                    .admin_principal
+                    .as_mut()
+                    .unwrap()
+                    .management_token_id = Some("old-token".into());
+                decision
+                    .admin_principal
+                    .as_mut()
+                    .unwrap()
+                    .management_token_permissions =
+                    Some(legacy_full_management_token_permissions());
+                assert_eq!(
+                    validate_admin_role_route_permission(&method, &decision).is_ok(),
+                    allowed,
+                    "bearer {role} {path}"
+                );
+            }
+        }
+        let mut decision = crate::control::classify_control_route(
+            &http::Method::POST,
+            &"/api/admin/users".parse().unwrap(),
+            &http::HeaderMap::new(),
+        )
+        .unwrap();
+        decision.admin_principal = Some(crate::control::GatewayAdminPrincipalContext {
+            user_id: "role-fixture".into(),
+            user_role: "user_admin".into(),
+            session_id: None,
+            management_token_id: Some("read-only".into()),
+            management_token_permissions: Some(vec!["admin:users:read".into()]),
+        });
+        assert!(validate_admin_role_route_permission(&http::Method::POST, &decision).is_ok());
+        assert!(validate_management_token_admin_route_permission(
+            &http::Method::POST,
+            &decision,
+            decision
+                .admin_principal
+                .as_ref()
+                .unwrap()
+                .management_token_permissions
+                .as_deref()
+        )
+        .is_err());
+    }
 
     #[test]
     fn catalog_covers_known_admin_auth_scopes() {

@@ -2006,15 +2006,12 @@ impl UserReadRepository for InMemoryUserReadRepository {
         }
         if allowed_models_present {
             user.allowed_models = allowed_models;
-            user.allowed_models_mode = if user
-                .allowed_models
-                .as_ref()
-                .is_some_and(|values| !values.is_empty())
-            {
-                "specific".to_string()
-            } else {
-                "unrestricted".to_string()
-            };
+            user.allowed_models_mode = match user.allowed_models.as_ref() {
+                Some(models) if models.is_empty() => "deny_all",
+                Some(_) => "specific",
+                None => "inherit",
+            }
+            .to_string();
         }
         if let Some(is_active) = is_active {
             user.is_active = is_active;

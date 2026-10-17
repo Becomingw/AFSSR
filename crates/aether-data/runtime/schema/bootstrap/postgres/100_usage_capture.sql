@@ -146,6 +146,7 @@ CREATE INDEX IF NOT EXISTS ix_usage_settlement_snapshots_pricing_source
     ON public.usage_settlement_snapshots USING btree (billing_pricing_source);
 
 CREATE TABLE IF NOT EXISTS public.usage_cost_reservations (
+    model character varying(128),
     request_id character varying(128) NOT NULL,
     subject_id character varying(128) NOT NULL,
     reservation_token character varying(128) NOT NULL,
@@ -187,6 +188,9 @@ CREATE INDEX IF NOT EXISTS usage_cost_reservations_request_id_idx
 CREATE INDEX IF NOT EXISTS usage_cost_reservations_subject_admitted_at_idx
     ON public.usage_cost_reservations USING btree (subject_id, admitted_at);
 
+CREATE INDEX IF NOT EXISTS usage_cost_reservations_subject_model_admitted_at_idx
+    ON public.usage_cost_reservations USING btree (subject_id, model, admitted_at);
+
 CREATE INDEX IF NOT EXISTS usage_cost_reservations_reservation_expires_at_idx
     ON public.usage_cost_reservations USING btree (reservation_expires_at);
 
@@ -194,6 +198,7 @@ CREATE INDEX IF NOT EXISTS usage_cost_reservations_retain_until_token_idx
     ON public.usage_cost_reservations USING btree (retain_until, reservation_token);
 
 CREATE TABLE IF NOT EXISTS public.usage_request_admissions (
+    model character varying(128),
     request_id character varying(128) NOT NULL,
     subject_id character varying(128) NOT NULL,
     event_token character varying(128) NOT NULL,
@@ -219,6 +224,9 @@ CREATE TABLE IF NOT EXISTS public.usage_request_admissions (
 
 CREATE INDEX IF NOT EXISTS usage_request_admissions_subject_admitted_at_idx
     ON public.usage_request_admissions USING btree (subject_id, admitted_at);
+
+CREATE INDEX IF NOT EXISTS usage_request_admissions_subject_model_time_idx
+    ON public.usage_request_admissions (subject_id, model, admitted_at);
 
 CREATE INDEX IF NOT EXISTS usage_request_admissions_retain_until_token_idx
     ON public.usage_request_admissions USING btree (retain_until, event_token);

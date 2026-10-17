@@ -366,7 +366,7 @@ pub fn build_standard_provider_request_headers(
         &mut headers,
         input.transport.key.decrypted_auth_config.as_deref(),
     );
-    ensure_opencode_go_session(&mut headers, &input);
+    crate::opencode_go::apply_request_headers(&mut headers, &input);
     let protected_headers = if uses_vertex_query_auth {
         &["content-type"][..]
     } else {
@@ -406,87 +406,6 @@ pub fn build_standard_provider_request_headers(
         auth_header,
         auth_value,
     })
-}
-
-fn ensure_opencode_go_session(
-    headers: &mut BTreeMap<String, String>,
-    input: &StandardProviderRequestHeadersInput<'_>,
-) {
-    let Ok(base) = url::Url::parse(&input.transport.endpoint.base_url) else {
-        return;
-    };
-    if base.scheme() != "https"
-        || base.host_str() != Some("opencode.ai")
-        || !(base.path() == "/zen/go" || base.path().starts_with("/zen/go/"))
-    {
-        return;
-    }
-    if headers
-        .get("x-opencode-session")
-        .is_some_and(|value| !value.trim().is_empty())
-    {
-        return;
-    }
-    if let Some(value) = input
-        .headers
-        .get("x-opencode-session")
-        .and_then(|value| value.to_str().ok())
-        .filter(|value| !value.trim().is_empty())
-    {
-        headers.insert("x-opencode-session".to_string(), value.to_string());
-        return;
-    }
-    let session = [
-        "session_id",
-        "session-id",
-        "x-session-id",
-        "x-codex-session-id",
-        "x-aether-session-id",
-        "x-claude-code-session-id",
-        "x-opencode-session-id",
-    ]
-    .iter()
-    .find_map(|name| {
-        input
-            .headers
-            .get(*name)
-            .and_then(|value| value.to_str().ok())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-    })
-    .or_else(|| {
-        input
-            .original_request_body
-            .get("prompt_cache_key")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-    });
-    let fallback;
-    let session = match session {
-        Some(session) => session,
-        None => {
-            fallback = uuid::Uuid::new_v4().to_string();
-            &fallback
-        }
-    };
-    // Hash the client credential with the conversation ID; never forward either raw value.
-    let scope = input
-        .headers
-        .get(http::header::AUTHORIZATION)
-        .or_else(|| input.headers.get("x-api-key"))
-        .map(|value| value.as_bytes())
-        .unwrap_or_default();
-    use sha2::{Digest, Sha256};
-    let mut digest = Sha256::new();
-    digest.update(b"aether-opencode-go-session-v1");
-    digest.update((scope.len() as u64).to_be_bytes());
-    digest.update(scope);
-    digest.update(session.as_bytes());
-    headers.insert(
-        "x-opencode-session".to_string(),
-        format!("aether-{:x}", digest.finalize()),
-    );
 }
 
 #[cfg(test)]
@@ -546,6 +465,95 @@ mod tests {
         request.insert("authorization", "Bearer fixture-client-b".parse().unwrap());
         let other = go_headers("https://opencode.ai/zen/go/v1", &request, &json!({}), None);
         assert_ne!(first["x-opencode-session"], other["x-opencode-session"]);
+    }
+
+    #[test]
+    fn go_inference_url_preserves_agent_and_session_across_native_protocols() {
+        let mut request = HeaderMap::new();
+        request.insert("session_id", "fixture-thread".parse().unwrap());
+        request.insert("user-agent", "codex-test/1.0".parse().unwrap());
+        let legacy = go_headers("https://opencode.ai/zen/go/v1", &request, &json!({}), None);
+        let native = go_headers(
+            "https://opencode.ai/inference/go/v1",
+            &request,
+            &json!({}),
+            None,
+        );
+        assert_eq!(legacy["x-opencode-session"], native["x-opencode-session"]);
+        assert_eq!(native["user-agent"], "codex-test/1.0");
+        request.insert("user-agent", "curl/8.0".parse().unwrap());
+        let native = go_headers(
+            "https://opencode.ai/inference/go/v1",
+            &request,
+            &json!({}),
+            None,
+        );
+        assert_eq!(native["user-agent"], crate::opencode_go::USER_AGENT);
+        assert!(!native["user-agent"].starts_with("opencode/"));
+    }
+
+    #[test]
+    fn go_headers_preserve_admin_overrides_and_strip_hop_by_hop_fields() {
+        let mut request = HeaderMap::new();
+        request.insert("connection", "x-opencode-session".parse().unwrap());
+        request.insert("x-opencode-session", "hop-session".parse().unwrap());
+        let headers = go_headers(
+            "https://opencode.ai/inference/go/v1",
+            &request,
+            &json!({}),
+            None,
+        );
+        assert!(!headers.contains_key("x-opencode-session"));
+        let rules = json!([{"action":"set", "key":"user-agent", "value":"admin-agent/1.0"}]);
+        let headers = go_headers(
+            "https://opencode.ai/inference/go/v1",
+            &HeaderMap::new(),
+            &json!({}),
+            Some(&rules),
+        );
+        assert_eq!(headers["user-agent"], "admin-agent/1.0");
+    }
+
+    #[test]
+    fn explicit_go_provider_applies_headers_to_native_passthrough_and_test_proxy() {
+        for api_format in ["openai:responses", "openai:chat", "claude:messages"] {
+            let mut transport = sample_transport(api_format);
+            transport.provider.provider_type = "opencode_go".into();
+            transport.endpoint.base_url = "http://127.0.0.1:18084/v1".into();
+            transport.key.decrypted_api_key = "synthetic-provider-key".into();
+            let (auth_header, auth_value) =
+                crate::auth::resolve_local_standard_auth(&transport).unwrap();
+            let mut request = HeaderMap::new();
+            request.insert("session_id", "fixture-thread".parse().unwrap());
+            request.insert(
+                "authorization",
+                "Bearer synthetic-client-key".parse().unwrap(),
+            );
+            let built =
+                build_standard_provider_request_headers(StandardProviderRequestHeadersInput {
+                    transport: &transport,
+                    provider_api_format: api_format,
+                    same_format: true,
+                    headers: &request,
+                    auth_header: &auth_header,
+                    auth_value: &auth_value,
+                    extra_headers: &BTreeMap::new(),
+                    header_rules: None,
+                    provider_request_body: &json!({}),
+                    original_request_body: &json!({}),
+                    upstream_is_stream: true,
+                })
+                .unwrap();
+            assert_eq!(
+                built.headers["authorization"],
+                "Bearer synthetic-provider-key"
+            );
+            assert!(built.headers.contains_key("x-opencode-session"));
+            assert_eq!(built.headers["user-agent"], crate::opencode_go::USER_AGENT);
+            assert_eq!(built.headers["accept"], "text/event-stream");
+            assert_eq!(built.headers["accept-encoding"], "identity");
+            assert!(!built.headers.contains_key("x-api-key"));
+        }
     }
 
     #[test]

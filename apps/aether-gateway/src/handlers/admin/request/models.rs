@@ -313,7 +313,17 @@ impl<'a> AdminAppState<'a> {
         provider_id: &str,
         payload: AdminImportProviderModelsRequest,
     ) -> Result<serde_json::Value, String> {
+        if payload.model_ids.len() > 1000 {
+            return Err("每次最多导入 1000 个模型".to_string());
+        }
         let tiered_pricing = normalize_json_object(payload.tiered_pricing, "tiered_pricing")?;
+        let catalog = self
+            .read_admin_external_models_cache("provider-model-import")
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| json!({}));
+        let catalog_index = aether_admin::model_catalog::CatalogIndex::new(&catalog);
 
         let existing_models = self
             .list_admin_provider_models(&AdminProviderModelListQuery {
@@ -331,6 +341,7 @@ impl<'a> AdminAppState<'a> {
 
         let mut success = Vec::new();
         let mut errors = Vec::new();
+        let mut seen = BTreeSet::new();
 
         for model_id in payload.model_ids {
             let trimmed = match admin_provider_models_write_pure::normalize_admin_import_model_id(
@@ -346,6 +357,9 @@ impl<'a> AdminAppState<'a> {
                     continue;
                 }
             };
+            if !seen.insert(trimmed.clone()) {
+                continue;
+            }
 
             if let Some(existing) = existing_by_name.get(trimmed.as_str()) {
                 success.push(json!({
@@ -364,26 +378,85 @@ impl<'a> AdminAppState<'a> {
                 .await
                 .map_err(|_| admin_model_repository_error("lookup_global_model_for_import"))?
             {
-                existing
+                if let Some(item) = catalog_index.find(&trimmed, existing.config.as_ref()) {
+                    let record = aether_data_contracts::repository::global_models::UpdateAdminGlobalModelRecord::new(
+                        existing.id.clone(), existing.display_name.clone(), existing.is_active,
+                        existing.default_price_per_request,
+                        item.pricing().or_else(|| existing.default_tiered_pricing.clone()),
+                        item.capabilities(existing.supported_capabilities.as_ref()),
+                        Some(item.config(existing.config.as_ref())),
+                    ).map_err(|err| err.to_string())?;
+                    self.update_admin_global_model(&record)
+                        .await
+                        .map_err(|_| {
+                            admin_model_repository_error("enrich_global_model_for_import")
+                        })?
+                        .unwrap_or(existing)
+                } else {
+                    existing
+                }
             } else {
-                let created = self
-                    .create_admin_global_model(
-                        &admin_provider_models_write_pure::build_admin_import_global_model_record(
-                            Uuid::new_v4().to_string(),
-                            trimmed.to_string(),
-                            payload.price_per_request,
-                            tiered_pricing.clone(),
-                        )
-                        .map_err(|err| err.to_string())?,
-                    )
-                    .await
-                    .map_err(|_| admin_model_repository_error("create_global_model_for_import"))?;
-                let Some(created) = created else {
-                    errors.push(json!({"model_id": trimmed, "error": "Create GlobalModel failed"}));
-                    continue;
+                let metadata = catalog_index.find(&trimmed, None);
+                let mut record =
+                    admin_provider_models_write_pure::build_admin_import_global_model_record(
+                        Uuid::new_v4().to_string(),
+                        trimmed.to_string(),
+                        payload.price_per_request,
+                        tiered_pricing
+                            .clone()
+                            .or_else(|| metadata.and_then(|item| item.pricing())),
+                    )?;
+                if let Some(item) = metadata {
+                    record.display_name = item
+                        .model
+                        .get("name")
+                        .and_then(serde_json::Value::as_str)
+                        .filter(|name| !name.trim().is_empty())
+                        .unwrap_or(&trimmed)
+                        .to_string();
+                    record.config = Some(item.config(None));
+                    record.supported_capabilities = item.capabilities(None);
+                    // Do not activate an unpriceable catalog entry as an accidentally free model.
+                    if tiered_pricing.is_none()
+                        && payload.price_per_request.is_none()
+                        && item.pricing().is_none()
+                    {
+                        record.is_active = false;
+                    }
+                } else {
+                    record.config = Some(
+                        json!({"catalog_metadata_status":"unmatched", "streaming":true,"context_limit":32768,"output_limit":4096}),
+                    );
+                    record.is_active =
+                        tiered_pricing.is_some() || payload.price_per_request.is_some();
+                }
+                let record = match aether_data_contracts::repository::global_models::CreateAdminGlobalModelRecord::new(
+                    record.id, record.name, record.display_name, record.is_active,
+                    record.default_price_per_request, record.default_tiered_pricing,
+                    record.supported_capabilities, record.config,
+                ) {
+                    Ok(record) => record,
+                    Err(_) => {
+                        errors.push(json!({"model_id":trimmed,"error":"模型目录与显式计费配置不兼容，请检查模型能力和费用"}));
+                        continue;
+                    }
                 };
-                created_global_model = true;
-                created
+                match self.create_admin_global_model(&record).await {
+                    Ok(Some(created)) => {
+                        created_global_model = true;
+                        created
+                    }
+                    // Another provider import may have created the same global ID concurrently.
+                    Ok(None) | Err(_) => {
+                        match self.get_admin_global_model_by_name(&trimmed).await {
+                            Ok(Some(existing)) => existing,
+                            _ => {
+                                errors.push(json!({"model_id":trimmed,"error":admin_model_repository_error("create_global_model_for_import")}));
+                                continue;
+                            }
+                        }
+                    }
+                }
             };
 
             let record =
@@ -405,6 +478,8 @@ impl<'a> AdminAppState<'a> {
                         "global_model_name": global_model.name,
                         "provider_model_id": created.id,
                         "created_global_model": created_global_model,
+                        "catalog_metadata_status": global_model.config.as_ref().and_then(|v| v.get("catalog_metadata_status")),
+                        "global_model_active": global_model.is_active,
                     }));
                 }
                 Ok(None) => errors.push(json!({

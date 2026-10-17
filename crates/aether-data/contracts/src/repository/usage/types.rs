@@ -1916,6 +1916,11 @@ pub trait UsageReadRepository: Send + Sync {
         query: &UsageLeaderboardQuery,
     ) -> Result<Vec<StoredUsageLeaderboardSummary>, crate::DataLayerError>;
 
+    async fn summarize_usage_activity(
+        &self,
+        query: &super::UsageActivityQuery,
+    ) -> Result<Vec<super::UsageActivityRow>, crate::DataLayerError>;
+
     async fn list_recent_usage_audits(
         &self,
         user_id: Option<&str>,

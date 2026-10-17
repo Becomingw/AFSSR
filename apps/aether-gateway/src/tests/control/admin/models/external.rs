@@ -26,6 +26,178 @@ use crate::handlers::admin::{
 };
 use crate::tunnel::{tunnel_protocol, TunnelProxyConn};
 
+#[tokio::test]
+async fn shared_catalog_import_and_explicit_refresh_sync_metadata_without_touching_channel_overrides(
+) {
+    use super::super::super::{
+        sample_admin_global_model, sample_admin_provider_model, sample_provider,
+    };
+    use aether_data::repository::global_models::InMemoryGlobalModelReadRepository;
+    use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
+    use aether_data_contracts::repository::global_models::{
+        AdminProviderModelListQuery, GlobalModelReadRepository,
+    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let hits = Arc::new(AtomicUsize::new(0));
+    let source_hits = hits.clone();
+    let upstream = Router::new().route("/api.json", any(move || {
+        let hits = source_hits.clone();
+        async move {
+            let version = hits.fetch_add(1, Ordering::SeqCst) + 1;
+            if version > 2 { return (StatusCode::BAD_GATEWAY, axum::Json(json!({"error":"fixture unavailable"}))); }
+            (StatusCode::OK, axum::Json(json!({"openai":{"name":"OpenAI","npm":"@ai-sdk/openai","models":{
+                "catalog-model":{"name":"Catalog Model","tool_call":true,"reasoning":true,"limit":{"context":version * 100000,"output":8192},"cost":{"input":version,"output":version * 3,"cache_read":0.1}},
+                "existing":{"name":"Existing","tool_call":true,"cost":{"input":version,"output":version * 2}}
+            }}})))
+        }
+    }));
+    let (source_url, source_handle) = start_server(upstream).await;
+    let _guard = set_admin_external_models_source_url_for_tests(&format!("{source_url}/api.json"));
+    let mut existing = sample_admin_global_model("global-existing", "existing", "My custom label");
+    existing.config = Some(json!({"custom_setting":true}));
+    let channel =
+        sample_admin_provider_model("channel-existing", "channel", "global-existing", "existing");
+    let repository = Arc::new(
+        InMemoryGlobalModelReadRepository::seed(Vec::new())
+            .with_admin_global_models(vec![existing])
+            .with_admin_provider_models(vec![channel.clone()]),
+    );
+    let state = AppState::new().expect("state").with_data_state_for_tests(
+        GatewayDataState::with_provider_catalog_reader_for_tests(Arc::new(
+            InMemoryProviderCatalogReadRepository::seed(
+                vec![sample_provider("channel", "openai", 10)],
+                vec![],
+                vec![],
+            ),
+        ))
+        .with_global_model_repository_for_tests(repository.clone()),
+    );
+    let (url, handle) = start_server(build_router_with_state(state)).await;
+    let client = reqwest::Client::new();
+    let catalog_url = format!("{url}/api/admin/models/external");
+    assert_eq!(
+        trusted_admin(client.get(&catalog_url))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        trusted_admin(client.get(&catalog_url))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+    let response = trusted_admin(client.post(format!(
+        "{url}/api/admin/providers/channel/import-from-upstream"
+    )))
+    .json(&json!({"model_ids":["catalog-model","unknown-model","catalog-model"]}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let imported: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(imported["success"].as_array().unwrap().len(), 2);
+    let model_id = imported["success"][0]["global_model_id"].as_str().unwrap();
+    let read = |id: String| {
+        let repository = repository.clone();
+        async move {
+            repository
+                .get_admin_global_model_by_id(&id)
+                .await
+                .unwrap()
+                .unwrap()
+        }
+    };
+    let model = read(model_id.to_string()).await;
+    assert_eq!(model.display_name, "Catalog Model");
+    assert_eq!(model.config.as_ref().unwrap()["context_limit"], 100000);
+    assert_eq!(
+        model.config.as_ref().unwrap()["catalog_api_formats"],
+        json!(["openai:responses"])
+    );
+    assert_eq!(
+        model.default_tiered_pricing.as_ref().unwrap()["tiers"][0]["input_price_per_1m"],
+        1.0
+    );
+    let unknown_id = imported["success"][1]["global_model_id"].as_str().unwrap();
+    assert_eq!(
+        read(unknown_id.to_string()).await.config.unwrap()["catalog_metadata_status"],
+        "unmatched"
+    );
+    assert_eq!(
+        hits.load(Ordering::SeqCst),
+        1,
+        "import reuses the shared snapshot"
+    );
+    let refresh_url = format!("{url}/api/admin/models/external/refresh");
+    let response = trusted_admin(client.post(&refresh_url))
+        .json(&json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let refreshed: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(refreshed["sync"]["updated"], 2);
+    assert_eq!(refreshed["sync"]["unmatched"], 1);
+    assert_eq!(refreshed["sync"]["failed"], json!([]));
+    assert_eq!(
+        read(model_id.to_string()).await.config.unwrap()["context_limit"],
+        200000
+    );
+    let original = read("global-existing".into()).await;
+    assert_eq!(original.display_name, "My custom label");
+    assert_eq!(original.config.unwrap()["custom_setting"], true);
+    let associations = repository
+        .list_admin_provider_models(&AdminProviderModelListQuery {
+            provider_id: "channel".into(),
+            offset: 0,
+            limit: 100,
+            is_active: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(associations.len(), 3);
+    let unchanged = associations
+        .iter()
+        .find(|item| item.id == channel.id)
+        .unwrap();
+    assert_eq!(unchanged.tiered_pricing, channel.tiered_pricing);
+    assert_eq!(
+        unchanged.provider_model_mappings,
+        channel.provider_model_mappings
+    );
+    let response = trusted_admin(client.post(&refresh_url))
+        .json(&json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let snapshot: serde_json::Value = trusted_admin(client.get(&catalog_url))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        snapshot["openai"]["models"]["catalog-model"]["limit"]["context"],
+        200000
+    );
+    assert_eq!(
+        hits.load(Ordering::SeqCst),
+        3,
+        "failed refresh preserves the old snapshot without another fetch"
+    );
+    handle.abort();
+    source_handle.abort();
+}
+
 fn trusted_admin(request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
     request
         .header(GATEWAY_HEADER, "rust-phase3b")
@@ -620,13 +792,30 @@ async fn gateway_handles_admin_external_models_locally_with_trusted_admin_princi
     assert_eq!(response.status(), StatusCode::OK);
     let payload: serde_json::Value = response.json().await.expect("json body should parse");
     assert_eq!(payload["proxy_node_id"], "manual-node");
-    assert_eq!(payload["cache_cleared"], true);
+    assert_eq!(payload["cache_cleared"], false);
 
     let response = trusted_admin(client.get(format!("{gateway_url}/api/admin/models/external")))
         .send()
         .await
         .expect("proxied request should succeed");
     assert_eq!(response.status(), StatusCode::OK);
+    let payload: serde_json::Value = response.json().await.expect("json body should parse");
+    assert_eq!(
+        payload["direct-provider"]["models"]["direct"]["name"],
+        "DIRECT"
+    );
+    assert_eq!(*proxy_hits.lock().expect("mutex should lock"), 0);
+    // Egress changes only apply when the catalog is explicitly refreshed.
+    let response =
+        trusted_admin(client.delete(format!("{gateway_url}/api/admin/models/external/cache")))
+            .send()
+            .await
+            .expect("clear should succeed");
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = trusted_admin(client.get(format!("{gateway_url}/api/admin/models/external")))
+        .send()
+        .await
+        .expect("refresh should succeed");
     let payload: serde_json::Value = response.json().await.expect("json body should parse");
     assert_eq!(
         payload["manual-provider"]["models"]["manual"]["name"],

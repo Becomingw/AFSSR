@@ -9,6 +9,40 @@ use crate::{AppState, GatewayError};
 
 const RESPONSE_HISTORY_SECRET_PURPOSE: &str = "openai-response-history";
 
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn prepare_go_native_response_history(
+    state: &AppState,
+    request: &Value,
+    client_api_format: &str,
+    provider_api_format: &str,
+    provider_type: &str,
+    model: &str,
+    scope: &str,
+) -> Result<Option<Value>, GatewayError> {
+    if !provider_type.eq_ignore_ascii_case("opencode_go")
+        || normalize_api_format_alias(client_api_format) != "openai:responses"
+        || normalize_api_format_alias(provider_api_format) != "openai:responses"
+        || !crate::ai_serving::uses_gateway_response_history(model)
+    {
+        return Ok(None);
+    }
+    hydrate_openai_response_history(
+        state,
+        request,
+        client_api_format,
+        provider_api_format,
+        scope,
+    )
+    .await?;
+    crate::ai_serving::expand_go_native_response_history(request, model, Some(scope))
+        .map(Some)
+        .map_err(|_| GatewayError::Client {
+            status: axum::http::StatusCode::BAD_REQUEST,
+            message: "Go Muse response history is unavailable for this credential scope"
+                .to_string(),
+        })
+}
+
 pub(crate) async fn hydrate_openai_response_history(
     state: &AppState,
     request: &Value,
@@ -19,7 +53,7 @@ pub(crate) async fn hydrate_openai_response_history(
     if normalize_api_format_alias(client_api_format) != "openai:responses"
         || !matches!(
             normalize_api_format_alias(provider_api_format).as_str(),
-            "openai:chat" | "claude:messages"
+            "openai:chat" | "claude:messages" | "gemini:generate_content" | "openai:responses"
         )
     {
         return Ok(());
@@ -249,6 +283,74 @@ mod tests {
             response_id,
             Some("unrelated-scope")
         ));
+    }
+
+    #[tokio::test]
+    async fn muse_preparation_expands_encrypted_history_only_for_owned_scope() {
+        let state = response_history_test_state();
+        let id = "resp_gateway_muse_preparation_v1";
+        let scope = "muse-preparation-scope";
+        persist_response_history_record(
+            &state,
+            ResponseHistoryRecord {
+                storage_key: response_history_storage_key(id, Some(scope)),
+                payload: response_history_payload(id, scope, "synthetic prior turn"),
+                ttl: Duration::from_secs(3600),
+            },
+        )
+        .await;
+        let request = json!({"previous_response_id":id,"include":["reasoning.encrypted_content"],
+            "input":[{"role":"user","content":"synthetic next turn"}]});
+        let prepared = super::prepare_go_native_response_history(
+            &state,
+            &request,
+            "openai:responses",
+            "openai:responses",
+            "opencode_go",
+            "muse-spark-1.3-contributor",
+            scope,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(prepared.get("previous_response_id").is_none());
+        assert_eq!(prepared["input"].as_array().unwrap().len(), 2);
+        assert_eq!(prepared["include"], request["include"]);
+        let error = super::prepare_go_native_response_history(
+            &state,
+            &request,
+            "openai:responses",
+            "openai:responses",
+            "opencode_go",
+            "muse-spark-1.3-contributor",
+            "wrong-scope",
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            crate::GatewayError::Client {
+                status: axum::http::StatusCode::BAD_REQUEST,
+                ..
+            }
+        ));
+        for (provider, model) in [
+            ("custom", "muse-spark-1.3-contributor"),
+            ("opencode_go", "gpt-6-luna"),
+        ] {
+            assert!(super::prepare_go_native_response_history(
+                &state,
+                &request,
+                "openai:responses",
+                "openai:responses",
+                provider,
+                model,
+                scope
+            )
+            .await
+            .unwrap()
+            .is_none());
+        }
     }
 
     #[tokio::test]

@@ -3179,6 +3179,7 @@ mod tests {
     #[test]
     fn rejects_invalid_settlement_input() {
         let input = UsageSettlementInput {
+            charge_wallet: true,
             request_id: "".to_string(),
             user_id: None,
             api_key_id: None,

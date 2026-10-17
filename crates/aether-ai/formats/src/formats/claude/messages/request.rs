@@ -17,7 +17,8 @@ use crate::{
         claude_system_to_canonical_instructions, claude_thinking_to_canonical,
         claude_tool_choice_to_canonical, claude_tools_to_canonical,
         compact_canonical_claude_messages, insert_f64, mark_claude_messages_request_source,
-        namespace_extension_object, CanonicalRequest,
+        namespace_extension_object, CanonicalContentBlock, CanonicalInstruction, CanonicalRequest,
+        CanonicalRole,
     },
 };
 
@@ -118,7 +119,25 @@ pub fn to_raw(
         "max_tokens".to_string(),
         Value::from(canonical.generation.max_tokens.unwrap_or(8192)),
     );
-    if let Some(system) = canonical_instructions_to_claude_system(&canonical.instructions) {
+    let mut instructions = canonical.instructions.clone();
+    for message in &canonical.messages {
+        if matches!(
+            message.role,
+            CanonicalRole::System | CanonicalRole::Developer
+        ) {
+            for block in &message.content {
+                let CanonicalContentBlock::Text { text, extensions } = block else {
+                    return None;
+                };
+                instructions.push(CanonicalInstruction {
+                    role: message.role.clone(),
+                    text: text.clone(),
+                    extensions: extensions.clone(),
+                });
+            }
+        }
+    }
+    if let Some(system) = canonical_instructions_to_claude_system(&instructions) {
         output.insert("system".to_string(), system);
     } else if let Some(system) = canonical
         .system
@@ -163,7 +182,7 @@ pub fn to_raw(
             .or_else(|| openai_effort.and_then(map_openai_reasoning_effort_to_thinking_budget));
         let uses_adaptive = claude_model_uses_adaptive_effort(mapped_model)
             || claude_model_uses_adaptive_effort(canonical.model.as_str());
-        if uses_adaptive && openai_effort == Some("none") {
+        if openai_effort == Some("none") {
             output.insert("thinking".to_string(), json!({"type":"disabled"}));
         } else if thinking.enabled || budget_tokens.is_some() {
             let thinking_config = if uses_adaptive {
@@ -171,7 +190,8 @@ pub fn to_raw(
             } else {
                 json!({
                     "type": "enabled",
-                    "budget_tokens": budget_tokens.unwrap_or(1024),
+                    "budget_tokens": budget_tokens.unwrap_or(1024)
+                        .min(canonical.generation.max_tokens.unwrap_or(8192).saturating_sub(1)),
                 })
             };
             output.insert("thinking".to_string(), thinking_config);
@@ -185,6 +205,19 @@ pub fn to_raw(
                     "effort": output_effort,
                 }),
             );
+        }
+    }
+    if let Some(format) = &canonical.response_format {
+        match format.format_type.as_str() {
+            "text" => {}
+            "json_schema" => {
+                let schema = format.json_schema.as_ref()?;
+                let schema = schema.get("schema").unwrap_or(schema);
+                let config = output.entry("output_config").or_insert_with(|| json!({}));
+                config["format"] = json!({"type":"json_schema", "schema":schema});
+            }
+            // Do not claim a constrained output format while dropping it.
+            _ => return None,
         }
     }
     let mut extension = namespace_extension_object(&canonical.extensions, "claude", &output);

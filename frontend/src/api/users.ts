@@ -3,7 +3,7 @@ import { cachedRequest } from '@/utils/cache'
 import type { UserSession as SessionRecord } from '@/types/session'
 import type { BillingPlan, UserPlanEntitlement } from './billing'
 
-export type UserRole = 'admin' | 'audit_admin' | 'user'
+export type UserRole = 'admin' | 'audit_admin' | 'user_admin' | 'service_admin' | 'user'
 export type ListPolicyMode = 'inherit' | 'unrestricted' | 'specific' | 'deny_all'
 export type RateLimitPolicyMode = 'inherit' | 'system' | 'custom'
 export type AdminUserSortBy = 'created_at'
@@ -69,6 +69,7 @@ export interface CreateUserRequest {
 }
 
 export interface UpdateUserRequest {
+  allowed_models?: string[] | null
   email?: string
   is_active?: boolean
   role?: UserRole

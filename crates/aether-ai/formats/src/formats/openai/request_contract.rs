@@ -161,6 +161,29 @@ fn finalize_openai_provider_request_with_codex_model_capabilities_and_reasoning_
         finalization.require_body_stream_field,
     );
     super::search::apply_openai_search_request_projection(body, finalization.provider_api_format);
+    if finalization
+        .provider_type
+        .eq_ignore_ascii_case("opencode_go")
+        && crate::api_format_alias_matches(finalization.provider_api_format, "claude:messages")
+    {
+        let source = body.clone();
+        crate::provider_compat::opencode_go::adapt_messages_request(
+            body,
+            &source,
+            finalization.provider_model,
+        );
+    }
+    if finalization
+        .provider_type
+        .eq_ignore_ascii_case("opencode_go")
+        && crate::api_format_alias_matches(finalization.provider_api_format, "openai:responses")
+    {
+        crate::provider_compat::opencode_go::adapt_native_responses_request_for_model(
+            body,
+            finalization.provider_model,
+        )
+        .map_err(OpenAiProviderRequestContractViolation::Responses)?;
+    }
     let provider_model = body
         .get("model")
         .and_then(Value::as_str)

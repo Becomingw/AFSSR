@@ -47,6 +47,9 @@ enum SqlBackendRef<'a> {
 
 #[derive(Debug, Clone, Default)]
 pub struct DataBackends {
+    account_usage:
+        Option<std::sync::Arc<dyn crate::repository::account_usage::AccountUsageRepository>>,
+    feedback: Option<std::sync::Arc<dyn crate::repository::feedback::FeedbackRepository>>,
     config: DataLayerConfig,
     #[cfg(feature = "postgres")]
     postgres: Option<PostgresBackend>,
@@ -128,6 +131,42 @@ impl DataBackends {
         );
 
         Ok(Self {
+            account_usage: {
+                #[cfg(feature = "postgres")]
+                {
+                    postgres.as_ref().map(|backend| {
+                        std::sync::Arc::new(
+                            crate::repository::account_usage::PostgresAccountUsageRepository::new(
+                                backend.pool_clone(),
+                            ),
+                        )
+                            as std::sync::Arc<
+                                dyn crate::repository::account_usage::AccountUsageRepository,
+                            >
+                    })
+                }
+                #[cfg(not(feature = "postgres"))]
+                {
+                    None
+                }
+            },
+            feedback: {
+                #[cfg(feature = "postgres")]
+                {
+                    postgres.as_ref().map(|backend| {
+                        std::sync::Arc::new(
+                            crate::repository::feedback::PostgresFeedbackRepository::new(
+                                backend.pool_clone(),
+                            ),
+                        )
+                            as std::sync::Arc<dyn crate::repository::feedback::FeedbackRepository>
+                    })
+                }
+                #[cfg(not(feature = "postgres"))]
+                {
+                    None
+                }
+            },
             config,
             #[cfg(feature = "postgres")]
             postgres,
@@ -140,6 +179,33 @@ impl DataBackends {
 
     pub fn config(&self) -> &DataLayerConfig {
         &self.config
+    }
+
+    pub fn feedback(
+        &self,
+    ) -> Option<std::sync::Arc<dyn crate::repository::feedback::FeedbackRepository>> {
+        self.feedback.clone()
+    }
+
+    pub fn account_usage(
+        &self,
+    ) -> Option<std::sync::Arc<dyn crate::repository::account_usage::AccountUsageRepository>> {
+        self.account_usage.clone()
+    }
+    pub fn with_account_usage(
+        mut self,
+        repository: std::sync::Arc<dyn crate::repository::account_usage::AccountUsageRepository>,
+    ) -> Self {
+        self.account_usage = Some(repository);
+        self
+    }
+
+    pub fn with_feedback_repository(
+        mut self,
+        repository: std::sync::Arc<dyn crate::repository::feedback::FeedbackRepository>,
+    ) -> Self {
+        self.feedback = Some(repository);
+        self
     }
 
     #[cfg(feature = "postgres")]
@@ -170,7 +236,9 @@ impl DataBackends {
     }
 
     pub fn has_runtime_backends(&self) -> bool {
-        self.leases.has_any()
+        self.feedback.is_some()
+            || self.account_usage.is_some()
+            || self.leases.has_any()
             || self.read.has_any()
             || self.transactions.has_any()
             || self.write.has_any()

@@ -15,6 +15,7 @@ import GlobalModelFormDialog from '../GlobalModelFormDialog.vue'
 const modelsDevMocks = vi.hoisted(() => ({
   getModelsDevList: vi.fn(),
   refreshModelsDevList: vi.fn(),
+  refreshModelsDevCatalog: vi.fn(),
 }))
 
 const globalModelMocks = vi.hoisted(() => ({
@@ -26,6 +27,7 @@ const globalModelMocks = vi.hoisted(() => ({
 vi.mock('@/api/models-dev', () => ({
   getModelsDevList: modelsDevMocks.getModelsDevList,
   refreshModelsDevList: modelsDevMocks.refreshModelsDevList,
+  refreshModelsDevCatalog: modelsDevMocks.refreshModelsDevCatalog,
   getProviderLogoUrl: (providerId: string) => `/logos/${providerId}.svg`,
 }))
 
@@ -587,8 +589,8 @@ describe('GlobalModelFormDialog preset replacement', () => {
     syncButton.click()
     await settle()
 
-    expect(modelsDevMocks.refreshModelsDevList).toHaveBeenCalledOnce()
-    expect(modelsDevMocks.refreshModelsDevList).toHaveBeenCalledWith(false)
+    expect(modelsDevMocks.refreshModelsDevList).not.toHaveBeenCalled()
+    expect(modelsDevMocks.getModelsDevList).toHaveBeenCalledWith(false)
     expect(globalModelMocks.updateGlobalModel).toHaveBeenCalledWith(
       existingStaleModel.id,
       {
@@ -670,7 +672,7 @@ describe('GlobalModelFormDialog preset replacement', () => {
       default_tiered_pricing: alternateStalePreset.tieredPricing!,
       config: nextConfig,
     }
-    modelsDevMocks.refreshModelsDevList.mockResolvedValue([
+    modelsDevMocks.getModelsDevList.mockResolvedValue([
       unavailableStalePreset,
       alternateStalePreset,
     ])
@@ -739,7 +741,7 @@ describe('GlobalModelFormDialog preset replacement', () => {
 
   it('opens the compact source popover for multiple usable providers without a remembered source', async () => {
     const existingStaleModel = buildExistingStaleModel()
-    modelsDevMocks.refreshModelsDevList.mockResolvedValue([
+    modelsDevMocks.getModelsDevList.mockResolvedValue([
       stalePreset,
       alternateStalePreset,
     ])

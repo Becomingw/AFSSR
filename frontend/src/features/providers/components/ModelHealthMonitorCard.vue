@@ -108,7 +108,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from "vue";
+import { ref, onMounted, onUnmounted, watch } from "vue";
 import { Bot, Loader2 } from "lucide-vue-next";
 import Card from "@/components/ui/card.vue";
 import Badge from "@/components/ui/badge.vue";
@@ -159,8 +159,12 @@ const loadingMonitors = ref(false);
 const monitors = ref<ModelStatusMonitor[]>([]);
 const generatedAt = ref<string | null>(null);
 const lookbackHours = ref("6");
+let monitorRequest: AbortController | null = null;
 
 async function loadMonitors() {
+  monitorRequest?.abort();
+  const request = new AbortController();
+  monitorRequest = request;
   loadingMonitors.value = true;
   try {
     const params = {
@@ -170,15 +174,17 @@ async function loadMonitors() {
     };
 
     const data = props.isAdmin
-      ? await getModelStatusMonitor(params)
-      : await getPublicModelStatusMonitor(params);
+      ? await getModelStatusMonitor(params, request.signal)
+      : await getPublicModelStatusMonitor(params, request.signal);
+    if (request.signal.aborted) return;
     monitors.value = data.models || [];
     generatedAt.value = data.generated_at || null;
     emitSummary();
   } catch (err: unknown) {
+    if (request.signal.aborted) return;
     showError(parseApiError(err, "加载模型健康监控数据失败"), "错误");
   } finally {
-    loadingMonitors.value = false;
+    if (monitorRequest === request) loadingMonitors.value = false;
   }
 }
 
@@ -233,11 +239,12 @@ function emitSummary() {
   emit("summaryUpdated", summarizeHealthMonitorItems(monitors.value));
 }
 
-watch(lookbackHours, () => {
+watch([lookbackHours, () => props.isAdmin], () => {
   loadMonitors();
 });
 
 onMounted(() => {
   refreshData();
 });
+onUnmounted(() => monitorRequest?.abort());
 </script>

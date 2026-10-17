@@ -1,0 +1,193 @@
+[table.feedback_issues]
+domain = "feedback"
+order = 10
+primary_key = ["id"]
+
+[[table.feedback_issues.columns]]
+name = "id"
+type = "text_id"
+length = 36
+
+[[table.feedback_issues.columns]]
+name = "owner_id"
+type = "text_id"
+length = 36
+nullable = true
+
+[[table.feedback_issues.columns]]
+name = "title"
+type = "text"
+length = 200
+
+[[table.feedback_issues.columns]]
+name = "description"
+type = "long_text"
+
+[[table.feedback_issues.columns]]
+name = "category"
+type = "text"
+length = 32
+
+[[table.feedback_issues.columns]]
+name = "model"
+type = "text"
+length = 200
+nullable = true
+
+[[table.feedback_issues.columns]]
+name = "request_id"
+type = "text"
+length = 128
+nullable = true
+
+[[table.feedback_issues.columns]]
+name = "status"
+type = "text"
+length = 16
+
+[[table.feedback_issues.columns]]
+name = "visibility"
+type = "text"
+length = 16
+default = "private"
+
+[[table.feedback_issues.columns]]
+name = "version"
+type = "int64"
+
+[[table.feedback_issues.columns]]
+name = "activity_seq"
+type = "int64"
+
+[[table.feedback_issues.columns]]
+name = "created_at"
+type = "unix_seconds"
+
+[[table.feedback_issues.columns]]
+name = "updated_at"
+type = "unix_seconds"
+
+[[table.feedback_issues.columns]]
+name = "creation_key"
+type = "text"
+length = 36
+
+[[table.feedback_issues.columns]]
+name = "creation_hash"
+type = "text"
+length = 64
+
+[table.feedback_events]
+domain = "feedback"
+order = 20
+primary_key = ["seq"]
+
+[[table.feedback_events.columns]]
+name = "seq"
+type = "int64"
+auto_increment = true
+
+[[table.feedback_events.columns]]
+name = "issue_id"
+type = "text_id"
+length = 36
+
+[[table.feedback_events.columns]]
+name = "actor_id"
+type = "text_id"
+length = 36
+nullable = true
+
+[[table.feedback_events.columns]]
+name = "actor_role"
+type = "text"
+length = 32
+
+[[table.feedback_events.columns]]
+name = "kind"
+type = "text"
+length = 16
+
+[[table.feedback_events.columns]]
+name = "visibility"
+type = "text"
+length = 16
+default = "private"
+
+[[table.feedback_events.columns]]
+name = "content"
+type = "long_text"
+nullable = true
+
+[[table.feedback_events.columns]]
+name = "from_status"
+type = "text"
+length = 16
+nullable = true
+
+[[table.feedback_events.columns]]
+name = "to_status"
+type = "text"
+length = 16
+nullable = true
+
+[[table.feedback_events.columns]]
+name = "created_at"
+type = "unix_seconds"
+
+[[table.feedback_events.columns]]
+name = "client_request_id"
+type = "text"
+length = 36
+nullable = true
+
+[[table.feedback_events.columns]]
+name = "payload_hash"
+type = "text"
+length = 64
+nullable = true
+
+[[table.feedback_issues.uniques]]
+name = "uq_feedback_creation"
+columns = ["owner_id", "creation_key"]
+
+[[table.feedback_issues.indexes]]
+name = "idx_feedback_owner_activity"
+columns = ["owner_id", "activity_seq"]
+
+[[table.feedback_issues.indexes]]
+name = "idx_feedback_activity"
+columns = ["activity_seq"]
+
+[[table.feedback_issues.indexes]]
+name = "idx_feedback_public_activity"
+columns = ["visibility", "activity_seq"]
+
+[[table.feedback_events.uniques]]
+name = "uq_feedback_command"
+columns = ["actor_id", "client_request_id"]
+
+[[table.feedback_events.indexes]]
+name = "idx_feedback_events_issue"
+columns = ["issue_id", "seq"]
+
+[[table.feedback_issues.foreign_keys]]
+name = "fk_feedback_issues_owner_id"
+columns = ["owner_id"]
+references_table = "users"
+references_columns = ["id"]
+on_delete = "set_null"
+
+[[table.feedback_events.foreign_keys]]
+name = "fk_feedback_events_actor_id"
+columns = ["actor_id"]
+references_table = "users"
+references_columns = ["id"]
+on_delete = "set_null"
+
+[[table.feedback_events.foreign_keys]]
+name = "fk_feedback_events_issue_id"
+columns = ["issue_id"]
+references_table = "feedback_issues"
+references_columns = ["id"]
+on_delete = "cascade"

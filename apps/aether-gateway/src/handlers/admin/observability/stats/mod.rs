@@ -21,6 +21,18 @@ pub(crate) async fn maybe_build_local_admin_stats_response(
     if request_context.route_family() != Some("stats_manage") {
         return Ok(None);
     }
+    if request_context.method() == axum::http::Method::GET
+        && request_context
+            .decision()
+            .and_then(|d| d.route_kind.as_deref())
+            == Some("leaderboard_overview")
+    {
+        return Ok(Some(
+            state
+                .leaderboard_overview(request_context.query_string())
+                .await?,
+        ));
+    }
 
     if let Some(response) =
         provider_quota_routes::maybe_build_local_admin_stats_provider_quota_response(

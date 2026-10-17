@@ -175,6 +175,16 @@ ancestor_target="${TEST_ROOT}/ancestor-target"
 ancestor_link="${TEST_ROOT}/ancestor-link"
 mkdir -p "${ancestor_target}"
 ln -s "${ancestor_target}" "${ancestor_link}"
-assert_rejected validate_privileged_path_ancestor "${ancestor_link}/managed"
+if [[ "${EUID}" -eq 0 ]]; then
+    # Trusted root-owned aliases are supported (for example /var on macOS).
+    validate_privileged_path_ancestor "${ancestor_link}/managed"
+    chmod 0777 "${ancestor_target}"
+    assert_rejected validate_privileged_path_ancestor "${ancestor_link}/managed"
+    chmod 0700 "${ancestor_target}"
+    chown -h 65534 "${ancestor_link}"
+    assert_rejected validate_privileged_path_ancestor "${ancestor_link}/managed"
+else
+    assert_rejected validate_privileged_path_ancestor "${ancestor_link}/managed"
+fi
 
 echo "PASS: privileged installer managed-file safety fixtures"

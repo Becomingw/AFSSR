@@ -4,6 +4,10 @@ import { normalizeBatchImportCredentials } from '@/api/endpoints/provider_oauth'
 import { isKeyManagedProviderType, isOAuthAccountProviderType } from '../providerTypeUtils'
 
 describe('providerTypeUtils', () => {
+  it('treats OpenCode Go as an API key provider, not an OAuth account', () => {
+    expect(isOAuthAccountProviderType('opencode_go')).toBe(false)
+    expect(isKeyManagedProviderType('opencode_go')).toBe(true)
+  })
   it('treats ChatGPT-Web as an OAuth account provider', () => {
     expect(isOAuthAccountProviderType('chatgpt_web')).toBe(true)
     expect(isOAuthAccountProviderType('ChatGPT_Web')).toBe(true)

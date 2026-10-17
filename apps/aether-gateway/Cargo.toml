@@ -73,6 +73,7 @@ object_store.workspace = true
 parking_lot = "0.12"
 percent-encoding.workspace = true
 regex.workspace = true
+rmcp = { version = "=3.1.4", default-features = false, features = ["server", "transport-streamable-http-server"] }
 reqwest.workspace = true
 rustls.workspace = true
 serde.workspace = true
@@ -107,3 +108,6 @@ aether-testkit = { workspace = true, features = ["postgres"] }
 aether-test-support.workspace = true
 aws-lc-rs.workspace = true
 tracing-subscriber.workspace = true
+
+[build-dependencies]
+sha2.workspace = true

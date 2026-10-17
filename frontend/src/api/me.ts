@@ -2,7 +2,7 @@ import apiClient from './client'
 import type { ImageProgress } from './requestTrace'
 import type { ActivityHeatmap } from '@/types/activity'
 import type { TieredPricingConfig } from './endpoints/types'
-import { cachedRequest, buildCacheKey } from '@/utils/cache'
+import { cache, cachedRequest, buildCacheKey } from '@/utils/cache'
 import type { BillingSummary } from './auth'
 import type { UserSession } from '@/types/session'
 import type { FeatureSettingsMap } from '@/utils/featureSettings'
@@ -197,7 +197,7 @@ export interface ApiKey {
   feature_settings?: FeatureSettingsMap | null
 }
 
-export type InstallTargetCli = 'claude_code' | 'codex_cli' | 'gemini_cli'
+export type InstallTargetCli = 'claude_code' | 'codex_cli' | 'gemini_cli' | 'opencode'
 export type InstallTargetSystem = 'macos' | 'linux' | 'windows' | 'auto'
 export type InstallSessionTargetSystem = Exclude<InstallTargetSystem, 'auto'>
 
@@ -581,7 +581,8 @@ export const meApi = {
    * 获取活跃度热力图数据（用户）
    * 历史热力图变化很慢，前端做长缓存，避免短时间重复请求。
    */
-  async getActivityHeatmap(): Promise<ActivityHeatmap> {
+  async getActivityHeatmap(forceRefresh = false): Promise<ActivityHeatmap> {
+    if (forceRefresh) cache.delete('me-activity-heatmap')
     return cachedRequest(
       'me-activity-heatmap',
       async () => {

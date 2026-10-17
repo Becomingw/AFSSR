@@ -28,6 +28,9 @@ async fn resolve_wallet_auth_gate_with_cache(
     auth_snapshot: &GatewayAuthApiKeySnapshot,
     use_cache: bool,
 ) -> Result<Option<WalletAccessDecision>, GatewayError> {
+    if crate::internal_access::enabled() {
+        return Ok(Some(WalletAccessDecision::allowed(None)));
+    }
     if !state.has_wallet_data_reader() {
         return Ok(None);
     }

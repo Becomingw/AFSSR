@@ -1,63 +1,67 @@
 <template>
-  <div :class="mobile ? 'grid grid-cols-2 gap-2 pt-0.5' : 'flex justify-center gap-1'">
+  <div :class="mobile ? 'flex flex-wrap items-center justify-end gap-1 border-t border-border pt-3' : 'flex justify-center gap-1'">
     <Button
       v-if="canOperateAdmin"
       :variant="mobile ? 'outline' : 'ghost'"
-      :size="mobile ? 'sm' : 'icon'"
-      :class="mobile ? 'h-8 text-xs' : 'h-8 w-8'"
+      size="icon"
+      class="h-9 w-9"
       :title="legacyT('编辑用户')"
       @click="$emit('edit')"
     >
       <SquarePen :class="iconClass" />
-      <span v-if="mobile">{{ legacyT('编辑') }}</span>
+      <span class="sr-only">{{ legacyT('编辑') }}</span>
     </Button>
     <Button
       v-if="canOperateAdmin"
       :variant="mobile ? 'outline' : 'ghost'"
-      :size="mobile ? 'sm' : 'icon'"
-      :class="mobile ? 'h-8 text-xs' : 'h-8 w-8'"
+      size="icon"
+      class="h-9 w-9"
       :title="legacyT('资金操作')"
+      v-show="!INTERNAL_GATEWAY"
       @click="$emit('wallet')"
     >
       <DollarSign :class="iconClass" />
-      <span v-if="mobile">{{ legacyT('资金') }}</span>
+      <span class="sr-only">{{ legacyT('资金') }}</span>
     </Button>
     <Button
       v-if="canOperateAdmin"
       :variant="mobile ? 'outline' : 'ghost'"
-      :size="mobile ? 'sm' : 'icon'"
-      :class="mobile ? 'h-8 text-xs' : 'h-8 w-8'"
+      size="icon"
+      class="h-9 w-9"
       :title="legacyT('套餐')"
+      v-show="!INTERNAL_GATEWAY"
       @click="$emit('plans')"
     >
       <PackageCheck :class="iconClass" />
-      <span v-if="mobile">{{ legacyT('套餐') }}</span>
+      <span class="sr-only">{{ legacyT('套餐') }}</span>
     </Button>
     <Button
+      v-if="canOperateAdmin"
       :variant="mobile ? 'outline' : 'ghost'"
-      :size="mobile ? 'sm' : 'icon'"
-      :class="mobile ? 'h-8 text-xs' : 'h-8 w-8'"
+      size="icon"
+      class="h-9 w-9"
       title="API Keys"
       @click="$emit('api-keys')"
     >
       <Key :class="iconClass" />
-      <span v-if="mobile">API Keys</span>
+      <span class="sr-only">API Keys</span>
     </Button>
     <Button
       v-if="canOperateAdmin"
       :variant="mobile ? 'outline' : 'ghost'"
-      :size="mobile ? 'sm' : 'icon'"
-      :class="mobile ? 'h-8 text-xs' : 'h-8 w-8'"
+      size="icon"
+      class="h-9 w-9"
       :title="legacyT('登录设备')"
       @click="$emit('sessions')"
     >
       <MonitorSmartphone :class="iconClass" />
-      <span v-if="mobile">{{ legacyT('设备') }}</span>
+      <span class="sr-only">{{ legacyT('设备') }}</span>
     </Button>
     <Button
+      v-if="canOperateAdmin"
       :variant="mobile ? 'outline' : 'ghost'"
-      :size="mobile ? 'sm' : 'icon'"
-      :class="mobile ? 'h-8 text-xs' : 'h-8 w-8'"
+      size="icon"
+      class="h-9 w-9"
       :title="isActive ? legacyT('禁用用户') : legacyT('启用用户')"
       @click="$emit('toggle-status')"
     >
@@ -69,23 +73,24 @@
         v-else
         :class="iconClass"
       />
-      <span v-if="mobile">{{ legacyT(isActive ? '禁用' : '启用') }}</span>
+      <span class="sr-only">{{ legacyT(isActive ? '禁用' : '启用') }}</span>
     </Button>
     <Button
+      v-if="canOperateAdmin"
       :variant="mobile ? 'outline' : 'ghost'"
-      :size="mobile ? 'sm' : 'icon'"
-      :class="mobile ? 'col-span-2 h-8 border-rose-200 text-xs text-rose-600 hover:bg-rose-50 dark:border-rose-900/60 dark:hover:bg-rose-950/40' : 'h-8 w-8'"
+      size="icon"
+      class="h-9 w-9 text-destructive hover:text-destructive"
       :title="legacyT('删除用户')"
       @click="$emit('delete')"
     >
       <Trash2 :class="iconClass" />
-      <span v-if="mobile">{{ legacyT('删除') }}</span>
+      <span class="sr-only">{{ legacyT('删除') }}</span>
     </Button>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { INTERNAL_GATEWAY } from '@/config/internalGateway'
 import {
   DollarSign,
   Key,
@@ -99,7 +104,7 @@ import {
 import Button from '@/components/ui/button.vue'
 import { useI18n } from '@/i18n'
 
-const props = withDefaults(defineProps<{
+withDefaults(defineProps<{
   canOperateAdmin: boolean
   isActive: boolean
   mobile?: boolean
@@ -118,5 +123,5 @@ defineEmits<{
 }>()
 
 const { legacyT } = useI18n()
-const iconClass = computed(() => props.mobile ? 'mr-1.5 h-3.5 w-3.5' : 'h-4 w-4')
+const iconClass = 'h-4 w-4'
 </script>

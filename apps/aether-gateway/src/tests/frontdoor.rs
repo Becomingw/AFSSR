@@ -373,5 +373,6 @@ mod ai;
 mod core;
 mod internal;
 mod oauth;
+mod opencode;
 mod ops;
 mod public_support;

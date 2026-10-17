@@ -7,6 +7,8 @@ export const dashboardRoutes: RouteRecordRaw[] = [
     component: view(() => import('@/layouts/MainLayout.vue')),
     meta: { requiresAuth: true },
     children: [
+      { path: 'leaderboard', name: 'UserLeaderboard', component: view(() => import('@/views/shared/Leaderboard.vue')) },
+      { path: 'feedback/:issueId?', name: 'MyFeedback', component: view(() => import('@/views/shared/Feedback.vue')) },
       {
         path: '',
         name: 'Dashboard',
@@ -40,23 +42,9 @@ export const dashboardRoutes: RouteRecordRaw[] = [
       },
       {
         path: 'settings',
+        alias: 'profile',
         name: 'Settings',
-        component: view(() => import('@/views/user/Settings.vue'))
-      },
-      {
-        path: 'wallet',
-        name: 'WalletCenter',
-        component: view(() => import('@/views/user/WalletCenter.vue'))
-      },
-      {
-        path: 'billing',
-        name: 'BillingPlans',
-        component: view(() => import('@/views/user/BillingPlans.vue'))
-      },
-      {
-        path: 'referral',
-        name: 'ReferralCenter',
-        component: view(() => import('@/views/user/ReferralCenter.vue'))
+        component: view(() => import('@/views/user/Profile.vue'))
       },
       {
         path: 'models',
@@ -65,8 +53,7 @@ export const dashboardRoutes: RouteRecordRaw[] = [
       },
       {
         path: 'vscodex',
-        name: 'VscodeControl',
-        component: view(() => import('@/views/user/VscodeControl.vue'))
+        redirect: '/dashboard/api-keys'
       },
       {
         path: 'async-tasks',

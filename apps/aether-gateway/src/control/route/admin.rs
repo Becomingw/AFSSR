@@ -39,7 +39,19 @@ pub(super) fn classify_admin_route(
         normalized_path_no_trailing
     };
 
-    if method == http::Method::GET
+    if method == http::Method::POST && normalized_path_no_trailing == "/api/admin/access-preview" {
+        Some(classified(
+            "admin_proxy",
+            "access_preview",
+            "access_preview",
+            "admin:users",
+            false,
+        ))
+    } else if let Some(route) = classify_compatibility(method, normalized_path_no_trailing) {
+        Some(route)
+    } else if let Some(route) = classify_feedback(method, normalized_path_no_trailing) {
+        Some(route)
+    } else if method == http::Method::GET
         && matches!(
             normalized_path,
             "/api/admin/providers" | "/api/admin/providers/"
@@ -82,4 +94,46 @@ pub(super) fn classify_admin_route(
     } else {
         classify_admin_endpoints_family_route(method, normalized_path)
     }
+}
+
+fn classify_compatibility(method: &http::Method, path: &str) -> Option<ClassifiedRoute> {
+    let kind = match (method, path) {
+        (&http::Method::GET, "/api/admin/compatibility") => "compatibility_list",
+        (&http::Method::POST, "/api/admin/compatibility/profiles") => "compatibility_profile",
+        (&http::Method::POST, "/api/admin/compatibility/runs") => "compatibility_run",
+        _ => return None,
+    };
+    Some(classified(
+        "admin_proxy",
+        "compatibility_manage",
+        kind,
+        "admin:compatibility",
+        false,
+    ))
+}
+
+fn classify_feedback(method: &http::Method, path: &str) -> Option<ClassifiedRoute> {
+    let tail = path.strip_prefix("/api/admin/feedback")?;
+    let parts: Vec<_> = tail
+        .strip_prefix('/')
+        .unwrap_or(tail)
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect();
+    let kind = match (method, parts.as_slice()) {
+        (&http::Method::GET, []) if tail.is_empty() => "feedback_list",
+        (&http::Method::POST, []) if tail.is_empty() => "feedback_create",
+        (&http::Method::GET, [id]) if uuid::Uuid::parse_str(id).is_ok() => "feedback_detail",
+        (&http::Method::POST, [id, "commands"]) if uuid::Uuid::parse_str(id).is_ok() => {
+            "feedback_command"
+        }
+        _ => return None,
+    };
+    Some(classified(
+        "admin_proxy",
+        "feedback_manage",
+        kind,
+        "admin:feedback",
+        false,
+    ))
 }

@@ -18,11 +18,11 @@ use crate::ai_serving::transport::antigravity::{
 };
 use crate::ai_serving::transport::{
     build_gemini_cli_v1internal_request, build_grok_browser_headers, build_grok_upstream_url,
-    build_same_format_provider_headers, resolve_local_gemini_cli_request_auth,
-    GeminiCliRequestAuth, GeminiCliRequestAuthSupport, GeminiCliRequestEnvelopeSupport,
-    GrokHeaderInput, SameFormatProviderCompatibilityEdit,
+    build_same_format_provider_headers, build_standard_provider_request_headers,
+    resolve_local_gemini_cli_request_auth, GeminiCliRequestAuth, GeminiCliRequestAuthSupport,
+    GeminiCliRequestEnvelopeSupport, GrokHeaderInput, SameFormatProviderCompatibilityEdit,
     SameFormatProviderCompatibilityEditAction, SameFormatProviderHeadersInput,
-    GEMINI_CLI_USER_AGENT, GROK_CHAT_PATH,
+    StandardProviderRequestHeadersInput, GEMINI_CLI_USER_AGENT, GROK_CHAT_PATH,
 };
 use crate::ai_serving::{CandidateFailureDiagnostic, GatewayProviderTransportSnapshot};
 use crate::{AppState, GatewayError};
@@ -196,6 +196,17 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
     )
     .await?;
     let body_json = redaction.body_json.as_ref();
+    let expanded_history = crate::ai_serving::prepare_go_native_response_history(
+        state,
+        body_json,
+        spec.api_format,
+        prepared.provider_api_format.as_str(),
+        prepared.transport.provider.provider_type.as_str(),
+        &prepared.mapped_model,
+        input.auth_context.api_key_id.as_str(),
+    )
+    .await?;
+    let body_json = expanded_history.as_ref().unwrap_or(body_json);
     let mut transport = Arc::clone(&prepared.transport);
 
     let Some(base_provider_request) =
@@ -515,35 +526,52 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
     if prepared.behavior.is_gemini_cli {
         extra_headers.insert("user-agent".to_string(), GEMINI_CLI_USER_AGENT.to_string());
     }
-    let Some(mut provider_request_headers) = (if is_grok {
-        build_grok_browser_headers(GrokHeaderInput {
-            transport: &transport,
-            transport_profile: transport_profile.as_ref(),
-            request_headers: Some(effective_headers),
-            content_type: "application/json",
-            accept: "text/event-stream",
-            header_rules: transport.endpoint.header_rules.as_ref(),
-            provider_request_body: &provider_request_body,
-            original_request_body: body_json,
+    let Some(mut provider_request_headers) =
+        (if crate::ai_serving::transport::opencode_go::is_opencode_go_provider(&transport) {
+            build_standard_provider_request_headers(StandardProviderRequestHeadersInput {
+                transport: &transport,
+                provider_api_format: &attempt.eligible.provider_api_format,
+                same_format: true,
+                headers: effective_headers,
+                auth_header: prepared.auth_header.as_deref().unwrap_or_default(),
+                auth_value: prepared.auth_value.as_deref().unwrap_or_default(),
+                extra_headers: &extra_headers,
+                header_rules: transport.endpoint.header_rules.as_ref(),
+                provider_request_body: &provider_request_body,
+                original_request_body: body_json,
+                upstream_is_stream: prepared.behavior.upstream_is_stream,
+            })
+            .map(|built| built.headers)
+        } else if is_grok {
+            build_grok_browser_headers(GrokHeaderInput {
+                transport: &transport,
+                transport_profile: transport_profile.as_ref(),
+                request_headers: Some(effective_headers),
+                content_type: "application/json",
+                accept: "text/event-stream",
+                header_rules: transport.endpoint.header_rules.as_ref(),
+                provider_request_body: &provider_request_body,
+                original_request_body: body_json,
+            })
+        } else {
+            build_same_format_provider_headers(SameFormatProviderHeadersInput {
+                headers: effective_headers,
+                provider_request_body: &provider_request_body,
+                original_request_body: body_json,
+                header_rules: transport.endpoint.header_rules.as_ref(),
+                behavior: prepared.behavior,
+                api_operation: spec.operation,
+                auth_header: prepared.auth_header.as_deref(),
+                auth_value: prepared.auth_value.as_deref(),
+                extra_headers: &extra_headers,
+                kiro_auth_config: prepared.kiro_auth.as_ref().map(|auth| &auth.auth_config),
+                kiro_machine_id: prepared
+                    .kiro_auth
+                    .as_ref()
+                    .map(|auth| auth.machine_id.as_str()),
+            })
         })
-    } else {
-        build_same_format_provider_headers(SameFormatProviderHeadersInput {
-            headers: effective_headers,
-            provider_request_body: &provider_request_body,
-            original_request_body: body_json,
-            header_rules: transport.endpoint.header_rules.as_ref(),
-            behavior: prepared.behavior,
-            api_operation: spec.operation,
-            auth_header: prepared.auth_header.as_deref(),
-            auth_value: prepared.auth_value.as_deref(),
-            extra_headers: &extra_headers,
-            kiro_auth_config: prepared.kiro_auth.as_ref().map(|auth| &auth.auth_config),
-            kiro_machine_id: prepared
-                .kiro_auth
-                .as_ref()
-                .map(|auth| auth.machine_id.as_str()),
-        })
-    }) else {
+    else {
         mark_skipped_local_same_format_provider_candidate_with_failure_diagnostic(
             state,
             input,

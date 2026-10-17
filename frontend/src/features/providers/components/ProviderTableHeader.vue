@@ -1,22 +1,23 @@
 <template>
-  <div class="px-4 sm:px-6 py-3 sm:py-3.5 border-b border-border/50">
-    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
+  <div class="pb-3 border-b border-border">
+    <div class="flex min-w-0 flex-col gap-4">
       <!-- 左侧：标题 -->
-      <h3 class="text-sm sm:text-base font-semibold text-foreground shrink-0">
+      <h1 class="console-page-title">
         {{ legacyT('提供商管理') }}
-      </h3>
+      </h1>
 
       <!-- 右侧：操作区 -->
-      <div class="flex flex-wrap items-center gap-2">
+      <div class="flex min-w-0 flex-wrap items-center gap-2">
         <!-- 搜索框 -->
-        <div class="relative">
+        <div class="relative min-w-40 flex-1 sm:w-64 sm:flex-none">
           <Search class="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/70 z-10 pointer-events-none" />
           <Input
             id="provider-search"
             :model-value="searchQuery"
             type="text"
+            :aria-label="legacyT('搜索提供商')"
             :placeholder="legacyT('搜索提供商...')"
-            class="w-32 sm:w-44 pl-8 pr-3 h-8 text-sm bg-muted/30 border-border/50 focus:border-primary/50 transition-colors"
+            class="w-full pl-8 pr-3 h-9 text-sm"
             @update:model-value="$emit('update:searchQuery', $event)"
           />
         </div>

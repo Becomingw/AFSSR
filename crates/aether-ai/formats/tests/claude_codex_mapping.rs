@@ -892,6 +892,252 @@ fn malformed_custom_wrapper_is_not_silently_returned_as_a_function() {
     .is_err());
 }
 
+fn union_function(keyword: &str) -> Value {
+    let mut tool = function("probe");
+    tool["parameters"]["properties"]["mode"] = json!({"type":"string"});
+    tool["parameters"][keyword] = json!([
+        {"properties":{"mode":{"const":"read"}},"required":["mode"]},
+        {"properties":{"mode":{"const":"list"}},"required":["mode"]}
+    ]);
+    if keyword == "allOf" {
+        tool["parameters"][keyword] = json!([
+            {"properties":{"mode":{"enum":["read","list"]}}}, {"required":["mode"]}
+        ]);
+    }
+    tool
+}
+
+#[test]
+fn root_combinators_keep_full_constraints_inside_reversible_object_wrapper() {
+    for keyword in ["oneOf", "anyOf", "allOf"] {
+        let tool = union_function(keyword);
+        let original = tool["parameters"].clone();
+        let body = request(vec![tool], false);
+        let native = convert_request(
+            "openai:responses",
+            "claude:messages",
+            &body,
+            &context(&body),
+        )
+        .unwrap();
+        let schema = &native["tools"][0]["input_schema"];
+        assert!(schema.get(keyword).is_none());
+        assert_eq!(schema["properties"]["aether_input"], original);
+        assert_eq!(schema["required"], json!(["aether_input"]));
+        assert_eq!(schema["additionalProperties"], false);
+        let arguments = json!({"label":"alpha","mode":"read"});
+        let response = convert_response(
+            "claude:messages",
+            "openai:responses",
+            &upstream_response("probe", json!({"aether_input":arguments})),
+            &context(&body),
+        )
+        .unwrap();
+        let call = &response["output"][0];
+        assert_eq!(
+            serde_json::from_str::<Value>(call["arguments"].as_str().unwrap()).unwrap(),
+            arguments
+        );
+        let mut next = body.clone();
+        next["input"].as_array_mut().unwrap().push(call.clone());
+        next["input"].as_array_mut().unwrap().push(json!({"type":"function_call_output","call_id":"toolu_probe","output":"synthetic result"}));
+        let native = convert_request(
+            "openai:responses",
+            "claude:messages",
+            &next,
+            &context(&next),
+        )
+        .unwrap();
+        assert_eq!(
+            native["messages"][1]["content"][0]["input"],
+            json!({"aether_input":arguments})
+        );
+        assert_eq!(
+            native["messages"][2]["content"][0]["content"],
+            "synthetic result"
+        );
+        let answer = json!({"id":"msg_union_final_fixture","type":"message","role":"assistant",
+            "model":"claude-haiku-5-5","content":[{"type":"text","text":"synthetic done"}],
+            "stop_reason":"end_turn","usage":{"input_tokens":12,"output_tokens":3}});
+        let final_response = convert_response(
+            "claude:messages",
+            "openai:responses",
+            &answer,
+            &context(&next),
+        )
+        .unwrap();
+        assert_eq!(final_response["status"], "completed");
+        assert_eq!(
+            final_response["output"][0]["content"][0]["text"],
+            "synthetic done"
+        );
+    }
+}
+
+#[test]
+fn wrapped_schema_relocates_local_refs_but_not_literal_default_objects() {
+    let mut tool = union_function("oneOf");
+    tool["parameters"]["$defs"] = json!({"label":{"type":"string"}});
+    tool["parameters"]["properties"]["label"] =
+        json!({"$ref":"#/$defs/label","default":{"$ref":"literal data"}});
+    let body = request(vec![tool], false);
+    let native = convert_request(
+        "openai:responses",
+        "claude:messages",
+        &body,
+        &context(&body),
+    )
+    .unwrap();
+    let nested = &native["tools"][0]["input_schema"]["properties"]["aether_input"];
+    assert_eq!(
+        nested["properties"]["label"]["$ref"],
+        "#/properties/aether_input/$defs/label"
+    );
+    assert_eq!(
+        nested["properties"]["label"]["default"]["$ref"],
+        "literal data"
+    );
+    assert_eq!(nested["$defs"]["label"], json!({"type":"string"}));
+}
+
+#[test]
+fn wrapped_schema_fails_closed_on_unrelocatable_refs_and_malformed_arguments() {
+    for reference in [
+        json!({"$ref":"#/$defs/missing"}),
+        json!({"$ref":"#anchor"}),
+        json!({"$ref":"https://example.com/schema"}),
+        json!({"$id":"schema-id"}),
+        json!({"$dynamicRef":"#node"}),
+    ] {
+        let mut tool = union_function("oneOf");
+        tool["parameters"]["properties"]["label"] = reference;
+        let body = request(vec![tool], false);
+        assert!(convert_request(
+            "openai:responses",
+            "claude:messages",
+            &body,
+            &context(&body)
+        )
+        .is_err());
+    }
+    let body = request(vec![union_function("anyOf")], false);
+    for input in [
+        json!({"label":"alpha"}),
+        json!({"aether_input":null}),
+        json!({"aether_input":{},"extra":true}),
+    ] {
+        assert!(convert_response(
+            "claude:messages",
+            "openai:responses",
+            &upstream_response("probe", input),
+            &context(&body)
+        )
+        .is_err());
+    }
+}
+
+#[test]
+fn wrapped_function_sse_emits_only_original_arguments_and_supports_previous_response() {
+    let body = request(
+        vec![namespace("functions", vec![union_function("oneOf")])],
+        true,
+    );
+    let arguments = json!({"label":"alpha","mode":"read"});
+    let (events, mut matrix) = streamed(
+        &body,
+        "probe",
+        &json!({"aether_input":arguments}),
+        "msg_union_stream_fixture",
+    );
+    let deltas = events
+        .iter()
+        .filter(|e| e["type"] == "response.function_call_arguments.delta")
+        .map(|e| e["delta"].as_str().unwrap())
+        .collect::<String>();
+    assert_eq!(serde_json::from_str::<Value>(&deltas).unwrap(), arguments);
+    let done = events
+        .iter()
+        .find(|e| e["type"] == "response.function_call_arguments.done")
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(done["arguments"].as_str().unwrap()).unwrap(),
+        arguments
+    );
+    let item_done = events
+        .iter()
+        .find(|e| e["type"] == "response.output_item.done")
+        .unwrap();
+    let completed = events
+        .iter()
+        .find(|e| e["type"] == "response.completed")
+        .unwrap();
+    assert_eq!(completed["response"]["output"][0], item_done["item"]);
+    assert_eq!(item_done["item"]["namespace"], "functions");
+    assert!(matrix.take_response_history_record().is_some());
+    let continued = json!({"model":"gpt-5.6-terra","tools":[namespace("functions",vec![union_function("oneOf")])],
+        "previous_response_id":completed["response"]["id"],
+        "input":[{"type":"function_call_output","call_id":"toolu_probe","output":"synthetic result"}]});
+    let native = convert_request(
+        "openai:responses",
+        "claude:messages",
+        &continued,
+        &context(&continued),
+    )
+    .unwrap();
+    assert_eq!(
+        native["messages"][1]["content"][0]["input"],
+        json!({"aether_input":arguments})
+    );
+}
+
+#[test]
+fn client_tool_search_root_union_is_restored_as_object_in_sync_and_sse() {
+    let mut tool = search_tool();
+    tool["parameters"]["anyOf"] = json!([{"required":["query"]}]);
+    let body = request(vec![tool], false);
+    let native = convert_request(
+        "openai:responses",
+        "claude:messages",
+        &body,
+        &context(&body),
+    )
+    .unwrap();
+    let name = native["tools"][0]["name"].as_str().unwrap();
+    let wrapped = json!({"aether_input":{"query":"alpha"}});
+    let response = convert_response(
+        "claude:messages",
+        "openai:responses",
+        &upstream_response(name, wrapped.clone()),
+        &context(&body),
+    )
+    .unwrap();
+    assert_eq!(response["output"][0]["type"], "tool_search_call");
+    assert_eq!(response["output"][0]["arguments"], json!({"query":"alpha"}));
+    let (events, _) = streamed(&body, name, &wrapped, "msg_union_search_fixture");
+    let completed = events
+        .iter()
+        .find(|e| e["type"] == "response.completed")
+        .unwrap();
+    assert_eq!(
+        completed["response"]["output"][0]["arguments"],
+        json!({"query":"alpha"})
+    );
+    let mut next = body.clone();
+    next["input"]
+        .as_array_mut()
+        .unwrap()
+        .push(response["output"][0].clone());
+    next["input"].as_array_mut().unwrap().push(json!({"type":"tool_search_output","execution":"client","call_id":"toolu_probe","tools":[]}));
+    let native = convert_request(
+        "openai:responses",
+        "claude:messages",
+        &next,
+        &context(&next),
+    )
+    .unwrap();
+    assert_eq!(native["messages"][1]["content"][0]["input"], wrapped);
+}
+
 #[test]
 fn unrelated_models_keep_legacy_thinking_and_chat_namespace_contract() {
     let body = request(vec![namespace("functions", vec![function("probe")])], false);

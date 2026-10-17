@@ -29,6 +29,387 @@ use crate::lifecycle::bootstrap::postgres::{
 
 mod policy_nulls;
 
+#[tokio::test]
+async fn postgres_scoped_admin_roles_migration_preserves_existing_accounts() {
+    let Some(server) = ManagedPostgresServer::try_start()
+        .await
+        .expect("isolated PostgreSQL should start or explicitly skip")
+    else {
+        return;
+    };
+    let pool = PgPool::connect(server.database_url()).await.unwrap();
+    sqlx::raw_sql(
+        "CREATE TYPE public.userrole AS ENUM ('admin', 'audit_admin', 'user');
+         CREATE TABLE public.users (id text PRIMARY KEY, role public.userrole NOT NULL);
+         INSERT INTO public.users VALUES ('root', 'admin'), ('auditor', 'audit_admin'), ('member', 'user');",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let migration = POSTGRES_MIGRATOR
+        .iter()
+        .find(|migration| migration.version == 20261015000200)
+        .expect("scoped administrator migration should be embedded");
+    for _ in 0..2 {
+        sqlx::raw_sql(&migration.sql).execute(&pool).await.unwrap();
+    }
+    let roles: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, role::text FROM public.users ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        roles,
+        vec![
+            ("auditor".into(), "audit_admin".into()),
+            ("member".into(), "user".into()),
+            ("root".into(), "admin".into()),
+        ]
+    );
+    for role in ["user_admin", "service_admin"] {
+        query("INSERT INTO public.users (id, role) VALUES ($1, $1::public.userrole)")
+            .bind(role)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn postgres_internal_model_quotas_are_atomic_and_isolated() {
+    use crate::repository::settlement::{
+        ReconcileUsagePolicyCostInput, ReserveUsagePolicyCostInput, ReserveUsagePolicyCostOutcome,
+        ReserveUsagePolicyRequestInput, ReserveUsagePolicyRequestOutcome,
+        SettlementWriteRepository, SqlxSettlementRepository, UsagePolicyCostReservationState,
+        UsagePolicyCostWindow, UsagePolicyRequestWindow,
+    };
+    let Some(server) = ManagedPostgresServer::try_start()
+        .await
+        .expect("isolated PostgreSQL should start or explicitly skip")
+    else {
+        return;
+    };
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(4)
+        .connect(server.database_url())
+        .await
+        .unwrap();
+    prepare_and_apply_clean_postgres_database(&pool).await;
+    assert!(column_exists(&pool, "usage_request_admissions", "model")
+        .await
+        .unwrap());
+    query("INSERT INTO public.users (id, username, email_verified) VALUES ('internal-model-quota-user','internal-model-quota-user',TRUE),('internal-concurrent-user','internal-concurrent-user',TRUE),('internal-family-concurrent-user','internal-family-concurrent-user',TRUE)").execute(&pool).await.unwrap();
+    use crate::repository::users::SqlxUserReadRepository;
+    let user_repository = SqlxUserReadRepository::new(pool.clone());
+    for (models, expected_mode) in [
+        (Some(vec!["personal-only".to_string()]), "specific"),
+        (Some(vec![]), "deny_all"),
+        (None, "inherit"),
+    ] {
+        let user = user_repository
+            .update_local_auth_user_admin_fields(
+                "internal-model-quota-user",
+                None,
+                false,
+                None,
+                false,
+                None,
+                true,
+                models.clone(),
+                false,
+                None,
+                None,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(user.allowed_models, models);
+        assert_eq!(user.allowed_models_mode, expected_mode);
+    }
+    let repository = SqlxSettlementRepository::new(pool.clone());
+    for role in ["user_admin", "service_admin", "audit_admin"] {
+        query(
+            "UPDATE public.users SET role=$1::public.userrole WHERE id='internal-model-quota-user'",
+        )
+        .bind(role)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let actual: String = query_scalar(
+            "SELECT role::text FROM public.users WHERE id='internal-model-quota-user'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(actual, role);
+    }
+    let input = |event: &str, model: &str| ReserveUsagePolicyRequestInput {
+        model: Some(model.into()),
+        request_id: event.into(),
+        subject_id: "internal-model-quota-user".into(),
+        event_token: event.into(),
+        admitted_at_unix_secs: 100,
+        retain_until_unix_secs: 2_000,
+        windows: vec![
+            UsagePolicyRequestWindow {
+                model: Some(model.into()),
+                starts_at_unix_secs: 0,
+                ends_at_unix_secs: 1_000,
+                limit_requests: 1,
+            },
+            UsagePolicyRequestWindow {
+                model: None,
+                starts_at_unix_secs: 0,
+                ends_at_unix_secs: 1_000,
+                limit_requests: 2,
+            },
+        ],
+    };
+    let a = input("model-a-first", "glm");
+    assert_eq!(
+        repository
+            .reserve_usage_policy_request(a.clone())
+            .await
+            .unwrap(),
+        ReserveUsagePolicyRequestOutcome::Allowed
+    );
+    assert_eq!(
+        repository.reserve_usage_policy_request(a).await.unwrap(),
+        ReserveUsagePolicyRequestOutcome::Allowed
+    );
+    assert!(matches!(
+        repository
+            .reserve_usage_policy_request(input("model-a-second", "glm"))
+            .await
+            .unwrap(),
+        ReserveUsagePolicyRequestOutcome::Rejected {
+            window_index: 0,
+            ..
+        }
+    ));
+    assert_eq!(
+        repository
+            .reserve_usage_policy_request(input("model-b-first", "claude"))
+            .await
+            .unwrap(),
+        ReserveUsagePolicyRequestOutcome::Allowed
+    );
+    assert!(matches!(
+        repository
+            .reserve_usage_policy_request(input("model-c-first", "deepseek"))
+            .await
+            .unwrap(),
+        ReserveUsagePolicyRequestOutcome::Rejected {
+            window_index: 1,
+            ..
+        }
+    ));
+    assert_eq!(
+        repository
+            .reserve_usage_policy_request(input("model-a-first", "claude"))
+            .await
+            .unwrap(),
+        ReserveUsagePolicyRequestOutcome::Conflict
+    );
+    let mut tasks = Vec::new();
+    for index in 0..16 {
+        let repository = repository.clone();
+        let mut input = input(&format!("parallel-{index}"), "glm");
+        input.subject_id = "internal-concurrent-user".into();
+        input.windows.truncate(1);
+        input.windows[0].limit_requests = 3;
+        tasks.push(tokio::spawn(async move {
+            repository
+                .reserve_usage_policy_request(input)
+                .await
+                .unwrap()
+        }));
+    }
+    let mut allowed = 0;
+    for task in tasks {
+        allowed += usize::from(task.await.unwrap() == ReserveUsagePolicyRequestOutcome::Allowed);
+    }
+    assert_eq!(allowed, 3);
+    let stored: i64 = query_scalar(
+        "SELECT COUNT(*) FROM usage_request_admissions WHERE subject_id='internal-concurrent-user'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(stored, 3);
+    assert!(column_exists(&pool, "usage_cost_reservations", "model")
+        .await
+        .unwrap());
+    let money = |token: &str, model: &str, amount: u64| ReserveUsagePolicyCostInput {
+        model: Some(model.into()),
+        request_id: token.into(),
+        reservation_token: token.into(),
+        subject_id: "internal-model-quota-user".into(),
+        admitted_at_unix_secs: 100,
+        reserved_cost_units: amount,
+        reservation_expires_at_unix_secs: 1000,
+        retain_until_unix_secs: 2000,
+        windows: vec![
+            UsagePolicyCostWindow {
+                models: None,
+                model: Some(model.into()),
+                window_id: format!("model:{model}"),
+                starts_at_unix_secs: 0,
+                ends_at_unix_secs: 1000,
+                limit_cost_units: 50,
+            },
+            UsagePolicyCostWindow {
+                models: None,
+                model: None,
+                window_id: "total".into(),
+                starts_at_unix_secs: 0,
+                ends_at_unix_secs: 1000,
+                limit_cost_units: 100,
+            },
+        ],
+    };
+    let a = money("cost-a", "glm", 40);
+    assert!(matches!(
+        repository
+            .reserve_usage_policy_cost(a.clone())
+            .await
+            .unwrap(),
+        ReserveUsagePolicyCostOutcome::Allowed {
+            additional_reserved_cost_units: 40,
+            ..
+        }
+    ));
+    assert!(matches!(
+        repository
+            .reserve_usage_policy_cost(a.clone())
+            .await
+            .unwrap(),
+        ReserveUsagePolicyCostOutcome::Allowed {
+            additional_reserved_cost_units: 0,
+            ..
+        }
+    ));
+    assert!(matches!(
+        repository
+            .reserve_usage_policy_cost(money("cost-a-over", "glm", 20))
+            .await
+            .unwrap(),
+        ReserveUsagePolicyCostOutcome::Rejected {
+            window_index: 0,
+            used_cost_units: 40,
+            ..
+        }
+    ));
+    assert!(matches!(
+        repository
+            .reserve_usage_policy_cost(money("cost-b", "claude", 40))
+            .await
+            .unwrap(),
+        ReserveUsagePolicyCostOutcome::Allowed { .. }
+    ));
+    assert!(matches!(
+        repository
+            .reserve_usage_policy_cost(money("cost-c-over", "deepseek", 30))
+            .await
+            .unwrap(),
+        ReserveUsagePolicyCostOutcome::Rejected {
+            window_index: 1,
+            used_cost_units: 80,
+            ..
+        }
+    ));
+    assert_eq!(
+        repository
+            .reserve_usage_policy_cost(money("cost-a", "claude", 40))
+            .await
+            .unwrap(),
+        ReserveUsagePolicyCostOutcome::Conflict
+    );
+    repository
+        .reconcile_usage_policy_cost(ReconcileUsagePolicyCostInput {
+            request_id: a.request_id,
+            subject_id: a.subject_id,
+            reservation_token: a.reservation_token,
+            actual_cost_units: 10,
+            terminal_state: UsagePolicyCostReservationState::Finalized,
+            finalized_at_unix_secs: 101,
+        })
+        .await
+        .unwrap();
+    let released = money("cost-after-finalize", "glm", 40);
+    assert!(matches!(
+        repository
+            .reserve_usage_policy_cost(released.clone())
+            .await
+            .unwrap(),
+        ReserveUsagePolicyCostOutcome::Allowed { .. }
+    ));
+    repository
+        .reconcile_usage_policy_cost(ReconcileUsagePolicyCostInput {
+            request_id: released.request_id,
+            subject_id: released.subject_id,
+            reservation_token: released.reservation_token,
+            actual_cost_units: 0,
+            terminal_state: UsagePolicyCostReservationState::Released,
+            finalized_at_unix_secs: 102,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(
+        repository
+            .reserve_usage_policy_cost(money("cost-after-release", "glm", 40))
+            .await
+            .unwrap(),
+        ReserveUsagePolicyCostOutcome::Allowed { .. }
+    ));
+    let mut tasks = Vec::new();
+    for index in 0..16 {
+        let repository = repository.clone();
+        let mut input = money(&format!("cost-parallel-{index}"), "glm", 10);
+        input.subject_id = "internal-concurrent-user".into();
+        input.windows[0].limit_cost_units = 30;
+        tasks.push(tokio::spawn(async move {
+            repository.reserve_usage_policy_cost(input).await.unwrap()
+        }));
+    }
+    let mut allowed = 0;
+    for task in tasks {
+        allowed += usize::from(matches!(
+            task.await.unwrap(),
+            ReserveUsagePolicyCostOutcome::Allowed { .. }
+        ));
+    }
+    assert_eq!(allowed, 3);
+    let stored: i64 = query_scalar("SELECT SUM(reserved_cost_units)::BIGINT FROM usage_cost_reservations WHERE subject_id='internal-concurrent-user'").fetch_one(&pool).await.unwrap();
+    assert_eq!(stored, 30);
+    let mut tasks = Vec::new();
+    for index in 0..16 {
+        let repository = repository.clone();
+        let model = if index % 2 == 0 { "glm" } else { "claude" };
+        let mut input = money(&format!("family-parallel-{index}"), model, 10);
+        input.subject_id = "internal-family-concurrent-user".into();
+        input.windows[0].model = None;
+        input.windows[0].models = Some(vec!["glm".into(), "claude".into()]);
+        input.windows[0].window_id = "family:shared".into();
+        input.windows[0].limit_cost_units = 30;
+        tasks.push(tokio::spawn(async move {
+            repository.reserve_usage_policy_cost(input).await.unwrap()
+        }));
+    }
+    let mut allowed = 0;
+    for task in tasks {
+        allowed += usize::from(matches!(
+            task.await.unwrap(),
+            ReserveUsagePolicyCostOutcome::Allowed { .. }
+        ));
+    }
+    assert_eq!(allowed, 3);
+    let (count, total): (i64,i64) = sqlx::query_as("SELECT COUNT(*), SUM(reserved_cost_units)::BIGINT FROM usage_cost_reservations WHERE subject_id='internal-family-concurrent-user'").fetch_one(&pool).await.unwrap();
+    assert_eq!((count, total), (3, 30));
+    pool.close().await;
+}
+
 /// A clean PostgreSQL database is bootstrapped from the schema snapshot first;
 /// migrations after the privacy/security frontier are intentionally left
 /// pending so their data-preserving changes still execute. Exercise the same
@@ -1575,6 +1956,11 @@ fn pending_migrations_from_applied_skips_versions_already_applied() {
             20260901000000,
             20260903000000,
             20260908000000,
+            20261015000000,
+            20261015000100,
+            20261015000200,
+            20261015000300,
+            20261016000000,
         ]
     );
 }
@@ -1897,6 +2283,27 @@ async fn prepare_database_for_startup_bootstraps_clean_database() {
     assert!(column_exists(&pool, "api_keys", "total_tokens")
         .await
         .expect("api_keys.total_tokens lookup should succeed"));
+
+    for table in ["feedback_issues", "feedback_events"] {
+        assert!(table_exists(&pool, table).await.unwrap());
+        assert!(column_exists(&pool, table, "visibility").await.unwrap());
+    }
+    let private_defaults: i64 = query_scalar(
+        "SELECT COUNT(*)::BIGINT FROM information_schema.columns
+         WHERE table_schema='public' AND table_name IN ('feedback_issues','feedback_events')
+           AND column_name='visibility' AND is_nullable='NO' AND column_default LIKE '%private%'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(private_defaults, 2);
+    for version in [20261015000300, 20261016000000] {
+        let migration = POSTGRES_MIGRATOR
+            .iter()
+            .find(|migration| migration.version == version)
+            .unwrap();
+        sqlx::raw_sql(&migration.sql).execute(&pool).await.unwrap();
+    }
 
     let audit_admin_exists: bool = query_scalar(
         "SELECT EXISTS (SELECT 1 FROM pg_enum WHERE enumtypid = 'public.userrole'::regtype AND enumlabel = 'audit_admin')",

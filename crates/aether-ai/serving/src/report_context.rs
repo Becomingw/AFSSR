@@ -232,6 +232,14 @@ pub fn insert_provider_stream_event_api_format(
     extra_fields: &mut Map<String, Value>,
     provider_type: &str,
 ) {
+    // Go's response bridge depends on the provider profile as well as the wire
+    // format. Carry trusted transport metadata, never an input-body override.
+    if provider_type.trim().eq_ignore_ascii_case("opencode_go") {
+        extra_fields.insert(
+            "provider_type".to_string(),
+            Value::String("opencode_go".to_string()),
+        );
+    }
     if let Some(api_format) = provider_stream_event_api_format_for_provider_type(provider_type) {
         extra_fields.insert(
             "provider_stream_event_api_format".to_string(),
@@ -357,6 +365,34 @@ mod tests {
             provider_stream_event_api_format_for_provider_type("openai"),
             None
         );
+    }
+
+    #[test]
+    fn go_transport_metadata_activates_the_chat_response_bridge() {
+        let original = json!({"model":"gpt-6.1-sol", "input":"Call probe", "tools":[{
+            "type":"namespace", "name":"functions", "description":"Synthetic tools", "tools":[{
+                "type":"custom", "name":"probe", "format":{"type":"text"}}]}]});
+        let mut fields = Map::from_iter([
+            ("provider_api_format".to_string(), json!("openai:chat")),
+            ("client_api_format".to_string(), json!("openai:responses")),
+            ("original_request_body".to_string(), original),
+        ]);
+        super::insert_provider_stream_event_api_format(&mut fields, "opencode_go");
+        assert_eq!(fields["provider_type"], "opencode_go");
+        assert!(!fields.contains_key("provider_stream_event_api_format"));
+        let upstream = json!({"id":"chatcmpl_context_fixture", "model":"space-bunny", "choices":[{
+            "index":0,"message":{"role":"assistant", "content":null,"tool_calls":[{
+                "id":"call_fixture","type":"function", "function":{"name":"probe", "arguments":"{\"input\":\"alpha\"}"}}]}, "finish_reason":"tool_calls"}]});
+        let converted = aether_ai_formats::convert_response(
+            "openai:chat",
+            "openai:responses",
+            &upstream,
+            &aether_ai_formats::FormatContext::default().with_report_context(Value::Object(fields)),
+        )
+        .unwrap();
+        assert_eq!(converted["output"][0]["type"], "custom_tool_call");
+        assert_eq!(converted["output"][0]["namespace"], "functions");
+        assert_eq!(converted["output"][0]["input"], "alpha");
     }
 
     #[test]

@@ -6,6 +6,8 @@ use std::sync::OnceLock;
 use std::sync::RwLock;
 
 use super::auth::GatewayAuthApiKeySnapshot;
+mod compatibility;
+mod feedback;
 use super::candidates::{read_request_candidate_trace, RequestCandidateTrace};
 use super::config::GatewayDataConfig;
 use super::decision_trace::{read_decision_trace, DecisionTrace};
@@ -385,6 +387,7 @@ impl fmt::Debug for GatewayDataState {
     }
 }
 
+mod account_usage;
 mod auth;
 mod auth_api_key_cache;
 mod candidate_cache;

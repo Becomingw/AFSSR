@@ -475,7 +475,7 @@ async fn gateway_truncates_deep_request_echo_for_local_openai_chat_sync_usage_im
     );
     assert_eq!(
         stored_usage.request_headers.as_ref().unwrap()["authorization"],
-        "Bearer sk-client-openai-local-report-sync-deep"
+        "[redacted]"
     );
 
     gateway_handle.abort();
@@ -2094,7 +2094,7 @@ async fn gateway_records_failed_usage_when_all_local_claude_cli_candidates_are_s
     assert!(stored_usage.error_message.is_none());
     assert_eq!(
         stored_usage.request_headers.as_ref().unwrap()["authorization"],
-        "Bearer sk-client-claude-cli-usage-local-miss"
+        "[redacted]"
     );
     assert!(stored_usage.request_body.is_none());
     assert!(stored_usage.request_body_ref.is_none());

@@ -54,8 +54,6 @@ const TEST_EMAIL_VERIFICATION_TOKEN: &str =
 mod auth_cookie;
 #[path = "public_support/dashboard.rs"]
 mod dashboard;
-#[path = "public_support/vscodex.rs"]
-mod vscodex;
 
 #[tokio::test]
 async fn gateway_handles_public_announcements_list_without_proxying_upstream() {

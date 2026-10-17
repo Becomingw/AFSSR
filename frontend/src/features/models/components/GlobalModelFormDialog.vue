@@ -17,15 +17,39 @@
         class="h-full flex flex-col space-y-3"
       >
         <!-- 搜索框 -->
-        <div class="relative">
-          <Search class="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            v-model="searchQuery"
-            type="text"
-            placeholder="搜索模型、提供商..."
-            class="pl-8 h-8 text-sm"
-          />
+        <div class="flex items-center gap-2">
+          <div class="relative min-w-0 flex-1">
+            <Search class="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              v-model="searchQuery"
+              type="text"
+              placeholder="搜索模型、提供商..."
+              class="pl-8 h-8 text-sm"
+            />
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            class="h-8 w-8 shrink-0"
+            :disabled="loading || refreshingCatalog"
+            title="刷新目录并更新已添加模型信息"
+            aria-label="刷新目录并更新已添加模型信息"
+            @click="refreshCatalog"
+          >
+            <RefreshCw
+              class="h-4 w-4"
+              :class="{ 'animate-spin': refreshingCatalog }"
+            />
+          </Button>
         </div>
+        <p
+          v-if="catalogRefreshSummary"
+          role="status"
+          class="text-xs text-muted-foreground break-words"
+        >
+          {{ catalogRefreshSummary }}
+        </p>
 
         <!-- 横向提供商 Logo 与模型列表 -->
         <div class="flex-1 min-h-0 overflow-hidden border rounded-lg flex flex-col">
@@ -819,7 +843,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, watch } from 'vue'
+import { ref, shallowRef, computed, nextTick, watch } from 'vue'
 import {
   Loader2, Layers, SquarePen,
   Search, ChevronLeft, ChevronRight, Plus, Trash2, Check,
@@ -840,7 +864,7 @@ import TieredPricingEditor from './TieredPricingEditor.vue'
 import {
   getModelsDevList,
   getProviderLogoUrl,
-  refreshModelsDevList,
+  refreshModelsDevCatalog,
   type ModelsDevModelItem,
 } from '@/api/models-dev'
 import {
@@ -855,7 +879,6 @@ import {
   buildGlobalModelCreatePayload,
   buildGlobalModelUpdatePayload,
   cloneTieredPricingConfig,
-  findGlobalModelByName,
   tieredPricingConfigsEqual,
 } from './global-model-form-helpers'
 import { tieredPricingHasImageOutputPricing } from '../utils/tiered-pricing'
@@ -876,6 +899,7 @@ const emit = defineEmits<{
   'success': []
   'editModel': [model: GlobalModelResponse]
   'pricingSynced': [model: GlobalModelResponse]
+  'catalogRefreshed': []
 }>()
 
 const { success, error: showError } = useToast()
@@ -889,8 +913,10 @@ const basicInfoSection = ref<HTMLElement | null>(null)
 // 模型列表相关
 const loading = ref(false)
 const catalogLoadError = ref<string | null>(null)
+const refreshingCatalog = ref(false)
+const catalogRefreshSummary = ref('')
 const searchQuery = ref('')
-const allModelsCache = ref<ModelsDevModelItem[]>([]) // 全部模型（缓存）
+const allModelsCache = shallowRef<ModelsDevModelItem[]>([]) // Immutable catalog snapshots need no deep proxies.
 const existingModelsCache = ref<GlobalModelResponse[]>([])
 const selectedModel = ref<ModelsDevModelItem | null>(null)
 const expandedProvider = ref<string | null>(null)
@@ -927,8 +953,9 @@ watch([onlinePricingSourcePopoverOpen, syncingOnlinePricing], ([open, syncing]) 
   })
 }, { flush: 'post' })
 
+const existingModelsByName = computed(() => new Map(existingModelsCache.value.map(model => [model.name.trim().toLowerCase(), model])))
 function getExistingModel(model: ModelsDevModelItem): GlobalModelResponse | undefined {
-  return findGlobalModelByName(existingModelsCache.value, model.modelId)
+  return existingModelsByName.value.get(model.modelId.trim().toLowerCase())
 }
 
 function formatTokenLimit(value: number): string {
@@ -1364,6 +1391,22 @@ async function loadModelsCatalog() {
   }
 }
 
+async function refreshCatalog() {
+  if (refreshingCatalog.value || loading.value) return
+  refreshingCatalog.value = true
+  catalogRefreshSummary.value = ''
+  try {
+    const { sync } = await refreshModelsDevCatalog()
+    allModelsCache.value = await getModelsDevList(false)
+    catalogLoadError.value = null
+    await loadExistingModels()
+    emit('catalogRefreshed')
+    catalogRefreshSummary.value = `已更新 ${sync.updated} 个，未变化 ${sync.unchanged} 个，未匹配 ${sync.unmatched} 个，失败 ${sync.failed.length} 个`
+  } catch (err) {
+    showError(parseApiError(err, '刷新失败，保留原目录'), '刷新失败')
+  } finally { refreshingCatalog.value = false }
+}
+
 async function retryModelsCatalog() {
   if (loading.value) return
   loading.value = true
@@ -1691,7 +1734,7 @@ async function syncOnlinePricing() {
 
   syncingOnlinePricing.value = true
   try {
-    const onlineModels = await refreshModelsDevList(false)
+    const onlineModels = await getModelsDevList(false)
     allModelsCache.value = onlineModels
     const candidates = getOnlinePricingCandidates(onlineModels, props.model)
     const onlineModel = resolveOnlinePricingModel(candidates, props.model)

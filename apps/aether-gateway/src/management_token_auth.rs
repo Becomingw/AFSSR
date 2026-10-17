@@ -151,11 +151,13 @@ where
         return Err(ManagementTokenAuthError::Invalid);
     }
 
-    let permissions = crate::control::management_token_permission_keys_from_value(
+    let mut permissions = crate::control::management_token_permission_keys_from_value(
         token_with_user.token.permissions.as_ref(),
     )
     .map_err(|_| ManagementTokenAuthError::Invalid)?
     .unwrap_or_else(crate::control::legacy_full_management_token_permissions);
+    permissions
+        .retain(|permission| crate::roles::role_has_management_permission(&user.role, permission));
 
     Ok(AuthenticatedManagementToken {
         token: token_with_user.token,

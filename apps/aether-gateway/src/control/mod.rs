@@ -23,13 +23,13 @@ pub(crate) use management_token_permissions::{
     management_token_permission_catalog_payload, management_token_permission_keys_from_value,
     management_token_permission_mode_and_summary, management_token_principal_has_permission,
     management_token_required_permission, normalize_assignable_management_token_permissions,
-    read_only_management_token_permissions, validate_management_token_admin_route_permission,
+    read_only_management_token_permissions, validate_admin_role_route_permission,
+    validate_management_token_admin_route_permission,
 };
 pub(crate) use public::{
     resolve_public_request_context, resolve_public_request_context_with_trusted_auth,
     resolve_public_request_context_without_trusted_auth, GatewayPublicRequestContext,
 };
-#[cfg(test)]
 pub(crate) use route::classify_control_route;
 pub(crate) use route::{resolve_control_route, GatewayControlDecision};
 

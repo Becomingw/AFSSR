@@ -99,7 +99,10 @@ impl SettlementWriteRepository for InMemorySettlementRepository {
             .write()
             .expect("usage policy request admission lock");
         if let Some(existing) = admissions.get_mut(&input.event_token) {
-            if existing.request_id != input.request_id || existing.subject_id != input.subject_id {
+            if existing.request_id != input.request_id
+                || existing.subject_id != input.subject_id
+                || existing.model != input.model
+            {
                 return Ok(ReserveUsagePolicyRequestOutcome::Conflict);
             }
             if existing.admitted_at_unix_secs != input.admitted_at_unix_secs {
@@ -122,6 +125,10 @@ impl SettlementWriteRepository for InMemorySettlementRepository {
                 .filter(|admission| {
                     admission.state == UsagePolicyRequestAdmissionState::Active
                         && admission.subject_id == input.subject_id
+                        && window
+                            .model
+                            .as_ref()
+                            .is_none_or(|model| admission.model.as_ref() == Some(model))
                         && admission.admitted_at_unix_secs >= window.starts_at_unix_secs
                         && admission.admitted_at_unix_secs < window.ends_at_unix_secs
                 })
@@ -138,6 +145,7 @@ impl SettlementWriteRepository for InMemorySettlementRepository {
         admissions.insert(
             input.event_token.clone(),
             StoredUsagePolicyRequestAdmission {
+                model: input.model,
                 request_id: input.request_id,
                 subject_id: input.subject_id,
                 event_token: input.event_token,
@@ -212,7 +220,10 @@ impl SettlementWriteRepository for InMemorySettlementRepository {
             .expect("usage policy cost reservation lock");
         let existing = reservations.get(&input.reservation_token).cloned();
         if let Some(existing) = existing.as_ref() {
-            if existing.request_id != input.request_id || existing.subject_id != input.subject_id {
+            if existing.request_id != input.request_id
+                || existing.subject_id != input.subject_id
+                || existing.model != input.model
+            {
                 return Ok(ReserveUsagePolicyCostOutcome::Conflict);
             }
             if existing.state != UsagePolicyCostReservationState::Reserved {
@@ -248,6 +259,13 @@ impl SettlementWriteRepository for InMemorySettlementRepository {
                 .filter(|reservation| {
                     reservation.reservation_token != input.reservation_token
                         && reservation.subject_id == input.subject_id
+                        && (window.model.is_none() || reservation.model == window.model)
+                        && window.models.as_ref().is_none_or(|models| {
+                            reservation
+                                .model
+                                .as_ref()
+                                .is_some_and(|m| models.contains(m))
+                        })
                         && reservation.admitted_at_unix_secs >= window.starts_at_unix_secs
                         && reservation.admitted_at_unix_secs < window.ends_at_unix_secs
                 })
@@ -290,6 +308,7 @@ impl SettlementWriteRepository for InMemorySettlementRepository {
         reservations.insert(
             input.reservation_token.clone(),
             StoredUsagePolicyCostReservation {
+                model: input.model.clone(),
                 request_id: input.request_id,
                 subject_id: input.subject_id,
                 reservation_token: input.reservation_token,
@@ -443,6 +462,7 @@ impl SettlementWriteRepository for InMemorySettlementRepository {
                     })
                 });
             let wallet = wallet_id
+                .filter(|_| input.charge_wallet)
                 .as_deref()
                 .and_then(|wallet_id| wallets.get_mut(wallet_id));
 
@@ -512,6 +532,7 @@ impl SettlementWriteRepository for InMemorySettlementRepository {
                 settlement.wallet_gift_balance_after = Some(wallet.gift_balance);
                 settlement.wallet_balance_after = Some(wallet.balance + wallet.gift_balance);
             } else if final_billing_status == "settled"
+                && input.charge_wallet
                 && billable_cost_usd > SETTLEMENT_EPSILON_USD
             {
                 final_billing_status = "insufficient_quota".to_string();
@@ -555,12 +576,14 @@ mod usage_policy_request_admission_tests {
         let windows = limits
             .iter()
             .map(|(start, end, limit)| UsagePolicyRequestWindow {
+                model: None,
                 starts_at_unix_secs: *start,
                 ends_at_unix_secs: *end,
                 limit_requests: *limit,
             })
             .collect::<Vec<_>>();
         ReserveUsagePolicyRequestInput {
+            model: None,
             request_id: request_id.to_string(),
             subject_id: "user-1".to_string(),
             event_token: event_token.to_string(),
@@ -757,6 +780,92 @@ mod usage_policy_request_admission_tests {
     }
 
     #[tokio::test]
+    async fn model_caps_are_isolated_but_user_cap_is_shared_and_tokens_are_bound() {
+        let repository = InMemorySettlementRepository::default();
+        let scoped = |id: &str, model: &str| {
+            let mut input = reserve(id, id, 100, &[(0, 1_000, 1), (0, 1_000, 2)]);
+            input.model = Some(model.into());
+            input.windows[0].model = Some(model.into());
+            input
+        };
+        let a = scoped("a", "glm");
+        assert_eq!(
+            repository
+                .reserve_usage_policy_request(a.clone())
+                .await
+                .unwrap(),
+            ReserveUsagePolicyRequestOutcome::Allowed
+        );
+        assert!(matches!(
+            repository
+                .reserve_usage_policy_request(scoped("b", "glm"))
+                .await
+                .unwrap(),
+            ReserveUsagePolicyRequestOutcome::Rejected {
+                window_index: 0,
+                ..
+            }
+        ));
+        let mut reused = a;
+        reused.model = Some("claude".into());
+        reused.windows[0].model = Some("claude".into());
+        assert_eq!(
+            repository
+                .reserve_usage_policy_request(reused)
+                .await
+                .unwrap(),
+            ReserveUsagePolicyRequestOutcome::Conflict
+        );
+        assert_eq!(
+            repository
+                .reserve_usage_policy_request(scoped("c", "claude"))
+                .await
+                .unwrap(),
+            ReserveUsagePolicyRequestOutcome::Allowed
+        );
+        assert!(matches!(
+            repository
+                .reserve_usage_policy_request(scoped("d", "deepseek"))
+                .await
+                .unwrap(),
+            ReserveUsagePolicyRequestOutcome::Rejected {
+                window_index: 1,
+                ..
+            }
+        ));
+        assert_eq!(repository.request_admissions.read().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn concurrent_model_caps_never_oversell() {
+        let repository = Arc::new(InMemorySettlementRepository::default());
+        let mut tasks = Vec::new();
+        for index in 0..32 {
+            let repository = repository.clone();
+            tasks.push(tokio::spawn(async move {
+                let mut input = reserve(
+                    &format!("m-{index}"),
+                    &format!("t-{index}"),
+                    100,
+                    &[(0, 1_000, 3)],
+                );
+                input.model = Some("glm".into());
+                input.windows[0].model = Some("glm".into());
+                repository
+                    .reserve_usage_policy_request(input)
+                    .await
+                    .unwrap()
+            }));
+        }
+        let mut allowed = 0;
+        for task in tasks {
+            allowed +=
+                usize::from(task.await.unwrap() == ReserveUsagePolicyRequestOutcome::Allowed);
+        }
+        assert_eq!(allowed, 3);
+    }
+
+    #[tokio::test]
     async fn concurrent_admissions_do_not_oversell_capacity() {
         let repository = Arc::new(InMemorySettlementRepository::default());
         let mut tasks = Vec::new();
@@ -797,6 +906,63 @@ mod usage_policy_cost_tests {
     use super::*;
     use crate::repository::settlement::UsagePolicyCostWindow;
 
+    #[tokio::test]
+    async fn family_members_share_one_atomic_pool_and_all_costs_still_count_toward_total() {
+        let repo = InMemorySettlementRepository::default();
+        let family_input = |token: &str, model: &str, amount| {
+            let mut input = reserve(token, 20_000, amount, 100);
+            input.model = Some(model.into());
+            let mut family = input.windows[0].clone();
+            family.models = Some(vec!["a".into(), "b".into()]);
+            family.window_id = "family:fabel".into();
+            family.limit_cost_units = 50;
+            input.windows.push(family);
+            input
+        };
+        assert!(matches!(
+            repo.reserve_usage_policy_cost(family_input("a1", "a", 30))
+                .await
+                .unwrap(),
+            ReserveUsagePolicyCostOutcome::Allowed { .. }
+        ));
+        assert!(matches!(
+            repo.reserve_usage_policy_cost(family_input("b1", "b", 25))
+                .await
+                .unwrap(),
+            ReserveUsagePolicyCostOutcome::Rejected {
+                window_index: 1,
+                used_cost_units: 30,
+                ..
+            }
+        ));
+        assert!(matches!(
+            repo.reserve_usage_policy_cost(family_input("b2", "b", 20))
+                .await
+                .unwrap(),
+            ReserveUsagePolicyCostOutcome::Allowed { .. }
+        ));
+        let mut other = reserve("other", 20_000, 50, 100);
+        other.model = Some("other".into());
+        assert!(matches!(
+            repo.reserve_usage_policy_cost(other).await.unwrap(),
+            ReserveUsagePolicyCostOutcome::Allowed { .. }
+        ));
+        let mut over = reserve("over", 20_000, 1, 100);
+        over.model = Some("other".into());
+        assert!(matches!(
+            repo.reserve_usage_policy_cost(over).await.unwrap(),
+            ReserveUsagePolicyCostOutcome::Rejected {
+                used_cost_units: 100,
+                ..
+            }
+        ));
+        assert_eq!(repo.cost_reservations.read().unwrap().len(), 3);
+        let mut invalid = family_input("invalid", "not-a-member", 1);
+        assert!(invalid.validate().is_err());
+        invalid.windows[1].models = Some(vec!["not-a-member".into(), "not-a-member".into()]);
+        assert!(invalid.validate().is_err());
+    }
+
     fn reserve(
         request_id: &str,
         admitted_at: u64,
@@ -804,6 +970,7 @@ mod usage_policy_cost_tests {
         limit: u64,
     ) -> ReserveUsagePolicyCostInput {
         ReserveUsagePolicyCostInput {
+            model: None,
             request_id: request_id.to_string(),
             subject_id: "user-1".to_string(),
             reservation_token: format!("token-{request_id}"),
@@ -812,12 +979,41 @@ mod usage_policy_cost_tests {
             reservation_expires_at_unix_secs: admitted_at + 86_400,
             retain_until_unix_secs: admitted_at + 32 * 86_400,
             windows: vec![UsagePolicyCostWindow {
+                models: None,
+                model: None,
                 window_id: "rolling-5h".to_string(),
                 starts_at_unix_secs: admitted_at.saturating_sub(18_000),
                 ends_at_unix_secs: admitted_at + 1,
                 limit_cost_units: limit,
             }],
         }
+    }
+
+    #[tokio::test]
+    async fn zero_cost_capacity_rejects_paid_reservations_without_charging() {
+        let repository = InMemorySettlementRepository::default();
+        assert!(matches!(
+            repository
+                .reserve_usage_policy_cost(reserve("paid", 20_000, 1, 0))
+                .await
+                .unwrap(),
+            ReserveUsagePolicyCostOutcome::Rejected {
+                limit_cost_units: 0,
+                used_cost_units: 0,
+                ..
+            }
+        ));
+        assert!(repository.cost_reservations.read().unwrap().is_empty());
+        assert!(matches!(
+            repository
+                .reserve_usage_policy_cost(reserve("free", 20_000, 0, 0))
+                .await
+                .unwrap(),
+            ReserveUsagePolicyCostOutcome::Allowed {
+                reserved_cost_units: 0,
+                ..
+            }
+        ));
     }
 
     #[tokio::test]
@@ -873,6 +1069,142 @@ mod usage_policy_cost_tests {
                 .unwrap(),
             ReserveUsagePolicyCostOutcome::Allowed { .. }
         ));
+    }
+
+    fn model_reserve(token: &str, model: &str, amount: u64) -> ReserveUsagePolicyCostInput {
+        let mut input = reserve(token, 20_000, amount, 50);
+        input.model = Some(model.into());
+        input.windows[0].model = Some(model.into());
+        input.windows[0].window_id = format!("model:{model}");
+        let mut total = input.windows[0].clone();
+        total.model = None;
+        total.window_id = "total".into();
+        total.limit_cost_units = 100;
+        input.windows.push(total);
+        input
+    }
+
+    #[tokio::test]
+    async fn model_money_and_total_money_share_one_reconciled_reservation() {
+        let repository = InMemorySettlementRepository::default();
+        let a = model_reserve("money-a", "glm", 40);
+        assert!(matches!(
+            repository
+                .reserve_usage_policy_cost(a.clone())
+                .await
+                .unwrap(),
+            ReserveUsagePolicyCostOutcome::Allowed { .. }
+        ));
+        assert!(matches!(
+            repository
+                .reserve_usage_policy_cost(a.clone())
+                .await
+                .unwrap(),
+            ReserveUsagePolicyCostOutcome::Allowed {
+                additional_reserved_cost_units: 0,
+                ..
+            }
+        ));
+        assert!(matches!(
+            repository
+                .reserve_usage_policy_cost(model_reserve("money-a-over", "glm", 20))
+                .await
+                .unwrap(),
+            ReserveUsagePolicyCostOutcome::Rejected {
+                window_index: 0,
+                used_cost_units: 40,
+                ..
+            }
+        ));
+        assert!(matches!(
+            repository
+                .reserve_usage_policy_cost(model_reserve("money-b", "claude", 40))
+                .await
+                .unwrap(),
+            ReserveUsagePolicyCostOutcome::Allowed { .. }
+        ));
+        assert!(matches!(
+            repository
+                .reserve_usage_policy_cost(model_reserve("money-c-over", "deepseek", 30))
+                .await
+                .unwrap(),
+            ReserveUsagePolicyCostOutcome::Rejected {
+                window_index: 1,
+                used_cost_units: 80,
+                ..
+            }
+        ));
+        let mut conflict = a.clone();
+        conflict.model = Some("claude".into());
+        conflict.windows[0].model = conflict.model.clone();
+        assert_eq!(
+            repository
+                .reserve_usage_policy_cost(conflict)
+                .await
+                .unwrap(),
+            ReserveUsagePolicyCostOutcome::Conflict
+        );
+        let finalized = repository
+            .reconcile_usage_policy_cost(ReconcileUsagePolicyCostInput {
+                request_id: a.request_id,
+                subject_id: a.subject_id,
+                reservation_token: a.reservation_token,
+                actual_cost_units: 10,
+                terminal_state: UsagePolicyCostReservationState::Finalized,
+                finalized_at_unix_secs: 20_001,
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(finalized.model.as_deref(), Some("glm"));
+        let released = model_reserve("money-after-finalize", "glm", 40);
+        assert!(matches!(
+            repository
+                .reserve_usage_policy_cost(released.clone())
+                .await
+                .unwrap(),
+            ReserveUsagePolicyCostOutcome::Allowed { .. }
+        ));
+        repository
+            .reconcile_usage_policy_cost(ReconcileUsagePolicyCostInput {
+                request_id: released.request_id,
+                subject_id: released.subject_id,
+                reservation_token: released.reservation_token,
+                actual_cost_units: 0,
+                terminal_state: UsagePolicyCostReservationState::Released,
+                finalized_at_unix_secs: 20_002,
+            })
+            .await
+            .unwrap();
+        assert!(matches!(
+            repository
+                .reserve_usage_policy_cost(model_reserve("money-after-release", "glm", 40))
+                .await
+                .unwrap(),
+            ReserveUsagePolicyCostOutcome::Allowed { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn concurrent_model_money_reservations_do_not_oversell() {
+        let repository = std::sync::Arc::new(InMemorySettlementRepository::default());
+        let mut tasks = Vec::new();
+        for index in 0..16 {
+            let repository = repository.clone();
+            let mut input = model_reserve(&format!("money-parallel-{index}"), "glm", 10);
+            input.windows[0].limit_cost_units = 30;
+            tasks.push(tokio::spawn(async move {
+                repository.reserve_usage_policy_cost(input).await.unwrap()
+            }));
+        }
+        let mut allowed = 0;
+        for task in tasks {
+            allowed += usize::from(matches!(
+                task.await.unwrap(),
+                ReserveUsagePolicyCostOutcome::Allowed { .. }
+            ));
+        }
+        assert_eq!(allowed, 3);
     }
 
     #[tokio::test]
@@ -1093,6 +1425,7 @@ mod tests {
         let repository = InMemorySettlementRepository::seed(vec![sample_wallet()]);
         let settlement = repository
             .settle_usage(UsageSettlementInput {
+                charge_wallet: true,
                 request_id: "req-1".to_string(),
                 user_id: Some("user-1".to_string()),
                 api_key_id: Some("key-1".to_string()),
@@ -1115,11 +1448,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn internal_accounting_keeps_wallet_untouched_and_tracks_provider_cost() {
+        let repository = InMemorySettlementRepository::seed(vec![sample_wallet()]);
+        let input = UsageSettlementInput {
+            charge_wallet: false,
+            request_id: "internal-accounting".into(),
+            user_id: Some("user-1".into()),
+            api_key_id: Some("key-1".into()),
+            api_key_is_standalone: false,
+            provider_id: Some("provider-1".into()),
+            status: "completed".into(),
+            billing_status: "pending".into(),
+            total_cost_usd: 3.0,
+            actual_total_cost_usd: 6.0,
+            finalized_at_unix_secs: Some(200),
+        };
+        let first = repository
+            .settle_usage(input.clone())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.billing_status, "settled");
+        assert_eq!(first.wallet_id, None);
+        assert_eq!(first.provider_monthly_used_usd, Some(6.0));
+        assert_eq!(
+            repository.settle_usage(input).await.unwrap().unwrap(),
+            first
+        );
+        repository.wallets.with_mut(|wallets| {
+            assert_eq!(wallets["wallet-1"].balance, 10.0);
+            assert_eq!(wallets["wallet-1"].gift_balance, 2.0);
+            assert_eq!(wallets["wallet-1"].total_consumed, 0.0);
+        });
+    }
+
+    #[tokio::test]
     async fn normal_key_settlement_falls_back_to_user_wallet() {
         let repository =
             InMemorySettlementRepository::seed(vec![sample_user_wallet("wallet-user-1", "user-1")]);
         let settlement = repository
             .settle_usage(UsageSettlementInput {
+                charge_wallet: true,
                 request_id: "req-user-wallet".to_string(),
                 user_id: Some("user-1".to_string()),
                 api_key_id: Some("normal-key-without-wallet".to_string()),
@@ -1145,6 +1514,7 @@ mod tests {
         let repository = InMemorySettlementRepository::seed(vec![sample_wallet()]);
         let settlement = repository
             .settle_usage(UsageSettlementInput {
+                charge_wallet: true,
                 request_id: "req-cancelled".to_string(),
                 user_id: Some("user-1".to_string()),
                 api_key_id: Some("key-1".to_string()),
@@ -1174,6 +1544,7 @@ mod tests {
         )]);
         let settlement = repository
             .settle_usage(UsageSettlementInput {
+                charge_wallet: true,
                 request_id: "req-standalone-no-key-wallet".to_string(),
                 user_id: Some("admin-owner".to_string()),
                 api_key_id: Some("standalone-key-without-wallet".to_string()),
@@ -1200,6 +1571,7 @@ mod tests {
         let repository = InMemorySettlementRepository::seed(vec![sample_wallet()]);
         let settlement = repository
             .settle_usage(UsageSettlementInput {
+                charge_wallet: true,
                 request_id: "req-insufficient-wallet".to_string(),
                 user_id: Some("user-1".to_string()),
                 api_key_id: Some("key-1".to_string()),
@@ -1227,6 +1599,7 @@ mod tests {
     async fn pending_settlement_replay_is_idempotent_in_memory() {
         let repository = InMemorySettlementRepository::seed(vec![sample_wallet()]);
         let input = UsageSettlementInput {
+            charge_wallet: true,
             request_id: "req-pending-replay".to_string(),
             user_id: Some("user-1".to_string()),
             api_key_id: Some("key-1".to_string()),
@@ -1256,6 +1629,7 @@ mod tests {
         let repository = Arc::new(InMemorySettlementRepository::seed(vec![sample_wallet()]));
         let barrier = Arc::new(tokio::sync::Barrier::new(9));
         let input = UsageSettlementInput {
+            charge_wallet: true,
             request_id: "req-concurrent-pending".to_string(),
             user_id: Some("user-1".to_string()),
             api_key_id: Some("key-1".to_string()),
@@ -1296,6 +1670,7 @@ mod tests {
             let repository = InMemorySettlementRepository::seed(vec![wallet]);
             let result = repository
                 .settle_usage(UsageSettlementInput {
+                    charge_wallet: true,
                     request_id: "req-corrupt-wallet".to_string(),
                     user_id: Some("user-1".to_string()),
                     api_key_id: Some("key-1".to_string()),
@@ -1327,6 +1702,7 @@ mod tests {
         let repository = InMemorySettlementRepository::seed(vec![sample_wallet()]);
         let settled = repository
             .settle_usage(UsageSettlementInput {
+                charge_wallet: true,
                 request_id: "req-2".to_string(),
                 user_id: Some("user-1".to_string()),
                 api_key_id: Some("key-1".to_string()),
@@ -1344,6 +1720,7 @@ mod tests {
 
         let replay = repository
             .settle_usage(UsageSettlementInput {
+                charge_wallet: true,
                 request_id: "req-2".to_string(),
                 user_id: Some("user-1".to_string()),
                 api_key_id: Some("key-1".to_string()),

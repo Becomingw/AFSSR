@@ -2,6 +2,7 @@ use std::env;
 use std::process::Command;
 
 fn main() {
+    compatibility_source_digest();
     println!("cargo:rerun-if-env-changed=ARCA_BUILD_VERSION");
     println!("cargo:rerun-if-env-changed=ARCA_BUILD_TYPE");
     println!("cargo:rerun-if-env-changed=ARCA_VERSION");
@@ -37,6 +38,46 @@ fn build_env(name: &str) -> Option<String> {
     env::var(format!("ARCA_{name}"))
         .or_else(|_| env::var(format!("AETHER_{name}")))
         .ok()
+}
+
+fn compatibility_source_digest() {
+    use sha2::{Digest, Sha256};
+    use std::path::{Path, PathBuf};
+    fn files(path: &Path, out: &mut Vec<PathBuf>) {
+        println!("cargo:rerun-if-changed={}", path.display());
+        if path.is_dir() {
+            for entry in std::fs::read_dir(path).expect("compatibility source directory") {
+                files(&entry.expect("source entry").path(), out);
+            }
+        } else if path.extension().is_some_and(|e| e == "rs")
+            || path
+                .file_name()
+                .is_some_and(|n| n == "Cargo.lock" || n == "Cargo.toml")
+        {
+            out.push(path.to_owned());
+        }
+    }
+    let mut inputs = Vec::new();
+    for root in [
+        "../../crates/aether-ai/formats",
+        "src/api/compatibility",
+        "../../Cargo.lock",
+        "Cargo.toml",
+    ] {
+        files(Path::new(root), &mut inputs);
+    }
+    inputs.sort();
+    let mut digest = Sha256::new();
+    for path in inputs {
+        let bytes = std::fs::read(&path).expect("compatibility source bytes");
+        digest.update(path.to_string_lossy().as_bytes());
+        digest.update((bytes.len() as u64).to_le_bytes());
+        digest.update(bytes);
+    }
+    println!(
+        "cargo:rustc-env=AFSSR_COMPAT_CONVERTER_DIGEST={:x}",
+        digest.finalize()
+    );
 }
 
 fn git_describe_version() -> Option<String> {

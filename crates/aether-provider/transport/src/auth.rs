@@ -326,6 +326,21 @@ pub fn resolve_local_standard_auth(
     let auth_type = resolve_local_auth_type_for_transport_format(transport);
     let secret = resolved_local_secret(transport)?;
 
+    if crate::opencode_go::is_opencode_go_provider(transport)
+        && matches!(auth_type.as_str(), "api_key" | "bearer")
+    {
+        if aether_ai_formats::normalize_api_format_alias(&transport.endpoint.api_format)
+            == "gemini:generate_content"
+        {
+            return Some(("x-goog-api-key".to_string(), secret.to_string()));
+        }
+        return if crate::opencode_go::uses_legacy_messages_auth(transport) {
+            Some(("x-api-key".to_string(), secret.to_string()))
+        } else {
+            Some(("authorization".to_string(), bearer_auth_value(secret)))
+        };
+    }
+
     match auth_type.as_str() {
         "api_key" => Some(("x-api-key".to_string(), secret.to_string())),
         "bearer" => Some(("authorization".to_string(), bearer_auth_value(secret))),
@@ -746,6 +761,35 @@ mod tests {
             resolve_local_standard_auth(&transport),
             Some(("authorization".to_string(), "Bearer sk-claude".to_string(),))
         );
+    }
+
+    #[test]
+    fn opencode_go_uses_native_bearer_and_legacy_messages_api_key() {
+        let mut transport = sample_transport();
+        transport.provider.provider_type = "opencode_go".into();
+        transport.key.auth_type = "api_key".into();
+        transport.key.decrypted_api_key = "synthetic-go-key".into();
+        transport.endpoint.api_format = "gemini:generate_content".into();
+        assert_eq!(
+            resolve_local_standard_auth(&transport),
+            Some(("x-goog-api-key".to_string(), "synthetic-go-key".to_string()))
+        );
+        for format in ["claude:messages", "openai:chat", "openai:responses"] {
+            transport.endpoint.api_format = format.into();
+            transport.endpoint.base_url = "https://opencode.ai/inference/go/v1".into();
+            assert_eq!(
+                resolve_local_standard_auth(&transport),
+                Some(("authorization".into(), "Bearer synthetic-go-key".into()))
+            );
+        }
+        transport.endpoint.api_format = "claude:messages".into();
+        transport.endpoint.base_url = "https://opencode.ai/zen/go/v1".into();
+        assert_eq!(
+            resolve_local_standard_auth(&transport),
+            Some(("x-api-key".into(), "synthetic-go-key".into()))
+        );
+        transport.key.auth_type = "oauth".into();
+        assert!(resolve_local_standard_auth(&transport).is_none());
     }
 
     #[test]

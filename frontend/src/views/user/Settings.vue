@@ -1,14 +1,20 @@
 <template>
-  <div class="container mx-auto px-4 py-8">
-    <h2 class="text-2xl font-bold text-foreground mb-6">
+  <div :class="embedded ? 'profile-settings' : 'container mx-auto px-4 py-8'">
+    <h2
+      v-if="!embedded"
+      class="text-2xl font-bold text-foreground mb-6"
+    >
       个人设置
     </h2>
 
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div :class="embedded ? '' : 'grid grid-cols-1 lg:grid-cols-3 gap-6'">
       <!-- 左侧：个人信息和密码 -->
       <div class="lg:col-span-2 space-y-6">
         <!-- 基本信息 -->
-        <Card class="p-6">
+        <Card
+          v-if="shows('account')"
+          class="p-6"
+        >
           <form
             class="space-y-4"
             @submit.prevent="updateProfile"
@@ -68,7 +74,7 @@
                   v-model="profileForm.email"
                   type="email"
                   class="mt-1"
-                  :disabled="!emailConfigured"
+                  :disabled="embedded || !emailConfigured"
                 />
                 <p
                   v-if="!emailConfigured && profileForm.email"
@@ -76,12 +82,21 @@
                 >
                   邮箱服务未配置，暂不可修改
                 </p>
+                <p
+                  v-else-if="embedded"
+                  class="mt-1 text-xs text-muted-foreground"
+                >
+                  邮箱变更需要验证，此处仅展示当前邮箱。
+                </p>
               </div>
             </div>
           </form>
         </Card>
 
-        <Card class="p-6">
+        <Card
+          v-if="shows('security')"
+          class="p-6"
+        >
           <div class="flex flex-col items-start gap-3 mb-4 sm:flex-row sm:justify-between">
             <div class="min-w-0 flex-1">
               <h3 class="text-lg font-medium text-foreground">
@@ -126,7 +141,7 @@
         </Card>
 
         <Card
-          v-if="featureSettingsForm.notificationPushServiceEnabled"
+          v-if="shows('preferences') && featureSettingsForm.notificationPushServiceEnabled"
           class="p-6"
         >
           <div class="flex items-center justify-between gap-4">
@@ -146,7 +161,7 @@
 
         <!-- 密码设置（LDAP 用户不显示） -->
         <Card
-          v-if="profile?.auth_source !== 'ldap'"
+          v-if="shows('security') && profile?.auth_source !== 'ldap'"
           class="p-6"
         >
           <form
@@ -218,7 +233,10 @@
           </form>
         </Card>
 
-        <Card class="p-6">
+        <Card
+          v-if="shows('security')"
+          class="p-6"
+        >
           <div class="flex flex-col items-start gap-3 mb-4 sm:flex-row sm:justify-between">
             <div class="min-w-0 flex-1">
               <h3 class="text-lg font-medium text-foreground">
@@ -333,7 +351,10 @@
         </Card>
 
         <!-- OAuth 绑定 -->
-        <Card class="p-6">
+        <Card
+          v-if="shows('security')"
+          class="p-6"
+        >
           <h3 class="text-lg font-medium text-foreground mb-4">
             OAuth 绑定
           </h3>
@@ -435,8 +456,14 @@
         </Card>
 
         <!-- 偏好设置 -->
-        <Card class="p-6">
-          <h3 class="text-lg font-medium text-foreground mb-4">
+        <Card
+          v-if="shows('preferences')"
+          class="p-6"
+        >
+          <h3
+            v-if="!embedded"
+            class="text-lg font-medium text-foreground mb-4"
+          >
             偏好设置
           </h3>
           <div class="space-y-4">
@@ -502,6 +529,12 @@
                 />
               </div>
             </div>
+            <Button
+              variant="outline"
+              @click="updatePreferences"
+            >
+              保存偏好
+            </Button>
 
             <div class="space-y-3">
               <h4 class="font-medium text-foreground">
@@ -539,7 +572,7 @@
                       使用提醒
                     </Label>
                     <p class="text-xs text-muted-foreground mt-1">
-                      当余额接近不足时提醒
+                      当使用额度接近上限时提醒
                     </p>
                   </div>
                   <Switch
@@ -573,7 +606,10 @@
       </div>
 
       <!-- 右侧：账户信息和使用量 -->
-      <div class="space-y-6">
+      <div
+        v-if="!embedded"
+        class="space-y-6"
+      >
         <!-- 账户信息 -->
         <Card class="p-6">
           <h3 class="text-lg font-medium text-foreground mb-4">
@@ -608,7 +644,10 @@
         </Card>
 
         <!-- 钱包状态 -->
-        <Card class="p-6">
+        <Card
+          v-if="!INTERNAL_GATEWAY"
+          class="p-6"
+        >
           <h3 class="text-lg font-medium text-foreground mb-4">
             钱包状态
           </h3>
@@ -658,6 +697,8 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
+import { INTERNAL_GATEWAY } from '@/config/internalGateway'
+
 import { getI18nLocale, normalizeLocale, useI18n } from '@/i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
@@ -697,6 +738,13 @@ import {
   readChatPiiRedactionFeatureSettings,
 } from '@/utils/featureSettings'
 
+const props = withDefaults(defineProps<{
+  embedded?: boolean
+  section?: 'all' | 'account' | 'security' | 'preferences'
+}>(), { embedded: false, section: 'all' })
+const emit = defineEmits<{ updated: [] }>()
+const shows = (section: string) => props.section === 'all' || props.section === section
+
 const authStore = useAuthStore()
 const route = useRoute()
 const router = useRouter()
@@ -707,8 +755,10 @@ const { locale, setLocale } = useI18n()
 const profile = ref<Profile | null>(null)
 const userSessions = ref<UserSession[]>([])
 const profileRoleLabel = computed(() => {
-  if (profile.value?.role === 'admin') return '管理员'
+  if (profile.value?.role === 'admin') return '超级管理员'
   if (profile.value?.role === 'audit_admin') return '审计管理员'
+  if (profile.value?.role === 'user_admin') return '用户及权益管理员'
+  if (profile.value?.role === 'service_admin') return '服务管理员'
   return '普通用户'
 })
 
@@ -1065,6 +1115,7 @@ async function updateProfile() {
     }
 
     success('个人信息已更新')
+    emit('updated')
     authStore.fetchCurrentUser()
   } catch (err) {
     log.error('更新个人信息失败:', err)
@@ -1216,6 +1267,15 @@ function formatDate(dateString?: string): string {
 </script>
 
 <style scoped>
+.profile-settings :deep([data-ui="card"]) {
+  padding: 0 0 1.75rem;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.profile-settings :deep(h3) { font-size: 1rem; }
 .oauth-icon {
   width: 24px;
   height: 24px;

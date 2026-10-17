@@ -321,6 +321,17 @@ pub(crate) fn admin_proxy_local_requires_buffered_body(
                 | (Some("provider_ops_manage"), http::Method::PUT, Some("save_provider_config"))
                 | (Some("announcements_manage"), http::Method::POST, Some("create_announcement"))
                 | (Some("announcements_manage"), http::Method::PUT, Some("update_announcement"))
+                | (Some("access_preview"), http::Method::POST, Some("access_preview"))
+                | (
+                    Some("compatibility_manage"),
+                    http::Method::POST,
+                    Some("compatibility_profile" | "compatibility_run"),
+                )
+                | (
+                    Some("feedback_manage"),
+                    http::Method::POST,
+                    Some("feedback_command" | "feedback_create"),
+                )
                 | (
                     Some("provider_strategy_manage"),
                     http::Method::PUT,
@@ -509,14 +520,8 @@ pub(crate) fn public_support_local_requires_buffered_body(
                     Some(
                         "api_keys_create"
                             | "api_key_install_session_create"
-                            | "management_tokens_create"
-                            | "vscodex_pairing_create"
-                            | "vscodex_ws_ticket_create",
+                            | "management_tokens_create",
                     ),
-                ) | (
-                    Some("vscodex"),
-                    http::Method::POST,
-                    Some("pairing_exchange"),
                 ) | (
                     Some("wallet"),
                     http::Method::POST,
@@ -550,6 +555,42 @@ pub(crate) fn local_proxy_route_requires_buffered_body(
 mod tests {
     use super::sanitize_upstream_path_and_query;
     use crate::control::{GatewayControlAuthContext, GatewayControlDecision};
+    use axum::http;
+
+    #[test]
+    fn preview_and_compatibility_posts_buffer_their_bodies_but_reads_do_not() {
+        for (method, path, expected) in [
+            (http::Method::POST, "/api/admin/access-preview", true),
+            (
+                http::Method::POST,
+                "/api/admin/compatibility/profiles",
+                true,
+            ),
+            (http::Method::POST, "/api/admin/compatibility/runs", true),
+            (http::Method::GET, "/api/admin/compatibility", false),
+            (
+                http::Method::POST,
+                "/api/admin/compatibility/runs/extra",
+                false,
+            ),
+        ] {
+            let uri = path.parse().unwrap();
+            let headers = http::HeaderMap::new();
+            let decision = crate::control::classify_control_route(&method, &uri, &headers);
+            let context = crate::control::GatewayPublicRequestContext::from_request_parts(
+                "body-routing-regression",
+                &method,
+                &uri,
+                &headers,
+                decision,
+            );
+            assert_eq!(
+                super::admin_proxy_local_requires_buffered_body(&context),
+                expected,
+                "{method} {path}"
+            );
+        }
+    }
 
     fn authenticated_ai_decision(
         route_family: &str,

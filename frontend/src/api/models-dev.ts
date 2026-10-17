@@ -17,7 +17,6 @@ export type { ModelsDevCost, ModelsDevCostTier, ModelsDevTokenCost } from './mod
 
 // 缓存配置
 const CACHE_KEY = 'models_dev_cache'
-const CACHE_DURATION = 15 * 60 * 1000 // 15 分钟
 
 // Models.dev API 数据结构
 export interface ModelsDevLimit {
@@ -118,6 +117,21 @@ interface CacheData {
 
 // 内存缓存
 let memoryCache: CacheData | null = null
+let pendingLoad: Promise<ModelsDevData> | null = null
+let pendingRefresh: Promise<ExternalModelsRefreshResult> | null = null
+let cacheGeneration = 0
+
+export interface ExternalModelsRefreshResult {
+  catalog: ModelsDevData
+  sync: { updated: number; unchanged: number; unmatched: number; failed: string[] }
+}
+
+function storeCatalog(data: ModelsDevData): void {
+  memoryCache = { timestamp: Date.now(), data }
+  modelsListCache = null
+  modelsListCacheTimestamp = null
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify(memoryCache)) } catch { /* Storage may be full. */ }
+}
 
 function hasOfficialFlag(data: ModelsDevData): boolean {
   return Object.values(data).some(provider => typeof provider?.official === 'boolean')
@@ -128,7 +142,7 @@ function hasOfficialFlag(data: ModelsDevData): boolean {
  */
 export async function getModelsDevData(): Promise<ModelsDevData> {
   // 1. 检查内存缓存
-  if (memoryCache && Date.now() - memoryCache.timestamp < CACHE_DURATION) {
+  if (memoryCache) {
     // 兼容旧缓存：没有 official 字段时丢弃，强制刷新一次
     if (hasOfficialFlag(memoryCache.data)) {
       return memoryCache.data
@@ -141,7 +155,7 @@ export async function getModelsDevData(): Promise<ModelsDevData> {
     const cached = localStorage.getItem(CACHE_KEY)
     if (cached) {
       const cacheData: CacheData = JSON.parse(cached)
-      if (Date.now() - cacheData.timestamp < CACHE_DURATION) {
+      if (Number.isFinite(cacheData.timestamp) && cacheData.data && typeof cacheData.data === 'object') {
         // 兼容旧缓存：没有 official 字段时丢弃，强制刷新一次
         if (hasOfficialFlag(cacheData.data)) {
           memoryCache = cacheData
@@ -155,22 +169,14 @@ export async function getModelsDevData(): Promise<ModelsDevData> {
   }
 
   // 3. 从后端代理获取新数据
-  const response = await api.get<ModelsDevData>('/api/admin/models/external')
-  const data = response.data
-
-  // 4. 更新缓存
-  const cacheData: CacheData = {
-    timestamp: Date.now(),
-    data,
-  }
-  memoryCache = cacheData
-  try {
-    localStorage.setItem(CACHE_KEY, JSON.stringify(cacheData))
-  } catch {
-    // localStorage 写入失败，忽略
-  }
-
-  return data
+  if (pendingLoad) return pendingLoad
+  const generation = cacheGeneration
+  const request = api.get<ModelsDevData>('/api/admin/models/external').then(response => {
+    if (generation === cacheGeneration) storeCatalog(response.data)
+    return response.data
+  })
+  pendingLoad = request
+  try { return await request } finally { if (pendingLoad === request) pendingLoad = null }
 }
 
 /**
@@ -183,7 +189,7 @@ export async function getExternalModelsAccessConfig(): Promise<ExternalModelsAcc
 
 /**
  * 更新 models.dev 目录的代理节点。null 表示直连。
- * 后端会清理共享目录缓存；前端同时清理内存和 localStorage 缓存。
+ * 只改变下一次主动刷新的出站路径，保留当前目录快照。
  */
 export async function updateExternalModelsAccessConfig(
   proxyNodeId: string | null,
@@ -192,7 +198,6 @@ export async function updateExternalModelsAccessConfig(
     '/api/admin/models/external/config',
     { proxy_node_id: proxyNodeId },
   )
-  clearModelsDevCache()
   return response.data
 }
 
@@ -250,8 +255,8 @@ export async function getModelsDevList(officialOnly: boolean = true): Promise<Mo
           supportsStructuredOutput: model.structured_output,
           supportsTemperature: model.temperature,
           supportsAttachment: model.attachment,
-          supportsEmbedding: model.id.toLowerCase().includes('embedding')
-            || model.name.toLowerCase().includes('embedding')
+          supportsEmbedding: (model.id ?? modelId).toLowerCase().includes('embedding')
+            || (model.name ?? modelId).toLowerCase().includes('embedding')
             || model.family?.toLowerCase().includes('embedding') === true,
           openWeights: model.open_weights,
           deprecated: model.deprecated,
@@ -297,9 +302,22 @@ export async function getModelsDevList(officialOnly: boolean = true): Promise<Mo
 export async function refreshModelsDevList(
   officialOnly: boolean = true,
 ): Promise<ModelsDevModelItem[]> {
-  await api.delete('/api/admin/models/external/cache')
-  clearModelsDevCache()
+  await refreshModelsDevCatalog()
   return getModelsDevList(officialOnly)
+}
+
+/** Refresh once on explicit command; a failed fetch preserves the last good snapshot. */
+export async function refreshModelsDevCatalog(): Promise<ExternalModelsRefreshResult> {
+  if (pendingRefresh) return pendingRefresh
+  const request = api.post<ExternalModelsRefreshResult>('/api/admin/models/external/refresh', {}, { timeout: 120_000 })
+    .then(response => {
+      cacheGeneration++
+      pendingLoad = null
+      storeCatalog(response.data.catalog)
+      return response.data
+    })
+  pendingRefresh = request
+  try { return await request } finally { if (pendingRefresh === request) pendingRefresh = null }
 }
 
 /**
@@ -369,6 +387,8 @@ export function getProviderLogoUrl(providerId: string): string {
  * 清除缓存
  */
 export function clearModelsDevCache(): void {
+  cacheGeneration++
+  pendingLoad = null
   memoryCache = null
   modelsListCache = null
   modelsListCacheTimestamp = null

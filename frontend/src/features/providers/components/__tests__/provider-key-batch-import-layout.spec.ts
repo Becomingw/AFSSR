@@ -7,10 +7,10 @@ function readSource(path: string): string {
 }
 
 describe('provider key batch import UI contract', () => {
-  it('shows the entry only for custom providers', () => {
+  it('shows the entry for API-key-managed custom and OpenCode Go providers', () => {
     const source = readSource('src/features/providers/components/ProviderDetailDrawer.vue')
 
-    expect(source).toContain("provider.provider_type === 'custom'")
+    expect(source).toContain("['custom', 'opencode_go'].includes(provider.provider_type || '')")
     expect(source).toContain('<ProviderKeyBatchImportDialog')
     expect(source).toContain('keyBatchImportDialogOpen')
   })

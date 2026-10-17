@@ -26,6 +26,10 @@ pub(crate) mod oauth_refresh {
     pub(crate) use aether_provider_transport::oauth_refresh::*;
 }
 
+pub(crate) mod opencode_go {
+    pub(crate) use aether_provider_transport::opencode_go::is_opencode_go_provider;
+}
+
 pub(crate) mod policy {
     pub(crate) use aether_provider_transport::policy::*;
 }

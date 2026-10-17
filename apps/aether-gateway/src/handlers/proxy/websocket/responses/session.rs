@@ -533,6 +533,7 @@ async fn bootstrap_responses_websocket(
         &state,
         &turn_control.decision,
         &first_logical_turn_id,
+        first_event.get("model").and_then(serde_json::Value::as_str),
     )
     .await
     {

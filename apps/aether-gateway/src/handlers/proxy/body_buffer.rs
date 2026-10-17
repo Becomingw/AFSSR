@@ -56,6 +56,18 @@ impl RequestBodyBufferPolicy {
                 });
         if is_internal_report {
             Self::for_internal_report(state)
+        } else if let Some(limit) = request_context
+            .control_decision
+            .as_ref()
+            .filter(|decision| decision.route_class.as_deref() == Some("admin_proxy"))
+            .and_then(|decision| match decision.route_family.as_deref() {
+                Some("feedback_manage") => Some(64 * 1024),
+                Some("access_preview") => Some(256 * 1024),
+                Some("compatibility_manage") => Some(8 * 1024),
+                _ => None,
+            })
+        {
+            Self::from_state_with_max_bytes(state, limit)
         } else {
             Self::from_state(state)
         }

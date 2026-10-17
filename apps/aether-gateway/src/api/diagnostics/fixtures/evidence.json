@@ -1,0 +1,40 @@
+{
+  "candidate": {
+    "id": "candidate-CANARY-ID",
+    "request_id": "fixture-request",
+    "user_id": "fixture-owner",
+    "api_key_id": "CANARY-INFERENCE-KEY",
+    "username": "CANARY-USER",
+    "api_key_name": "CANARY-KEY-NAME",
+    "candidate_index": 0,
+    "retry_index": 0,
+    "provider_id": "CANARY-PROVIDER",
+    "endpoint_id": "CANARY-ENDPOINT",
+    "key_id": "CANARY-UPSTREAM-KEY",
+    "status": "failed",
+    "skip_reason": null,
+    "is_cached": false,
+    "status_code": 400,
+    "error_type": "invalid_request_error",
+    "error_message": "CANARY-SECRET Bearer upstream-secret http://10.20.30.40/private",
+    "latency_ms": 37,
+    "concurrent_requests": 1,
+    "extra_data": {
+      "client_api_format": "openai:chat",
+      "target_url": "http://10.20.30.40/CANARY-TARGET",
+      "upstream_request": {"headers": {"Authorization": "CANARY-AUTH"}, "body": {"messages": [{"content": "CANARY-PROMPT"}]}},
+      "upstream_response": {"body": {"error": {"message": "CANARY-RESPONSE", "type": "invalid_request_error"}}}
+    },
+    "required_capabilities": null,
+    "created_at_unix_ms": 1000,
+    "started_at_unix_ms": 1001,
+    "finished_at_unix_ms": 1038
+  },
+  "format_errors": [
+    {"format": "openai:chat", "error_type": "invalid_request_error", "expected": "invalid_request_error"},
+    {"format": "openai:responses", "error_type": "invalid_provider_success_response", "expected": "upstream_format_error"},
+    {"format": "claude:messages", "error_type": "invalid_request_error", "expected": "invalid_request_error"},
+    {"format": "gemini:generate_content", "error_type": "upstream_response_decode_failed", "expected": "upstream_format_error"}
+  ],
+  "stream_errors": ["stream_missing_terminal_event", "stream_terminal_error", "execution_runtime_stream_read_error", "execution_runtime_stream_frame_decode_error", "client_delivery_failed", "downstream_disconnect", "local_stream_candidate_watchdog_timeout"]
+}

@@ -759,6 +759,16 @@
 
       <template #footer>
         <Button
+          v-if="ccSwitchTargetApp === 'opencode'"
+          variant="outline"
+          data-testid="opencode-download-config"
+          :disabled="ccSwitchConfirmDisabled"
+          @click="exportOpenCodeConfig"
+        >
+          <Download class="h-4 w-4 mr-2" />
+          OpenCode 配置
+        </Button>
+        <Button
           variant="outline"
           class="h-10 px-5"
           @click="showCcSwitchDialog = false"
@@ -810,7 +820,7 @@
 
         <div class="space-y-2">
           <Label class="text-sm font-semibold">目标 CLI</Label>
-          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <Button
               v-for="option in installCliOptions"
               :key="option.value"
@@ -830,6 +840,8 @@
               v-for="option in installSystemOptions"
               :key="option.value"
               :variant="installSystem === option.value ? 'default' : 'outline'"
+              :disabled="installCli === 'opencode' && option.value === 'windows'"
+              :title="installCli === 'opencode' && option.value === 'windows' ? 'OpenCode 请在 WSL 中选择 Linux 安装' : undefined"
               class="justify-start h-auto py-3"
               @click="selectInstallSystem(option.value)"
             >
@@ -959,13 +971,15 @@ import {
   type CcSwitchModelIds,
   type CcSwitchTargetApp,
 } from '@/features/api-keys/utils/ccswitchImport'
+import { downloadOpenCodeConfig, getOpenCodeConfig } from '@/api/opencode'
 
 const { success, error: showError } = useToast()
 
 const installCliOptions: Array<{ value: InstallTargetCli; label: string }> = [
   { value: 'claude_code', label: 'Claude Code' },
   { value: 'codex_cli', label: 'Codex CLI' },
-  { value: 'gemini_cli', label: 'Gemini CLI' }
+  { value: 'gemini_cli', label: 'Gemini CLI' },
+  { value: 'opencode', label: 'OpenCode' }
 ]
 
 const installSystemOptions: Array<{ value: InstallSessionTargetSystem; label: string }> = [
@@ -1046,6 +1060,9 @@ const installCommand = computed(() => {
 })
 
 const installCommandHint = computed(() => {
+  if (installCli.value === 'opencode') {
+    return 'OpenCode 仅支持 Linux/macOS；Windows 请使用 WSL 并选择 Linux。安装后可执行 python3 "$HOME/.aether/opencode-sync.py" 同步模型目录。'
+  }
   if (installSystem.value === 'windows') {
     return 'Windows 请在 PowerShell 中执行。install code 使用后立即失效，如需再次执行请重新生成。'
   }
@@ -1185,16 +1202,19 @@ async function openInstallDialog(apiKey: ApiKey) {
 
 async function selectInstallCli(value: InstallTargetCli) {
   installCli.value = value
+  if (value === 'opencode' && installSystem.value === 'windows') installSystem.value = 'linux'
   await refreshInstallCommand()
 }
 
 async function selectInstallSystem(value: InstallSessionTargetSystem) {
+  if (value === 'windows' && installCli.value === 'opencode') return
   installSystem.value = value
   await refreshInstallCommand()
 }
 
 async function refreshInstallCommand() {
   if (!selectedInstallApiKey.value) return
+  if (installCli.value === 'opencode' && installSystem.value === 'windows') installSystem.value = 'linux'
   installLoading.value = true
   installSession.value = null
   resetInstallCopiedState()
@@ -1392,6 +1412,13 @@ async function confirmCcSwitchImport() {
   try {
     const apiKey = ccSwitchPlainApiKey.value
       || (await meApi.getFullApiKey(selectedCcSwitchApiKey.value.id)).key
+    if (ccSwitchTargetApp.value === 'opencode') {
+      const config = await getOpenCodeConfig(apiKey)
+      if (!Object.prototype.hasOwnProperty.call(config.provider.aether.models, ccSwitchModelIds.default.trim())) {
+        showError('当前 API Key 无权使用所选模型，请重新选择')
+        return
+      }
+    }
     const baseUrl = ccSwitchBaseUrl.value || (await meApi.getClientConfig()).base_url
     const importUrl = buildCcSwitchProviderImportUrl({
       targetApp: ccSwitchTargetApp.value,
@@ -1419,6 +1446,23 @@ async function confirmCcSwitchImport() {
         ? '该密钥缺少完整密钥信息，请重新创建 API Key'
         : message,
     )
+  } finally {
+    ccSwitchLoading.value = false
+  }
+}
+
+async function exportOpenCodeConfig() {
+  if (!selectedCcSwitchApiKey.value || ccSwitchLoading.value) return
+  ccSwitchLoading.value = true
+  try {
+    const apiKey = ccSwitchPlainApiKey.value
+      || (await meApi.getFullApiKey(selectedCcSwitchApiKey.value.id)).key
+    const config = await getOpenCodeConfig(apiKey)
+    downloadOpenCodeConfig(config, apiKey, ccSwitchModelIds.default.trim())
+    success('已导出 OpenCode 配置，请妥善保管其中的 API Key')
+  } catch (error) {
+    const message = parseApiError(error, '导出 OpenCode 配置失败')
+    showError(isMissingFullApiKeyError(message) ? '该密钥缺少完整密钥信息，请重新创建 API Key' : message)
   } finally {
     ccSwitchLoading.value = false
   }

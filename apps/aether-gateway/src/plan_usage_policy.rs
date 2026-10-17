@@ -122,6 +122,7 @@ pub(crate) struct PlanUsageAdmission {
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub(crate) struct EffectivePlanUsagePolicy {
+    model: Option<String>,
     request_rules: Vec<EffectiveRequestRule>,
     cost_rules: Vec<EffectiveCostRule>,
     concurrency_limit: Option<u64>,
@@ -130,6 +131,7 @@ pub(crate) struct EffectivePlanUsagePolicy {
 
 #[derive(Debug, Clone, PartialEq)]
 struct EffectiveRequestRule {
+    model: Option<String>,
     identity: String,
     window: UsagePolicyWindow,
     limit: u64,
@@ -138,6 +140,8 @@ struct EffectiveRequestRule {
 
 #[derive(Debug, Clone, PartialEq)]
 struct EffectiveCostRule {
+    model: Option<String>,
+    models: Option<Vec<String>>,
     identity: String,
     window: UsagePolicyWindow,
     limit_cost_units: u64,
@@ -251,8 +255,8 @@ fn plan_usage_auth_context(
 ) -> Option<&crate::control::GatewayControlAuthContext> {
     decision.auth_context.as_ref().filter(|auth| {
         decision.route_class.as_deref() == Some("ai_public")
-            && !auth.admin_bypass_limits
-            && !auth.api_key_is_standalone
+            && (crate::internal_access::enabled()
+                || (!auth.admin_bypass_limits && !auth.api_key_is_standalone))
     })
 }
 
@@ -307,6 +311,7 @@ async fn reserve_plan_usage_policy_cost_with_policy(
     let outcome = state
         .data
         .reserve_usage_policy_cost(ReserveUsagePolicyCostInput {
+            model: policy.model.clone(),
             request_id: plan.request_id.clone(),
             reservation_token: reservation_token.to_string(),
             subject_id: auth.user_id.clone(),
@@ -377,7 +382,9 @@ pub(crate) async fn release_plan_usage_policy_cost(
     else {
         return Ok(());
     };
-    if auth.admin_bypass_limits || auth.api_key_is_standalone {
+    if !crate::internal_access::enabled()
+        && (auth.admin_bypass_limits || auth.api_key_is_standalone)
+    {
         return Ok(());
     }
 
@@ -439,6 +446,7 @@ pub(crate) async fn check_and_acquire_plan_usage_policy_admission(
     decision: Option<&GatewayControlDecision>,
     event_id: &str,
     now_unix_ms: u64,
+    model: Option<&str>,
 ) -> Result<PlanUsageAdmission, PlanUsageAdmissionError> {
     let Some(auth) = decision
         .filter(|decision| decision.route_class.as_deref() == Some("ai_public"))
@@ -449,7 +457,9 @@ pub(crate) async fn check_and_acquire_plan_usage_policy_admission(
             policy_snapshot: None,
         });
     };
-    if auth.admin_bypass_limits || auth.api_key_is_standalone {
+    if !crate::internal_access::enabled()
+        && (auth.admin_bypass_limits || auth.api_key_is_standalone)
+    {
         return Ok(PlanUsageAdmission {
             permit: None,
             policy_snapshot: None,
@@ -457,13 +467,14 @@ pub(crate) async fn check_and_acquire_plan_usage_policy_admission(
     }
 
     let admitted_at_unix_secs = now_unix_ms / 1_000;
-    let policy = load_effective_policy(state, &auth.user_id, admitted_at_unix_secs).await?;
+    let policy = load_effective_policy(state, &auth.user_id, admitted_at_unix_secs, model).await?;
     let permit = check_and_acquire_compiled_plan_usage_policy(
         state,
         &auth.user_id,
         &policy,
         event_id,
         now_unix_ms,
+        model,
     )
     .await?;
     let policy_snapshot =
@@ -480,6 +491,7 @@ async fn check_and_acquire_compiled_plan_usage_policy(
     policy: &EffectivePlanUsagePolicy,
     event_id: &str,
     now_unix_ms: u64,
+    model: Option<&str>,
 ) -> Result<Option<AdmissionPermit>, PlanUsageAdmissionError> {
     if policy.request_rules.is_empty() && policy.concurrency_limit.is_none() {
         return Ok(None);
@@ -584,6 +596,7 @@ async fn check_and_acquire_compiled_plan_usage_policy(
         let outcome = state
             .data
             .reserve_usage_policy_request(ReserveUsagePolicyRequestInput {
+                model: model.map(str::to_string),
                 request_id: event_id.to_string(),
                 subject_id: subject_id.to_string(),
                 event_token: event_id.to_string(),
@@ -686,6 +699,7 @@ pub(crate) async fn check_and_acquire_http_plan_usage_policy(
     decision: Option<&GatewayControlDecision>,
     event_id: &str,
     now_unix_ms: u64,
+    model: Option<&str>,
 ) -> Result<HttpPlanUsageAdmission, PlanUsageAdmissionError> {
     let Some(auth) = decision
         .filter(|decision| decision.route_class.as_deref() == Some("ai_public"))
@@ -696,7 +710,9 @@ pub(crate) async fn check_and_acquire_http_plan_usage_policy(
             reservation_context: None,
         });
     };
-    if auth.admin_bypass_limits || auth.api_key_is_standalone {
+    if !crate::internal_access::enabled()
+        && (auth.admin_bypass_limits || auth.api_key_is_standalone)
+    {
         return Ok(HttpPlanUsageAdmission {
             permit: None,
             reservation_context: None,
@@ -704,13 +720,14 @@ pub(crate) async fn check_and_acquire_http_plan_usage_policy(
     }
 
     let admitted_at_unix_secs = now_unix_ms / 1_000;
-    let policy = load_effective_policy(state, &auth.user_id, admitted_at_unix_secs).await?;
+    let policy = load_effective_policy(state, &auth.user_id, admitted_at_unix_secs, model).await?;
     let permit = check_and_acquire_compiled_plan_usage_policy(
         state,
         &auth.user_id,
         &policy,
         event_id,
         now_unix_ms,
+        model,
     )
     .await?;
     let reservation_context =
@@ -755,7 +772,12 @@ async fn load_effective_policy(
     state: &AppState,
     user_id: &str,
     now_unix_secs: u64,
+    model: Option<&str>,
 ) -> Result<EffectivePlanUsagePolicy, GatewayError> {
+    if crate::internal_access::enabled() {
+        let (config, allocation) = crate::internal_access::allocation(state, user_id).await?;
+        return compile_internal_policy(&config, &allocation, model, now_unix_secs);
+    }
     let cache_key = user_id.to_string();
     let policy = state
         .auth_plan_usage_policy_cache
@@ -788,6 +810,76 @@ async fn load_effective_policy(
         return Ok(policy);
     }
     Ok(policy)
+}
+
+fn compile_internal_policy(
+    config: &crate::internal_access::InternalAccessConfig,
+    allocation: &crate::internal_access::Allocation,
+    model: Option<&str>,
+    now: u64,
+) -> Result<EffectivePlanUsagePolicy, GatewayError> {
+    if allocation.unlimited {
+        return Ok(EffectivePlanUsagePolicy::default());
+    }
+    let model = model.ok_or_else(|| GatewayError::Client {
+        status: http::StatusCode::BAD_REQUEST,
+        message: "a model is required to evaluate internal usage budgets".into(),
+    })?;
+    let mut result = EffectivePlanUsagePolicy {
+        model: Some(model.to_string()),
+        ..Default::default()
+    };
+    let mut cost_rules = BTreeMap::<String, EffectiveCostRule>::new();
+    for scoped in config
+        .scoped_policies(allocation)
+        .map_err(GatewayError::Internal)?
+    {
+        let scope = scoped.model;
+        if scope.as_deref().is_some_and(|m| m != model) {
+            continue;
+        }
+        if scoped
+            .models
+            .as_ref()
+            .is_some_and(|models| !models.iter().any(|m| m == model))
+        {
+            continue;
+        }
+        let entitlement = UserPlanEntitlementRecord {
+            id: "internal".into(),
+            user_id: "internal".into(),
+            plan_id: "internal".into(),
+            payment_order_id: String::new(),
+            status: "active".into(),
+            starts_at_unix_secs: 0,
+            expires_at_unix_secs: 253_402_300_799,
+            entitlements_snapshot: serde_json::json!([scoped.policy]),
+            created_at_unix_secs: now,
+            updated_at_unix_secs: now,
+        };
+        let compiled = compile_effective_policy(&[entitlement], now)?;
+        for mut rule in compiled.cost_rules {
+            if let Some(scope) = &scope {
+                use sha2::Digest;
+                let hash = format!("{:x}", sha2::Sha256::digest(scope.as_bytes()));
+                rule.identity = format!("{}:model:{hash}", rule.identity);
+                rule.model = Some(scope.clone());
+            }
+            if let Some(family) = &scoped.family {
+                rule.identity = format!("{}:family:{family}", rule.identity);
+                rule.models = scoped.models.clone();
+            }
+            // A wildcard and total budget can address the same aggregate window.
+            cost_rules
+                .entry(rule.identity.clone())
+                .and_modify(|current| {
+                    current.limit_cost_units = current.limit_cost_units.min(rule.limit_cost_units);
+                })
+                .or_insert(rule);
+        }
+    }
+    result.cost_rules = cost_rules.into_values().collect();
+    Ok(result)
 }
 
 fn compile_effective_policy(
@@ -842,6 +934,7 @@ fn compile_effective_policy(
                             window => (window_identity(window), None),
                         };
                         let candidate = EffectiveRequestRule {
+                            model: None,
                             identity: identity.clone(),
                             window: rule.window,
                             limit,
@@ -874,6 +967,8 @@ fn compile_effective_policy(
                             window => (window_identity(window), None),
                         };
                         let candidate = EffectiveCostRule {
+                            model: None,
+                            models: None,
                             identity: identity.clone(),
                             window: rule.window,
                             limit_cost_units,
@@ -894,6 +989,7 @@ fn compile_effective_policy(
     }
 
     Ok(EffectivePlanUsagePolicy {
+        model: None,
         request_rules: request_rules.into_values().collect(),
         cost_rules: cost_rules.into_values().collect(),
         concurrency_limit,
@@ -996,6 +1092,7 @@ fn durable_request_rule(
             .map_err(PlanUsageAdmissionError::Gateway)?;
     Ok(DurableRequestRule {
         window: UsagePolicyRequestWindow {
+            model: rule.model.clone(),
             starts_at_unix_secs: starts_at,
             ends_at_unix_secs: ends_at,
             limit_requests: rule.limit,
@@ -1019,6 +1116,8 @@ fn runtime_cost_rule(
         usage_window_bounds(&rule.window, rule.entitlement_period, admitted_at_unix_secs)?;
     Ok(RuntimeCostRule {
         window: UsagePolicyCostWindow {
+            model: rule.model.clone(),
+            models: rule.models.clone(),
             window_id: format!("{}:{starts_at}", rule.identity),
             starts_at_unix_secs: starts_at,
             ends_at_unix_secs: ends_at,
@@ -1035,7 +1134,7 @@ fn runtime_cost_rule(
     })
 }
 
-fn usage_window_bounds(
+pub(crate) fn usage_window_bounds(
     window: &UsagePolicyWindow,
     entitlement_period: Option<(u64, u64)>,
     now_unix_secs: u64,
@@ -1085,6 +1184,7 @@ fn rolling_label(seconds: u64) -> &'static str {
     match seconds {
         1 => "qps",
         60 => "rpm",
+        18_000 => "rolling_5h",
         _ => "rolling",
     }
 }
@@ -1229,6 +1329,101 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[test]
+    fn explicit_zero_money_budget_compiles_to_a_real_zero_capacity_window() {
+        let config =
+            crate::internal_access::parse(json!({"default":{"monthly_budget_usd":0}})).unwrap();
+        let compiled = compile_internal_policy(
+            &config,
+            config.default.as_ref().unwrap(),
+            Some("paid-model"),
+            1_760_000_000,
+        )
+        .unwrap();
+        assert_eq!(compiled.cost_rules.len(), 1);
+        assert_eq!(compiled.cost_rules[0].limit_cost_units, 0);
+        assert_eq!(
+            runtime_cost_rule(&compiled.cost_rules[0], 1_760_000_000)
+                .unwrap()
+                .window
+                .limit_cost_units,
+            0
+        );
+    }
+
+    #[test]
+    fn internal_families_compile_one_selector_per_matching_pool_without_extra_reservations() {
+        let config = crate::internal_access::parse(json!({"model_families":{
+            "fabel":{"name":"Fabel","models":["a","b"]},"premium":{"name":"Premium","models":["b","c"]}
+        },"default":{"weekly_budget_usd":20,"families":{"fabel":{"weekly_budget_usd":5},"premium":{"weekly_budget_usd":3}}}})).unwrap();
+        let allocation = config.default.as_ref().unwrap();
+        for (model, expected) in [("a", 2), ("b", 3), ("c", 2), ("other", 1)] {
+            let compiled =
+                compile_internal_policy(&config, allocation, Some(model), 1_792_152_000).unwrap();
+            assert_eq!(compiled.cost_rules.len(), expected);
+            assert_eq!(compiled.model.as_deref(), Some(model));
+            for rule in &compiled.cost_rules {
+                let window = runtime_cost_rule(rule, 1_792_152_000).unwrap().window;
+                if let Some(models) = window.models {
+                    assert!(models.contains(&model.to_string()));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn internal_policy_compiles_total_money_and_only_current_model_money() {
+        let config = crate::internal_access::parse(json!({"timezone":"Asia/Shanghai","default":{
+            "five_hour_budget_usd":2.5,"weekly_budget_usd":20,"monthly_budget_usd":100,"models":{"glm":{"five_hour_budget_usd":1.25,"daily_budget_usd":5,"weekly_budget_usd":10,"monthly_budget_usd":50},"claude":{"daily_budget_usd":5}}
+        }})).unwrap();
+        let allocation = config.default.as_ref().unwrap();
+        let now = 1_760_000_000;
+        let compiled = compile_internal_policy(&config, allocation, Some("glm"), now).unwrap();
+        assert!(compiled.request_rules.is_empty());
+        assert_eq!(compiled.cost_rules.len(), 7);
+        assert_eq!(compiled.model.as_deref(), Some("glm"));
+        assert_eq!(
+            compiled
+                .cost_rules
+                .iter()
+                .filter(|r| r.model.is_none())
+                .count(),
+            3
+        );
+        let model_rules: Vec<_> = compiled
+            .cost_rules
+            .iter()
+            .filter(|r| r.model.is_some())
+            .collect();
+        assert_eq!(model_rules.len(), 4);
+        assert!(compiled
+            .cost_rules
+            .iter()
+            .all(|r| r.model.is_none() || r.model.as_deref() == Some("glm")));
+        let window = runtime_cost_rule(model_rules[0], now).unwrap();
+        assert_eq!(window.window.model.as_deref(), Some("glm"));
+        let ordinary =
+            compile_internal_policy(&config, allocation, Some("other-authorized-model"), now)
+                .unwrap();
+        assert_eq!(ordinary.cost_rules.len(), 3);
+        assert!(ordinary.cost_rules.iter().all(|r| r.model.is_none()));
+        let mut total_only = allocation.clone();
+        total_only.models.clear();
+        assert_eq!(
+            compile_internal_policy(&config, &total_only, Some("glm"), now)
+                .unwrap()
+                .cost_rules
+                .len(),
+            3
+        );
+        let unlimited = crate::internal_access::Allocation {
+            unlimited: true,
+            ..Default::default()
+        };
+        let compiled = compile_internal_policy(&config, &unlimited, Some("glm"), 100).unwrap();
+        assert!(compiled.request_rules.is_empty() && compiled.cost_rules.is_empty());
+    }
+
     fn entitlement(id: &str, snapshot: serde_json::Value) -> UserPlanEntitlementRecord {
         UserPlanEntitlementRecord {
             id: id.to_string(),
@@ -1242,6 +1437,55 @@ mod tests {
             created_at_unix_secs: 1_000,
             updated_at_unix_secs: 1_000,
         }
+    }
+
+    #[test]
+    fn wildcard_money_and_total_money_use_stricter_shared_window_without_double_charging() {
+        let config = crate::internal_access::parse(json!({"default":{
+            "five_hour_budget_usd":5,"weekly_budget_usd":20,"models":{
+                "*":{"five_hour_budget_usd":3,"weekly_budget_usd":30},
+                "glm":{"five_hour_budget_usd":1.25}
+            }
+        }}))
+        .unwrap();
+        let compiled = compile_internal_policy(
+            &config,
+            config.default.as_ref().unwrap(),
+            Some("glm"),
+            1_760_000_000,
+        )
+        .unwrap();
+        assert_eq!(compiled.cost_rules.len(), 3);
+        let global = compiled
+            .cost_rules
+            .iter()
+            .find(|r| r.model.is_none() && matches!(r.window, UsagePolicyWindow::Rolling { .. }))
+            .unwrap();
+        assert_eq!(global.limit_cost_units, 3 * USAGE_POLICY_COST_UNITS_PER_USD);
+        let scoped = compiled
+            .cost_rules
+            .iter()
+            .find(|r| r.model.is_some())
+            .unwrap();
+        assert_eq!(scoped.limit_cost_units, 125_000_000);
+        let windows: Vec<_> = compiled
+            .cost_rules
+            .iter()
+            .map(|r| runtime_cost_rule(r, 1_760_000_000).unwrap().window)
+            .collect();
+        ReserveUsagePolicyCostInput {
+            model: compiled.model.clone(),
+            request_id: "r".into(),
+            subject_id: "u".into(),
+            reservation_token: "t".into(),
+            admitted_at_unix_secs: 1_760_000_000,
+            reserved_cost_units: 1,
+            reservation_expires_at_unix_secs: 1_760_001_000,
+            retain_until_unix_secs: 1_800_000_000,
+            windows,
+        }
+        .validate()
+        .unwrap();
     }
 
     #[test]
@@ -1372,6 +1616,7 @@ mod tests {
     #[test]
     fn rolling_windows_use_stable_sliding_keys_and_calendar_windows_use_epoch_keys() {
         let rolling = EffectiveRequestRule {
+            model: None,
             identity: "rolling:18000".to_string(),
             window: UsagePolicyWindow::Rolling { seconds: 18_000 },
             limit: 10,
@@ -1384,6 +1629,7 @@ mod tests {
         assert_eq!(first.retention_seconds, 18_000);
 
         let weekly = EffectiveRequestRule {
+            model: None,
             identity: "calendar_week:Asia/Shanghai:1".to_string(),
             window: UsagePolicyWindow::CalendarWeek {
                 timezone: Some("Asia/Shanghai".to_string()),
@@ -1409,6 +1655,7 @@ mod tests {
     #[test]
     fn subscription_period_counter_keeps_the_entitlement_epoch_isolated() {
         let rule = EffectiveRequestRule {
+            model: None,
             identity: "subscription:ent-1".to_string(),
             window: UsagePolicyWindow::SubscriptionPeriod,
             limit: 5,
@@ -1424,6 +1671,7 @@ mod tests {
     #[test]
     fn calendar_bucket_retention_uses_only_the_short_remaining_period() {
         let daily = EffectiveRequestRule {
+            model: None,
             identity: "calendar_day:Asia/Shanghai".to_string(),
             window: UsagePolicyWindow::CalendarDay {
                 timezone: Some("Asia/Shanghai".to_string()),
@@ -1455,6 +1703,8 @@ mod tests {
     #[test]
     fn cost_retention_uses_exclusive_rolling_influence_end() {
         let rule = EffectiveCostRule {
+            model: None,
+            models: None,
             identity: "rolling:18000".to_string(),
             window: UsagePolicyWindow::Rolling { seconds: 18_000 },
             limit_cost_units: 100,

@@ -402,7 +402,7 @@ impl AppState {
                 ProxyTunnelSecurityError::ManagementTokenUnavailable
             }
         })?;
-        if !crate::roles::can_write_admin_console(&authenticated.user.role) {
+        if !crate::roles::can_manage_services(&authenticated.user.role) {
             return Err(ProxyTunnelSecurityError::InvalidAuthorization);
         }
 
@@ -970,7 +970,7 @@ pub(crate) async fn validate_proxy_connection_credential(
             if authenticated.token.id == credential.token_id
                 && authenticated.token.user_id == credential.user_id
                 && authenticated.user.id == credential.user_id
-                && crate::roles::can_write_admin_console(&authenticated.user.role)
+                && crate::roles::can_manage_services(&authenticated.user.role)
                 && management_token_may_connect_proxy_tunnel(&authenticated.permissions)
             {
                 Ok(())

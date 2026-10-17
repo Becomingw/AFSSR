@@ -57,6 +57,7 @@ use aether_data_contracts::repository::usage::{
 };
 use aether_data_contracts::DataLayerError;
 
+mod activity;
 pub mod cleanup;
 
 // Legacy inline body columns on public.usage are deprecated. Keep the threshold at zero so
@@ -10540,6 +10541,14 @@ impl UsageReadRepository for SqlxUsageReadRepository {
         limit: usize,
     ) -> Result<Vec<StoredRequestUsageAudit>, DataLayerError> {
         Self::list_recent_usage_audits(self, user_id, limit).await
+    }
+
+    async fn summarize_usage_activity(
+        &self,
+        query: &aether_data_contracts::repository::usage::UsageActivityQuery,
+    ) -> Result<Vec<aether_data_contracts::repository::usage::UsageActivityRow>, DataLayerError>
+    {
+        Self::summarize_usage_activity(self, query).await
     }
 
     async fn summarize_total_tokens_by_api_key_ids(

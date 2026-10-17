@@ -17,6 +17,7 @@ pub mod kiro;
 mod network;
 pub mod oauth_refresh;
 mod openai_image;
+pub mod opencode_go;
 mod outbound_request_policy;
 pub mod policy;
 pub mod provider_types;

@@ -7,6 +7,7 @@ pub mod protocol;
 pub mod provider_compat;
 
 pub use contracts::{ApiOperation, ClientSurface};
+pub use provider_compat::opencode_go::native_responses_tools_need_restore;
 
 pub use formats::context::{
     ConversionFieldRecord, ConversionFieldStatus, ConversionReport, Converted, FormatContext,

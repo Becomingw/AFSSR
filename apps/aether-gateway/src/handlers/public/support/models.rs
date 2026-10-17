@@ -8,6 +8,8 @@ mod models_responses;
 mod models_route;
 #[path = "models/shared.rs"]
 mod models_shared;
+#[path = "models/opencode.rs"]
+mod opencode;
 
 pub(crate) use self::models_responses::build_models_auth_error_response;
 #[cfg(test)]
@@ -17,6 +19,14 @@ pub(crate) use self::models_shared::{matches_model_mapping_for_models, models_ap
 pub(super) async fn maybe_build_local_models_response(
     state: &AppState,
     request_context: &GatewayPublicRequestContext,
+    headers: &http::HeaderMap,
+    remote_addr: &std::net::SocketAddr,
 ) -> Option<Response<Body>> {
-    models_route::maybe_build_local_models_route_response(state, request_context).await
+    models_route::maybe_build_local_models_route_response(
+        state,
+        request_context,
+        headers,
+        remote_addr,
+    )
+    .await
 }

@@ -130,7 +130,8 @@ pub use report_context::{
 };
 pub use request_body_diagnostics::{
     openai_provider_request_contract_failure_extra_data, request_body_build_failure_extra_data,
-    request_conversion_failure_extra_data, same_format_provider_request_body_failure_extra_data,
+    request_conversion_failure_extra_data, runtime_request_conversion_failure_extra_data,
+    same_format_provider_request_body_failure_extra_data,
 };
 pub use runtime_miss::{
     apply_ai_runtime_candidate_evaluation_progress,

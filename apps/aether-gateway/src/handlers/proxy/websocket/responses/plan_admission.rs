@@ -28,12 +28,19 @@ pub(super) async fn acquire_responses_websocket_plan_admission(
     state: &AppState,
     decision: &crate::control::GatewayControlDecision,
     logical_turn_id: &str,
+    model: Option<&str>,
 ) -> Result<crate::plan_usage_policy::PlanUsageAdmission, PlanUsageAdmissionError> {
+    let canonical_model = if crate::internal_access::enabled() {
+        crate::internal_access::quota_model(state, decision, model).await?
+    } else {
+        model.map(str::to_string)
+    };
     crate::plan_usage_policy::check_and_acquire_plan_usage_policy_admission(
         state,
         Some(decision),
         logical_turn_id,
         crate::clock::current_unix_ms(),
+        canonical_model.as_deref(),
     )
     .await
 }
@@ -134,6 +141,18 @@ fn map_plan_admission_error(
                 message: "Gateway could not evaluate the subscription plan limit",
                 close_code: CLOSE_INTERNAL_ERROR,
                 close_reason: "plan_usage_policy_unavailable",
+            }
+        }
+        PlanUsageAdmissionError::Gateway(GatewayError::Client { status, .. })
+            if *status == http::StatusCode::FORBIDDEN =>
+        {
+            ResponsesWebSocketPlanAdmissionError {
+                status: 403,
+                error_type: "permission_error",
+                code: "internal_access_denied",
+                message: "Internal user access was denied",
+                close_code: CLOSE_INTERNAL_ERROR,
+                close_reason: "internal_access_denied",
             }
         }
         PlanUsageAdmissionError::Gateway(GatewayError::Client { status, .. }) => {

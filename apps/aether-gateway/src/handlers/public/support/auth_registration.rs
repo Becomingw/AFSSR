@@ -634,17 +634,21 @@ pub(super) async fn handle_auth_register(
             );
         }
     };
-    let initial_gift = match state
-        .read_system_config_json_value("default_user_initial_gift_usd")
-        .await
-    {
-        Ok(value) => system_config_f64(value.as_ref(), 10.0),
-        Err(err) => {
-            return build_auth_internal_error_response(
-                "auth_registration_initial_gift_lookup_failed",
-                &err,
-                AUTH_REGISTRATION_UNAVAILABLE_DETAIL,
-            );
+    let initial_gift = if crate::internal_access::enabled() {
+        0.0
+    } else {
+        match state
+            .read_system_config_json_value("default_user_initial_gift_usd")
+            .await
+        {
+            Ok(value) => system_config_f64(value.as_ref(), 10.0),
+            Err(err) => {
+                return build_auth_internal_error_response(
+                    "auth_registration_initial_gift_lookup_failed",
+                    &err,
+                    AUTH_REGISTRATION_UNAVAILABLE_DETAIL,
+                );
+            }
         }
     };
     if require_verification {

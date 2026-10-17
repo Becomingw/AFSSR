@@ -196,9 +196,10 @@ pub fn to_raw(canonical: &CanonicalResponse, report_context: &Value, compact: bo
             } => {
                 let claude_carrier =
                     if crate::protocol::canonical::is_claude_thinking_block(extensions)
-                        && crate::formats::shared::model_directives::claude_model_is_haiku_5_5(
-                            &canonical.model,
-                        )
+                        && (report_context["provider_type"] == "opencode_go"
+                            || crate::formats::shared::model_directives::claude_model_is_haiku_5_5(
+                                &canonical.model,
+                            ))
                     {
                         if let Some(signature) = signature.as_ref().filter(|s| !s.is_empty()) {
                             crate::formats::claude::responses_tools::encode_thinking_carrier(&[

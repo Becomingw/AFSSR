@@ -244,6 +244,15 @@ impl UsageSettlementWriter for GatewayDataState {
 #[async_trait]
 impl UsageBillingEventEnricher for GatewayDataState {
     async fn enrich_usage_event(&self, event: &mut UsageEvent) -> Result<(), DataLayerError> {
+        if crate::internal_access::enabled() {
+            let metadata = event
+                .data
+                .request_metadata
+                .get_or_insert_with(|| serde_json::json!({}));
+            if let Some(object) = metadata.as_object_mut() {
+                object.insert("internal_accounting".into(), serde_json::json!(true));
+            }
+        }
         enrich_usage_event_with_billing(self, event).await
     }
 }

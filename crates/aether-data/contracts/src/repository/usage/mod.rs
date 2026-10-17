@@ -1,4 +1,6 @@
+mod activity;
 mod compression;
+pub use activity::{UsageActivityQuery, UsageActivityRow};
 mod metadata_policy;
 mod policy;
 mod types;

@@ -1826,7 +1826,7 @@ fn normalize_imported_system_user_role(
         .ok_or_else(|| format!("不支持的用户角色: {raw_role}"))?;
 
     if crate::roles::is_full_admin_role(role)
-        || (crate::roles::is_audit_admin_role(role) && !mode.allows_audit_admin_restore())
+        || (crate::roles::can_access_admin_console(role) && !mode.allows_audit_admin_restore())
     {
         return Ok(None);
     }
@@ -1836,7 +1836,7 @@ fn normalize_imported_system_user_role(
 
 fn imported_existing_user_is_protected(role: &str, mode: SystemImportMode) -> bool {
     crate::roles::is_full_admin_role(role)
-        || (crate::roles::is_audit_admin_role(role) && !mode.allows_audit_admin_restore())
+        || (crate::roles::can_access_admin_console(role) && !mode.allows_audit_admin_restore())
 }
 
 fn validate_rollback_user_source_id(
@@ -8700,6 +8700,17 @@ mod tests {
 
     #[test]
     fn system_user_role_interactive_import_cannot_assign_admin_console_roles() {
+        for role in ["user_admin", "service_admin", "audit_admin"] {
+            for mode in [
+                SystemImportMode::InteractiveUpload,
+                SystemImportMode::RollbackCheckpoint,
+            ] {
+                assert_eq!(
+                    normalize_imported_system_user_role(Some(&json!(role)), mode),
+                    Ok(None)
+                );
+            }
+        }
         assert_eq!(
             normalize_imported_system_user_role(None, SystemImportMode::InteractiveUpload),
             Ok(Some("user".to_string()))
@@ -8734,15 +8745,17 @@ mod tests {
     }
 
     #[test]
-    fn system_user_role_authenticated_recovery_restores_only_audit_admin() {
+    fn system_user_role_authenticated_recovery_restores_scoped_admins_but_not_super_admin() {
         for mode in [
             SystemImportMode::RecoveryBackup,
             SystemImportMode::RecoveryRollbackCheckpoint,
         ] {
-            assert_eq!(
-                normalize_imported_system_user_role(Some(&json!("audit_admin")), mode),
-                Ok(Some("audit_admin".to_string()))
-            );
+            for role in ["audit_admin", "user_admin", "service_admin"] {
+                assert_eq!(
+                    normalize_imported_system_user_role(Some(&json!(role)), mode),
+                    Ok(Some(role.to_string()))
+                );
+            }
             assert_eq!(
                 normalize_imported_system_user_role(Some(&json!("admin")), mode),
                 Ok(None)
@@ -8758,6 +8771,8 @@ mod tests {
         ] {
             assert!(imported_existing_user_is_protected("admin", mode));
             assert!(imported_existing_user_is_protected("audit_admin", mode));
+            assert!(imported_existing_user_is_protected("user_admin", mode));
+            assert!(imported_existing_user_is_protected("service_admin", mode));
             assert!(!imported_existing_user_is_protected("user", mode));
         }
 
@@ -8773,6 +8788,14 @@ mod tests {
             "audit_admin",
             SystemImportMode::RecoveryRollbackCheckpoint,
         ));
+        for role in ["user_admin", "service_admin"] {
+            for mode in [
+                SystemImportMode::RecoveryBackup,
+                SystemImportMode::RecoveryRollbackCheckpoint,
+            ] {
+                assert!(!imported_existing_user_is_protected(role, mode));
+            }
+        }
     }
 
     #[test]

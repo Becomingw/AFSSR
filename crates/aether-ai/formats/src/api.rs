@@ -266,6 +266,10 @@ pub use crate::provider_compat::kiro_stream::{
     find_kiro_real_thinking_end_tag_at_buffer_end, find_kiro_real_thinking_start_tag, kiro_crc32,
     KiroToClaudeCliStreamState, KIRO_MAX_THINKING_BUFFER,
 };
+pub use crate::provider_compat::opencode_go::{
+    expand_go_native_response_history, native_responses_tools_need_restore,
+    uses_gateway_response_history,
+};
 pub use crate::provider_compat::private_envelope::{
     extract_provider_private_stream_error_body, maybe_build_provider_private_stream_normalizer,
     normalize_provider_private_report_context, normalize_provider_private_response_value,

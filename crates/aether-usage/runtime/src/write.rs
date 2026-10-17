@@ -5648,14 +5648,14 @@ mod tests {
         assert_eq!(
             event.data.response_headers,
             Some(json!({
-                "authorization": "Bearer very-secret-token",
+                "authorization": "[redacted]",
                 "content-type": "application/json"
             }))
         );
         assert_eq!(
             event.data.client_response_headers,
             Some(json!({
-                "authorization": "Bearer very-secret-token",
+                "authorization": "[redacted]",
                 "content-type": "application/json"
             }))
         );
@@ -6619,26 +6619,26 @@ mod tests {
         assert_eq!(
             event.data.request_headers,
             Some(json!({
-                "authorization": "Bearer very-secret-token",
+                "authorization": "[redacted]",
                 "accept": "application/json"
             }))
         );
         assert_eq!(
             event.data.provider_request_headers,
             Some(json!({
-                "x-api-key": "sk-proj-super-secret"
+                "x-api-key": "[redacted]"
             }))
         );
         assert_eq!(
             event.data.response_headers,
             Some(json!({
-                "set-cookie": "session=extremely-secret-cookie"
+                "set-cookie": "[redacted]"
             }))
         );
         assert_eq!(
             event.data.client_response_headers,
             Some(json!({
-                "authorization": "Bearer client-secret"
+                "authorization": "[redacted]"
             }))
         );
         assert_eq!(
@@ -6754,7 +6754,7 @@ mod tests {
         assert_eq!(
             data.request_headers,
             Some(json!({
-                "authorization": "Bearer outcome-secret",
+                "authorization": "[redacted]",
                 "accept": "application/json"
             }))
         );
@@ -6986,13 +6986,13 @@ mod tests {
             .get("Authorization")
             .and_then(|v| v.as_str())
             .expect("Authorization should be string");
-        assert_eq!(auth, "Bearer eyJhbGciOiJSUzI1NiJ9.body.signature");
+        assert_eq!(auth, "[redacted]");
 
         let cookie = object
             .get("Cookie")
             .and_then(|v| v.as_str())
             .expect("Cookie should be string");
-        assert_eq!(cookie, "session=verylongcookievalue1234");
+        assert_eq!(cookie, "[redacted]");
 
         assert_eq!(
             object.get("Accept").and_then(|v| v.as_str()),

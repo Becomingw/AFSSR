@@ -337,7 +337,9 @@ export interface ImportFromUpstreamSuccessItem {
   provider_model_id: string
   global_model_id: string
   global_model_name: string
-  created_global_model: boolean  // 始终为 false（不再自动创建 GlobalModel）
+  created_global_model: boolean
+  catalog_metadata_status?: 'matched' | 'unmatched' | 'pricing_unavailable' | null
+  global_model_active?: boolean
 }
 
 /**

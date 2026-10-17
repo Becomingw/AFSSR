@@ -66,7 +66,7 @@
               class="text-sm font-medium"
             >{{ legacyT('用户角色') }}</Label>
             <div class="w-full">
-              <Select v-model="form.role">
+              <Select v-model="form.role" :disabled="!canAssignRoles">
                 <SelectTrigger
                   id="form-role"
                   class="h-10 w-full text-sm"
@@ -77,12 +77,14 @@
                   <SelectItem value="user">
                     {{ legacyT('普通用户') }}
                   </SelectItem>
-                  <SelectItem value="admin">
-                    {{ legacyT('管理员') }}
+                  <SelectItem v-if="canAssignRoles" value="admin">
+                    {{ legacyT('超级管理员') }}
                   </SelectItem>
-                  <SelectItem value="audit_admin">
+                  <SelectItem v-if="canAssignRoles" value="audit_admin">
                     {{ legacyT('审计管理员') }}
                   </SelectItem>
+                  <SelectItem v-if="canAssignRoles" value="user_admin">用户及权益管理员</SelectItem>
+                  <SelectItem v-if="canAssignRoles" value="service_admin">服务管理员</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -186,12 +188,25 @@
           />
         </div>
 
-        <div class="space-y-2">
+        <div v-if="INTERNAL_GATEWAY && isEditMode" class="space-y-2">
+          <Label class="text-sm font-medium" for="user-model-policy">模型权限</Label>
+          <select id="user-model-policy" v-model="modelMode" class="h-10 w-full rounded-md border bg-background px-3 text-sm" :disabled="saving || loadingModels">
+            <option value="inherit">跟随用户组</option>
+            <option value="specific">指定可用模型</option>
+            <option value="deny_all">禁止使用模型</option>
+          </select>
+          <MultiSelect v-if="modelMode === 'specific'" v-model="selectedModels" :options="modelOptions" :disabled="saving || loadingModels" placeholder="选择可用模型" />
+          <p v-if="modelOptionsError" role="alert" class="text-sm text-destructive">{{ modelOptionsError }}</p>
+          <Button v-if="modelOptionsError" type="button" variant="outline" size="sm" @click="loadModels">重新加载</Button>
+        </div>
+
+        <div v-if="!INTERNAL_GATEWAY" class="space-y-2">
           <Label class="text-sm font-medium">{{ legacyT('额度') }}</Label>
           <div class="flex items-center gap-3">
             <div class="flex-1 min-w-0">
               <Input
                 v-if="!isEditMode && !form.unlimited"
+                v-show="!INTERNAL_GATEWAY"
                 id="form-initial-gift"
                 :model-value="form.initial_gift_usd ?? ''"
                 type="number"
@@ -204,9 +219,10 @@
               <span
                 v-else
                 class="flex h-10 w-full items-center rounded-lg border bg-background px-3 text-sm text-muted-foreground opacity-60"
-              >{{ legacyT(form.unlimited ? '无限制' : '按钱包余额限制') }}</span>
+              >{{ INTERNAL_GATEWAY ? '用户权益' : legacyT(form.unlimited ? '无限制' : '按钱包余额限制') }}</span>
             </div>
             <Switch
+              v-show="!INTERNAL_GATEWAY"
               v-model="form.unlimited"
               class="shrink-0"
             />
@@ -263,6 +279,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import { INTERNAL_GATEWAY } from '@/config/internalGateway'
 import {
   Dialog,
   Button,
@@ -279,6 +296,8 @@ import { UserPlus, SquarePen } from 'lucide-vue-next'
 import { useFormDialog } from '@/composables/useFormDialog'
 import { MultiSelect } from '@/components/common'
 import { adminApi } from '@/api/admin'
+import { getGlobalModels } from '@/api/global-models'
+import { parseApiError } from '@/utils/errorParser'
 import { log } from '@/utils/logger'
 import { useI18n } from '@/i18n'
 import { parseNumberInput } from '@/utils/form'
@@ -295,7 +314,7 @@ import {
   validatePasswordByPolicy,
   type PasswordPolicyLevel,
 } from '@/utils/passwordPolicy'
-import type { UserGroup, UserRole } from '@/api/users'
+import type { UserGroup, UserRole, ListPolicyMode } from '@/api/users'
 
 export interface UserFormData {
   id?: string
@@ -307,13 +326,16 @@ export interface UserFormData {
   is_active?: boolean
   group_ids?: string[]
   feature_settings?: Record<string, unknown> | null
+  allowed_models?: string[] | null
+  allowed_models_mode?: ListPolicyMode
 }
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   open: boolean
   user: UserFormData | null
   groups?: UserGroup[]
-}>()
+  canAssignRoles?: boolean
+}>(), { canAssignRoles: true })
 
 const emit = defineEmits<{
   close: []
@@ -324,6 +346,26 @@ const isOpen = computed(() => props.open)
 const saving = ref(false)
 const formNonce = ref(createFieldNonce())
 const passwordPolicyLevel = ref<PasswordPolicyLevel>('weak')
+const modelMode = ref<'inherit' | 'specific' | 'deny_all'>('inherit')
+const selectedModels = ref<string[]>([])
+const availableModels = ref<string[]>([])
+const loadingModels = ref(false)
+const modelOptionsError = ref('')
+const modelOptions = computed(() => [...new Set([...availableModels.value, ...selectedModels.value])].map(name => ({ value: name, label: name })))
+let modelLoadId = 0
+async function loadModels() {
+  const id = ++modelLoadId
+  loadingModels.value = true
+  modelOptionsError.value = ''
+  try {
+    const result = await getGlobalModels({ limit: 1000, is_active: true })
+    if (id === modelLoadId) availableModels.value = (result.models ?? []).map(model => model.name)
+  } catch (error) {
+    if (id === modelLoadId) modelOptionsError.value = parseApiError(error, '加载模型失败')
+  } finally {
+    if (id === modelLoadId) loadingModels.value = false
+  }
+}
 
 // 表单数据
 const form = ref({
@@ -352,6 +394,8 @@ function createFieldNonce(): string {
 }
 
 function resetForm() {
+  modelMode.value = 'inherit'
+  selectedModels.value = []
   formNonce.value = createFieldNonce()
   form.value = {
     username: '',
@@ -371,6 +415,9 @@ function resetForm() {
 
 function loadUserData() {
   if (!props.user) return
+  const mode = props.user.allowed_models_mode
+  modelMode.value = mode === 'deny_all' ? 'deny_all' : mode === 'specific' || (!mode && props.user.allowed_models?.length) ? 'specific' : 'inherit'
+  selectedModels.value = [...(props.user.allowed_models ?? [])]
   formNonce.value = createFieldNonce()
   const redactionFeature = readChatPiiRedactionFeatureSettings(props.user.feature_settings)
   const notificationPushFeature = readNotificationPushServiceFeatureSettings(props.user.feature_settings)
@@ -433,10 +480,11 @@ const isFormValid = computed(() => {
   const passwordConfirmed = isEditMode.value
     ? !passwordFilled || form.value.password === form.value.confirmPassword
     : true
-  const initialGiftValid = isEditMode.value ||
+  const initialGiftValid = INTERNAL_GATEWAY || isEditMode.value ||
     form.value.unlimited ||
     (typeof form.value.initial_gift_usd === 'number' && form.value.initial_gift_usd >= 0.01)
-  return hasUsername && usernameValid && passwordValid && passwordConfirmed && initialGiftValid
+  const modelsValid = !INTERNAL_GATEWAY || !isEditMode.value || (!loadingModels.value && !modelOptionsError.value && (modelMode.value !== 'specific' || selectedModels.value.length > 0))
+  return hasUsername && usernameValid && passwordValid && passwordConfirmed && initialGiftValid && modelsValid
 })
 
 
@@ -454,6 +502,7 @@ async function loadPasswordPolicy(): Promise<void> {
 
 // 提交表单
 async function handleSubmit() {
+  if (!isFormValid.value) return
   saving.value = true
   try {
     const data: UserFormData & { password?: string; unlimited: boolean } = {
@@ -467,6 +516,7 @@ async function handleSubmit() {
 
     if (isEditMode.value && props.user?.id) {
       data.id = props.user.id
+      if (INTERNAL_GATEWAY) data.allowed_models = modelMode.value === 'inherit' ? null : modelMode.value === 'deny_all' ? [] : [...selectedModels.value]
     }
 
     if (!isEditMode.value) {
@@ -508,8 +558,12 @@ function setSaving(value: boolean) {
 watch(isOpen, (val) => {
   if (val) {
     loadPasswordPolicy()
+    if (INTERNAL_GATEWAY && props.user?.id) loadModels()
+  } else {
+    modelLoadId++
+    loadingModels.value = false
   }
-})
+}, { immediate: true })
 
 watch(
   () => form.value.unlimited,

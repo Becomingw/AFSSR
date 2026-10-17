@@ -1,17 +1,17 @@
 <template>
-  <div class="flex flex-col h-[calc(100vh-12rem)]">
+  <div class="min-w-0 pb-6">
     <!-- 主内容区 -->
     <div class="flex-1 flex flex-col min-w-0">
       <!-- 模型列表 -->
-      <Card class="overflow-hidden">
+      <section class="min-w-0 overflow-hidden">
         <!-- 标题和操作栏 -->
-        <div class="px-4 sm:px-6 py-3 sm:py-3.5 border-b border-border/60">
-          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
+        <div class="pb-4 border-b border-border">
+          <div class="flex min-w-0 flex-col gap-4">
             <!-- 左侧：标题 -->
             <div class="flex min-w-0 items-baseline gap-2">
-              <h3 class="text-sm sm:text-base font-semibold shrink-0">
+              <h1 class="console-page-title">
                 模型管理
-              </h3>
+              </h1>
               <span
                 v-if="selectedBatchManageModelIds.size > 0"
                 class="text-xs font-medium text-primary"
@@ -24,14 +24,15 @@
             <!-- 右侧：操作区 -->
             <div class="flex flex-wrap items-center gap-2">
               <!-- 搜索框 -->
-              <div class="relative">
+              <div class="relative min-w-40 flex-1 sm:w-64 sm:flex-none">
                 <Search class="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/70 z-10 pointer-events-none" />
                 <Input
                   id="model-search"
                   v-model="searchQuery"
                   type="text"
+                  aria-label="搜索模型"
                   placeholder="搜索模型名称..."
-                  class="w-32 sm:w-44 pl-8 pr-3 h-8 text-sm bg-muted/30 border-border/50 focus:border-primary/50 transition-colors"
+                  class="w-full pl-8 pr-3 h-9 text-sm"
                 />
               </div>
 
@@ -350,7 +351,7 @@
           @update:current="catalogCurrentPage = $event"
           @update:page-size="catalogPageSize = $event"
         />
-      </Card>
+      </section>
     </div>
 
     <!-- 创建/编辑模型对话框 -->
@@ -361,6 +362,7 @@
       @success="handleModelFormSuccess"
       @edit-model="editModel"
       @pricing-synced="handleModelPricingSynced"
+      @catalog-refreshed="loadGlobalModels()"
     />
 
     <!-- 模型详情抽屉 -->
@@ -753,7 +755,6 @@ import { parseApiError } from '@/utils/errorParser'
 import { sortResolutionEntries } from '@/utils/form'
 import {
   Button,
-  Card,
   Checkbox,
   Input,
   Table,

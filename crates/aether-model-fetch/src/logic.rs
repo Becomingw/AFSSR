@@ -98,6 +98,22 @@ pub fn build_models_fetch_url_for_client_version(
     Some((url, api_format))
 }
 
+pub(crate) fn parse_opencode_go_models_response_page(
+    body: &Value,
+) -> Result<ModelsFetchPage, String> {
+    let mut page = parse_models_response_page("openai:chat", body)?;
+    for model in &mut page.cached_models {
+        let native = model
+            .get("id")
+            .and_then(Value::as_str)
+            .and_then(aether_ai_formats::provider_compat::opencode_go::model_api_format);
+        // Go returns a provider-wide list from every protocol endpoint. A
+        // successful catalog GET is not proof that a model supports that API.
+        model["api_formats"] = json!(native.into_iter().collect::<Vec<_>>());
+    }
+    Ok(page)
+}
+
 pub fn parse_models_response(
     endpoint_api_format: &str,
     body: &Value,
@@ -1177,6 +1193,26 @@ mod tests {
         preset_models_for_provider, project_codex_models_for_legacy_cache,
         selected_models_fetch_endpoints,
     };
+
+    #[test]
+    fn go_catalog_projects_native_formats_instead_of_fetch_endpoint() {
+        let page = super::parse_opencode_go_models_response_page(&json!({"data":[
+            {"id":"gpt-6-luna"}, {"id":"claude-haiku-5-5"},
+            {"id":"glm-5.3-flash"}, {"id":"future-model"}
+        ]}))
+        .unwrap();
+        assert_eq!(
+            page.cached_models[0]["api_formats"],
+            json!(["openai:responses"])
+        );
+        assert_eq!(
+            page.cached_models[1]["api_formats"],
+            json!(["claude:messages"])
+        );
+        assert_eq!(page.cached_models[2]["api_formats"], json!(["openai:chat"]));
+        assert_eq!(page.cached_models[3]["api_formats"], json!([]));
+        assert_eq!(aggregate_models_for_cache(&page.cached_models).len(), 4);
+    }
 
     fn sample_endpoint(
         provider_id: &str,

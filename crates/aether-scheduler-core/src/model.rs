@@ -242,6 +242,9 @@ pub fn resolve_provider_model_name_with_model_directives_and_request_operation(
         for pattern in global_model_mappings {
             if matches_model_mapping(pattern, allowed_model) {
                 let allowed_model = allowed_model.to_owned();
+                if row.provider_type.trim().eq_ignore_ascii_case("opencode_go") {
+                    return Some((selected_provider_model_name, Some(allowed_model)));
+                }
                 return Some((allowed_model.clone(), Some(allowed_model)));
             }
         }
@@ -264,7 +267,8 @@ fn resolve_selected_provider_model_name(
     request_operation: Option<&str>,
 ) -> Option<String> {
     let Some(mappings) = row.model_provider_model_mappings.as_ref() else {
-        return Some(row.model_provider_model_name.clone());
+        return row_default_provider_model_name_available(row, api_format, request_operation)
+            .then(|| row.model_provider_model_name.clone());
     };
 
     if let Some(mapping) = mappings
@@ -317,8 +321,16 @@ fn row_default_provider_model_name_available(
     api_format: &str,
     request_operation: Option<&str>,
 ) -> bool {
+    if !provider_model_protocol_matches(row, &row.model_provider_model_name, api_format) {
+        return false;
+    }
+    let unknown_go_model = row.provider_type.trim().eq_ignore_ascii_case("opencode_go")
+        && aether_ai_formats::provider_compat::opencode_go::model_api_format(
+            &row.model_provider_model_name,
+        )
+        .is_none();
     let Some(mappings) = row.model_provider_model_mappings.as_ref() else {
-        return true;
+        return !unknown_go_model;
     };
     let mut has_explicit_default_mapping = false;
     for mapping in mappings {
@@ -330,7 +342,7 @@ fn row_default_provider_model_name_available(
             return true;
         }
     }
-    !has_explicit_default_mapping
+    !has_explicit_default_mapping && !unknown_go_model
 }
 
 fn mapping_scope_matches(
@@ -339,6 +351,17 @@ fn mapping_scope_matches(
     api_format: &str,
     request_operation: Option<&str>,
 ) -> bool {
+    if !provider_model_protocol_matches(row, &mapping.name, api_format) {
+        return false;
+    }
+    if row.provider_type.trim().eq_ignore_ascii_case("opencode_go")
+        && aether_ai_formats::provider_compat::opencode_go::model_api_format(&mapping.name)
+            .is_none()
+        && mapping.api_formats.is_none()
+        && mapping.endpoint_ids.is_none()
+    {
+        return false;
+    }
     let api_format_matches_scope = mapping.api_formats.as_ref().is_none_or(|api_formats| {
         api_formats.iter().any(|value| {
             provider_model_mapping_api_format_covers(&row.provider_type, value, api_format)
@@ -368,6 +391,17 @@ fn mapping_scope_matches(
 
 fn mapping_operation_scope_rank(mapping: &StoredProviderModelMapping) -> u8 {
     u8::from(mapping.operations.is_some())
+}
+
+fn provider_model_protocol_matches(
+    row: &StoredMinimalCandidateSelectionRow,
+    model: &str,
+    api_format: &str,
+) -> bool {
+    !row.provider_type.trim().eq_ignore_ascii_case("opencode_go")
+        || aether_ai_formats::provider_compat::opencode_go::model_supports_api_format(
+            model, api_format,
+        )
 }
 
 pub fn row_supports_required_capability(
@@ -567,6 +601,101 @@ mod tests {
     use aether_data_contracts::repository::candidate_selection::{
         StoredMinimalCandidateSelectionRow, StoredProviderModelMapping,
     };
+
+    #[test]
+    fn opencode_go_selects_mapped_model_protocol_not_downstream_alias() {
+        let mut row = sample_row("gpt-6.1-sol", "gpt-6.1-sol");
+        row.provider_type = "opencode_go".to_string();
+        row.model_provider_model_mappings = Some(vec![StoredProviderModelMapping {
+            name: "claude-haiku-5-5".to_string(),
+            priority: 1,
+            api_formats: None,
+            endpoint_ids: None,
+            operations: None,
+        }]);
+        assert_eq!(
+            resolve_provider_model_name(&row, "gpt-6.1-sol", "claude:messages")
+                .unwrap()
+                .0,
+            "claude-haiku-5-5"
+        );
+        assert!(resolve_provider_model_name(&row, "gpt-6.1-sol", "openai:responses").is_none());
+        assert!(resolve_provider_model_name(&row, "gpt-6.1-sol", "openai:chat").is_none());
+        assert!(!row_supports_requested_model(
+            &row,
+            "gpt-6.1-sol",
+            "openai:responses"
+        ));
+    }
+
+    #[test]
+    fn opencode_go_keeps_endpoint_scopes_and_selects_compatible_priority() {
+        let mut row = sample_row("alias", "glm-5.3-flash");
+        row.provider_type = "opencode_go".to_string();
+        row.model_provider_model_mappings = Some(vec![
+            StoredProviderModelMapping {
+                name: "gpt-6-luna".into(),
+                priority: 1,
+                api_formats: None,
+                endpoint_ids: None,
+                operations: None,
+            },
+            StoredProviderModelMapping {
+                name: "space-bunny".into(),
+                priority: 2,
+                api_formats: None,
+                endpoint_ids: Some(vec![row.endpoint_id.clone()]),
+                operations: None,
+            },
+        ]);
+        assert_eq!(
+            resolve_provider_model_name(&row, "alias", "openai:chat")
+                .unwrap()
+                .0,
+            "space-bunny"
+        );
+        assert_eq!(
+            resolve_provider_model_name(&row, "alias", "openai:responses")
+                .unwrap()
+                .0,
+            "gpt-6-luna"
+        );
+        assert!(resolve_provider_model_name(&row, "alias", "claude:messages").is_none());
+        assert!(resolve_provider_model_name(&row, "alias", "openai:responses:compact").is_none());
+    }
+
+    #[test]
+    fn opencode_go_future_model_requires_explicit_protocol_mapping() {
+        let mut row = sample_row("alias", "future-model");
+        row.provider_type = "opencode_go".to_string();
+        assert!(resolve_provider_model_name(&row, "alias", "openai:chat").is_none());
+        row.model_provider_model_mappings = Some(vec![StoredProviderModelMapping {
+            name: "future-model".into(),
+            priority: 1,
+            api_formats: Some(vec!["claude:messages".into()]),
+            endpoint_ids: None,
+            operations: None,
+        }]);
+        assert!(resolve_provider_model_name(&row, "alias", "claude:messages").is_some());
+        assert!(resolve_provider_model_name(&row, "alias", "openai:chat").is_none());
+    }
+
+    #[test]
+    fn other_providers_are_not_limited_by_go_native_protocols() {
+        let row = sample_row("alias", "claude-haiku-5-5");
+        assert!(resolve_provider_model_name(&row, "alias", "openai:responses").is_some());
+    }
+
+    #[test]
+    fn go_permission_regex_does_not_replace_mapped_upstream_target_with_alias() {
+        let mut row = sample_row("alias", "claude-haiku-5-5");
+        row.provider_type = "opencode_go".into();
+        row.key_allowed_models = Some(vec!["gpt-6.2-sol".into()]);
+        row.global_model_mappings = Some(vec!["gpt-6\\.[0-9]+-sol".into()]);
+        let resolved = resolve_provider_model_name(&row, "alias", "claude:messages").unwrap();
+        assert_eq!(resolved.0, "claude-haiku-5-5");
+        assert_eq!(resolved.1.as_deref(), Some("gpt-6.2-sol"));
+    }
 
     #[test]
     fn model_mapping_match_is_case_insensitive() {

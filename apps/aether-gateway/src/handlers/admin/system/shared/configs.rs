@@ -122,7 +122,64 @@ pub(crate) async fn apply_admin_system_config_update(
     };
     let mut value = update.value;
     let normalized_key = update.normalized_key;
+    if normalized_key == crate::api::compatibility::CONFIG_KEY {
+        return Ok(Err((
+            http::StatusCode::FORBIDDEN,
+            json!({"detail":"Compatibility snapshots may only be written through the controlled workbench"}),
+        )));
+    }
     let description = update.description;
+    if normalized_key == crate::internal_access::CONFIG_KEY {
+        if let Err(detail) = crate::internal_access::parse(value.clone()) {
+            return Ok(Err((
+                http::StatusCode::BAD_REQUEST,
+                json!({"detail": detail}),
+            )));
+        }
+        let payload: serde_json::Value = serde_json::from_slice(request_body)
+            .map_err(|e| GatewayError::Internal(e.to_string()))?;
+        let Some(expected) = payload.get("expected_value") else {
+            return Ok(Err((
+                http::StatusCode::PRECONDITION_REQUIRED,
+                json!({"detail":"expected_value is required for internal policy writes"}),
+            )));
+        };
+        let operation = async {
+            let current = state
+                .app()
+                .read_system_config_json_value_strong(&normalized_key)
+                .await?
+                .unwrap_or(serde_json::Value::Null);
+            if &current != expected {
+                return Ok(Err((
+                    http::StatusCode::CONFLICT,
+                    json!({"detail":"Internal policy changed; refresh before saving"}),
+                )));
+            }
+            let updated = state
+                .upsert_system_config_entry(&normalized_key, &value, description.as_deref())
+                .await?;
+            state.app().invalidate_auth_context_cache();
+            Ok(Ok(build_admin_system_config_updated_payload(
+                updated.key,
+                updated.value,
+                updated.description,
+                updated.updated_at_unix_secs,
+            )))
+        };
+        return match crate::handlers::admin::system::execute_admin_system_import_exclusively(
+            state.app(),
+            operation,
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(error) => Ok(Err((
+                http::StatusCode::SERVICE_UNAVAILABLE,
+                json!({"detail":format!("Internal policy write lock unavailable: {error:?}")}),
+            ))),
+        };
+    }
 
     if is_sensitive_admin_system_config_key(&normalized_key)
         && value.as_str().is_some_and(|raw| !raw.is_empty())
@@ -213,6 +270,12 @@ pub(crate) async fn delete_admin_system_config(
     state: &AdminAppState<'_>,
     requested_key: &str,
 ) -> Result<Result<serde_json::Value, (http::StatusCode, serde_json::Value)>, GatewayError> {
+    if requested_key.trim() == crate::internal_access::CONFIG_KEY {
+        return Ok(Err((
+            http::StatusCode::METHOD_NOT_ALLOWED,
+            json!({"detail":"Replace the internal policy with expected_value; deletion is disabled"}),
+        )));
+    }
     if let Some(error) = external_models_proxy_node_config_owner_error(requested_key) {
         return Ok(Err(error));
     }
@@ -228,4 +291,117 @@ pub(crate) async fn delete_admin_system_config(
         )));
     }
     Ok(Ok(build_admin_system_config_deleted_payload(requested_key)))
+}
+
+#[cfg(test)]
+mod internal_access_config_tests {
+    use super::*;
+    use crate::data::GatewayDataState;
+
+    fn state() -> crate::AppState {
+        crate::AppState::new().unwrap().with_data_state_for_tests(
+            GatewayDataState::disabled()
+                .with_system_config_values_for_tests(Vec::<(String, serde_json::Value)>::new()),
+        )
+    }
+
+    #[tokio::test]
+    async fn internal_config_requires_expected_value_and_never_overwrites_stale_writes() {
+        let app = state();
+        let state = AdminAppState::new(&app);
+        let key = crate::internal_access::CONFIG_KEY;
+        let original =
+            json!({"timezone":"Asia/Shanghai","default":{"unlimited":true},"groups":{},"users":{}});
+        let missing = Bytes::from(serde_json::to_vec(&json!({"value":original})).unwrap());
+        assert_eq!(
+            apply_admin_system_config_update(&state, key, &missing)
+                .await
+                .unwrap()
+                .unwrap_err()
+                .0,
+            http::StatusCode::PRECONDITION_REQUIRED
+        );
+        let first = Bytes::from(
+            serde_json::to_vec(&json!({"value":original,"expected_value":null})).unwrap(),
+        );
+        assert!(apply_admin_system_config_update(&state, key, &first)
+            .await
+            .unwrap()
+            .is_ok());
+        let replacement = json!({"timezone":"Asia/Shanghai","default":{"models":{"glm":{"daily_budget_usd":5}},"monthly_budget_usd":20},"groups":{},"users":{}});
+        let stale = Bytes::from(
+            serde_json::to_vec(&json!({"value":replacement,"expected_value":null})).unwrap(),
+        );
+        assert_eq!(
+            apply_admin_system_config_update(&state, key, &stale)
+                .await
+                .unwrap()
+                .unwrap_err()
+                .0,
+            http::StatusCode::CONFLICT
+        );
+        assert_eq!(
+            app.read_system_config_json_value_strong(key).await.unwrap(),
+            Some(original.clone())
+        );
+        let fresh = Bytes::from(
+            serde_json::to_vec(&json!({"value":replacement,"expected_value":original})).unwrap(),
+        );
+        assert!(apply_admin_system_config_update(&state, key, &fresh)
+            .await
+            .unwrap()
+            .is_ok());
+        assert_eq!(
+            app.read_system_config_json_value_strong(key).await.unwrap(),
+            Some(replacement)
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_internal_policy_and_generic_deletion_do_not_change_storage() {
+        let app = state();
+        let state = AdminAppState::new(&app);
+        let key = crate::internal_access::CONFIG_KEY;
+        let invalid = Bytes::from(serde_json::to_vec(&json!({"expected_value":null,"value":{"default":{"models":{"glm":{"daily_budget_usd":-1}}}}})).unwrap());
+        assert_eq!(
+            apply_admin_system_config_update(&state, key, &invalid)
+                .await
+                .unwrap()
+                .unwrap_err()
+                .0,
+            http::StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            app.read_system_config_json_value_strong(key).await.unwrap(),
+            None
+        );
+        assert_eq!(
+            delete_admin_system_config(&state, key)
+                .await
+                .unwrap()
+                .unwrap_err()
+                .0,
+            http::StatusCode::METHOD_NOT_ALLOWED
+        );
+    }
+
+    #[tokio::test]
+    async fn zero_cost_budgets_roundtrip_without_becoming_unlimited() {
+        let app = state();
+        let state = AdminAppState::new(&app);
+        let key = crate::internal_access::CONFIG_KEY;
+        let zero = json!({"model_families":{"astra":{"name":"Astra","models":["a"]}},
+            "default":{"five_hour_budget_usd":0,"weekly_budget_usd":0,"monthly_budget_usd":0,
+                "models":{"a":{"daily_budget_usd":0}},"families":{"astra":{"weekly_budget_usd":0}}}});
+        let payload =
+            Bytes::from(serde_json::to_vec(&json!({"expected_value":null,"value":zero})).unwrap());
+        assert!(apply_admin_system_config_update(&state, key, &payload)
+            .await
+            .unwrap()
+            .is_ok());
+        assert_eq!(
+            app.read_system_config_json_value_strong(key).await.unwrap(),
+            Some(zero)
+        );
+    }
 }

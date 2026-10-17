@@ -331,6 +331,9 @@ pub(super) async fn forward_client_message(
                 state,
                 &turn_control.decision,
                 &logical_turn_id,
+                client_event
+                    .get("model")
+                    .and_then(serde_json::Value::as_str),
             )
             .await
             {

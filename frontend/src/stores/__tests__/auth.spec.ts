@@ -350,4 +350,13 @@ describe('auth store logout', () => {
     expect(store.canAccessAdmin).toBe(true)
     expect(store.canOperateAdmin).toBe(false)
   })
+  it.each(['user_admin', 'service_admin'])('separates delegated domain capabilities for %s', role => {
+    const store = useAuthStore()
+    store.user = { id: 'delegated-fixture', username: 'delegated', role, is_active: true, created_at: '2026-10-15T00:00:00Z' }
+    expect(store.canAccessAdmin).toBe(true)
+    expect(store.isAdmin).toBe(false)
+    expect(store.canOperateAdmin).toBe(false)
+    expect(store.canManageUsers).toBe(role === 'user_admin')
+    expect(store.canManageServices).toBe(role === 'service_admin')
+  })
 })

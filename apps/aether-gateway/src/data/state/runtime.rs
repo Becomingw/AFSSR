@@ -1937,6 +1937,17 @@ impl GatewayDataState {
         }
     }
 
+    pub(crate) async fn summarize_usage_activity(
+        &self,
+        q: &aether_data_contracts::repository::usage::UsageActivityQuery,
+    ) -> Result<Vec<aether_data_contracts::repository::usage::UsageActivityRow>, DataLayerError>
+    {
+        match &self.usage_reader {
+            Some(repository) => repository.summarize_usage_activity(q).await,
+            None => Ok(Vec::new()),
+        }
+    }
+
     pub(crate) async fn summarize_usage_daily_heatmap(
         &self,
         query: &UsageDailyHeatmapQuery,

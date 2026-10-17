@@ -153,6 +153,12 @@ pub async fn settle_usage_if_needed(
         return Ok(());
     }
     let input = UsageSettlementInput {
+        charge_wallet: usage
+            .request_metadata
+            .as_ref()
+            .and_then(|m| m.get("internal_accounting"))
+            .and_then(serde_json::Value::as_bool)
+            != Some(true),
         request_id: usage.request_id.clone(),
         user_id: usage.user_id.clone(),
         api_key_id: usage.api_key_id.clone(),
@@ -411,6 +417,18 @@ mod tests {
             reconciliations[0].terminal_state,
             UsagePolicyCostReservationState::Finalized
         );
+    }
+
+    #[tokio::test]
+    async fn internal_usage_reconciles_cost_without_wallet_charge() {
+        let writer = TestSettlementWriter {
+            has_writer: true,
+            ..Default::default()
+        };
+        let mut usage = sample_usage();
+        usage.request_metadata.as_mut().unwrap()["internal_accounting"] = json!(true);
+        settle_usage_if_needed(&writer, &usage).await.unwrap();
+        assert!(!writer.inputs.lock().unwrap()[0].charge_wallet);
     }
 
     #[tokio::test]

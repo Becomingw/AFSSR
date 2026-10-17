@@ -2440,13 +2440,10 @@ SELECT EXISTS (
         } else {
             "unrestricted"
         };
-        let allowed_models_mode = if allowed_models
-            .as_ref()
-            .is_some_and(|values| !values.is_empty())
-        {
-            "specific"
-        } else {
-            "unrestricted"
+        let allowed_models_mode = match allowed_models.as_ref() {
+            Some(models) if models.is_empty() => "deny_all",
+            Some(_) => "specific",
+            None => "inherit",
         };
         let rate_limit_mode = if rate_limit.is_some() {
             "custom"

@@ -182,7 +182,7 @@ pub(in super::super) async fn build_admin_create_user_response(
                 .into_response())
         }
     };
-    let initial_gift_usd = if payload.unlimited {
+    let initial_gift_usd = if crate::internal_access::enabled() || payload.unlimited {
         0.0
     } else if let Some(value) = payload.initial_gift_usd {
         value

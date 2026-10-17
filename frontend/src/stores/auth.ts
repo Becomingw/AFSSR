@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { authApi, type User } from '@/api/auth'
 import apiClient from '@/api/client'
 import { log } from '@/utils/logger'
+import { canAccessAdminRole, canManageUsersRole, canManageServicesRole } from '@/config/adminRoles'
 import { parseApiError } from '@/utils/errorParser'
 import { getErrorStatus } from '@/types/api-error'
 
@@ -93,8 +94,10 @@ export const useAuthStore = defineStore('auth', () => {
   }
   const isAdmin = computed(() => user.value?.role === 'admin')
   const isAuditAdmin = computed(() => user.value?.role === 'audit_admin')
-  const canAccessAdmin = computed(() => isAdmin.value || isAuditAdmin.value)
+  const canAccessAdmin = computed(() => canAccessAdminRole(user.value?.role))
   const canOperateAdmin = computed(() => isAdmin.value)
+  const canManageUsers = computed(() => canManageUsersRole(user.value?.role))
+  const canManageServices = computed(() => canManageServicesRole(user.value?.role))
 
   async function login(email: string, password: string, authType: 'local' | 'ldap' = 'local') {
     loading.value = true
@@ -245,6 +248,8 @@ export const useAuthStore = defineStore('auth', () => {
     isAuditAdmin,
     canAccessAdmin,
     canOperateAdmin,
+    canManageUsers,
+    canManageServices,
     login,
     logout,
     applyExternalLogout,

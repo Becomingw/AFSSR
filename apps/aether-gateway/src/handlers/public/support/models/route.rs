@@ -38,7 +38,10 @@ fn codex_projected_catalog_fits_response_limits(cards: &[Value]) -> bool {
         .is_ok_and(|body| body.len() <= CODEX_MODELS_MAX_RESPONSE_JSON_BYTES)
 }
 
-async fn await_models_route_read<T, E, Fut>(operation: &'static str, future: Fut) -> Option<T>
+pub(super) async fn await_models_route_read<T, E, Fut>(
+    operation: &'static str,
+    future: Fut,
+) -> Option<T>
 where
     E: Debug,
     Fut: Future<Output = Result<T, E>>,
@@ -72,6 +75,14 @@ fn build_models_read_fallback_response(
     request_context: &GatewayPublicRequestContext,
     api_format: &str,
 ) -> Response<Body> {
+    if request_context
+        .control_decision
+        .as_ref()
+        .and_then(|decision| decision.route_kind.as_deref())
+        == Some("opencode_config")
+    {
+        return super::opencode::unavailable_response();
+    }
     let route_kind = request_context
         .control_decision
         .as_ref()
@@ -242,43 +253,58 @@ struct ModelRowsForClientFormat {
     codex_catalog_targets: Vec<crate::model_fetch::CodexCatalogTarget>,
 }
 
-async fn list_model_rows_for_client_format(
+pub(super) async fn list_model_rows_for_query_formats(
     state: &AppState,
-    api_format: &str,
+    query_api_formats: &[&str],
     auth_snapshot: Option<&crate::data::auth::GatewayAuthApiKeySnapshot>,
-) -> Option<ModelRowsForClientFormat> {
+) -> Option<Vec<StoredMinimalCandidateSelectionRow>> {
     let mut collected = Vec::new();
-    let query_api_formats = if is_codex_models_api_format(api_format) {
-        CODEX_MODELS_QUERY_API_FORMATS
-    } else {
-        models_query_api_formats(api_format)
-    };
     for query_format in query_api_formats {
         let rows = await_models_route_read(
             "candidate_selection_by_api_format",
             state.list_minimal_candidate_selection_rows_for_api_format(query_format),
         )
         .await?;
-        let mut filtered = if is_codex_models_api_format(api_format) {
-            filter_eligible_model_rows(rows, auth_snapshot, query_format)
-        } else {
-            filter_rows_for_models(rows, auth_snapshot, query_format)
-        };
-        collected.append(&mut filtered);
+        collected.extend(filter_rows_for_models(rows, auth_snapshot, query_format));
     }
-    if is_codex_models_api_format(api_format) {
-        collected.retain(is_codex_provider_row);
-        let codex_catalog_targets = crate::model_fetch::codex_catalog_targets(&collected);
-        Some(ModelRowsForClientFormat {
-            rows: sort_model_rows(collected),
-            codex_catalog_targets,
-        })
-    } else {
-        Some(ModelRowsForClientFormat {
-            rows: sort_and_dedup_model_rows(collected),
+    Some(sort_and_dedup_model_rows(collected))
+}
+
+async fn list_model_rows_for_client_format(
+    state: &AppState,
+    api_format: &str,
+    auth_snapshot: Option<&crate::data::auth::GatewayAuthApiKeySnapshot>,
+) -> Option<ModelRowsForClientFormat> {
+    if !is_codex_models_api_format(api_format) {
+        return Some(ModelRowsForClientFormat {
+            rows: list_model_rows_for_query_formats(
+                state,
+                models_query_api_formats(api_format),
+                auth_snapshot,
+            )
+            .await?,
             codex_catalog_targets: Vec::new(),
-        })
+        });
     }
+    let mut collected = Vec::new();
+    for query_format in CODEX_MODELS_QUERY_API_FORMATS {
+        let rows = await_models_route_read(
+            "candidate_selection_by_api_format",
+            state.list_minimal_candidate_selection_rows_for_api_format(query_format),
+        )
+        .await?;
+        collected.extend(filter_eligible_model_rows(
+            rows,
+            auth_snapshot,
+            query_format,
+        ));
+    }
+    collected.retain(is_codex_provider_row);
+    let codex_catalog_targets = crate::model_fetch::codex_catalog_targets(&collected);
+    Some(ModelRowsForClientFormat {
+        rows: sort_model_rows(collected),
+        codex_catalog_targets,
+    })
 }
 
 async fn list_model_rows_for_client_format_and_global_model(
@@ -306,13 +332,17 @@ async fn list_model_rows_for_client_format_and_global_model(
 pub(super) async fn maybe_build_local_models_route_response(
     state: &AppState,
     request_context: &GatewayPublicRequestContext,
+    headers: &http::HeaderMap,
+    remote_addr: &std::net::SocketAddr,
 ) -> Option<Response<Body>> {
     let decision = request_context.control_decision.as_ref()?;
     if decision.route_family.as_deref() != Some("models") {
         return None;
     }
     let api_format = models_api_format(request_context)?;
-    if !state.has_minimal_candidate_selection_reader() {
+    if !state.has_minimal_candidate_selection_reader()
+        && decision.route_kind.as_deref() != Some("opencode_config")
+    {
         return None;
     }
 
@@ -354,12 +384,20 @@ pub(super) async fn maybe_build_local_models_route_response(
     if !auth_snapshot.currently_usable {
         return Some(build_models_auth_error_response(api_format));
     }
-    let auth_snapshot = Some(auth_snapshot);
-
     match decision.route_kind.as_deref() {
+        Some("opencode_config") => {
+            if !state.has_minimal_candidate_selection_reader() {
+                return Some(super::opencode::unavailable_response());
+            }
+            let base_url =
+                super::super::base_url_from_request(headers, request_context, remote_addr);
+            Some(super::opencode::build_response(state, auth_snapshot, &base_url).await)
+        }
         Some("list") => {
             let listed =
-                match list_model_rows_for_client_format(state, api_format, auth_snapshot).await {
+                match list_model_rows_for_client_format(state, api_format, Some(auth_snapshot))
+                    .await
+                {
                     Some(rows) => rows,
                     None => {
                         return Some(build_models_read_fallback_response(
@@ -443,7 +481,7 @@ pub(super) async fn maybe_build_local_models_route_response(
                 state,
                 api_format,
                 &model_id,
-                auth_snapshot,
+                Some(auth_snapshot),
             )
             .await
             {

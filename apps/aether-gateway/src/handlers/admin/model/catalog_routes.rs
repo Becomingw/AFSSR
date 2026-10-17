@@ -107,6 +107,30 @@ pub(crate) async fn maybe_build_local_admin_model_catalog_response(
     }
 
     if decision.route_family.as_deref() == Some("model_external_manage")
+        && decision.route_kind.as_deref() == Some("refresh_external_catalog")
+        && request_context.method() == http::Method::POST
+        && request_context.path() == "/api/admin/models/external/refresh"
+    {
+        return Ok(Some(
+            match super::external_cache::refresh_admin_external_models_catalog(
+                state,
+                request_context.trace_id(),
+            )
+            .await?
+            {
+                Ok(payload) => attach_admin_audit_response(
+                    Json(payload).into_response(),
+                    "admin_external_models_refreshed",
+                    "refresh_external_models",
+                    "external_models_catalog",
+                    "global",
+                ),
+                Err((status, payload)) => (status, Json(payload)).into_response(),
+            },
+        ));
+    }
+
+    if decision.route_family.as_deref() == Some("model_external_manage")
         && decision.route_kind.as_deref() == Some("clear_external_cache")
         && request_context.method() == http::Method::DELETE
         && request_context.path() == "/api/admin/models/external/cache"

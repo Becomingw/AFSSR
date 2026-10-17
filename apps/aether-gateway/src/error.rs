@@ -189,7 +189,7 @@ impl IntoResponse for GatewayError {
                 Json(json!({
                     "error": {
                         "type": "plan_usage_limit_exceeded",
-                        "message": "套餐使用限制已达到上限，请稍后重试",
+                        "message": "使用额度已达到上限，请稍后重试",
                         "details": {
                             "metric": rejection.metric,
                             "window": rejection.window,

@@ -367,13 +367,15 @@ async function handleImport() {
 
     const successCount = response.success?.length || 0
     const errorCount = response.errors?.length || 0
+    const pendingCount = response.success?.filter(model => model.global_model_active === false).length || 0
+    const pendingText = pendingCount ? `，其中 ${pendingCount} 个待完善价格后启用` : ''
 
     if (successCount > 0 && errorCount === 0) {
-      success(`成功导入 ${successCount} 个模型`, '导入成功')
+      success(`成功导入 ${successCount} 个模型${pendingText}`, '导入成功')
       emit('saved')
       emit('close')
     } else if (successCount > 0 && errorCount > 0) {
-      success(`成功导入 ${successCount} 个模型，${errorCount} 个失败`, '部分成功')
+      success(`成功导入 ${successCount} 个模型，${errorCount} 个失败${pendingText}`, '部分成功')
       emit('saved')
       // 刷新列表以更新已存在状态
       await loadExistingModels()

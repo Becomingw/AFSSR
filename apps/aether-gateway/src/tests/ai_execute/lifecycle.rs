@@ -649,7 +649,7 @@ async fn gateway_returns_error_body_when_prefetch_detects_embedded_stream_error_
         .await
         .expect("request should succeed");
 
-    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(
         response
             .headers()

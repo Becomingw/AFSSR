@@ -7,7 +7,7 @@
       {{ legacyT(row.statusLabel) }}
     </Badge>
     <Badge
-      v-if="row.hasWallet"
+      v-if="row.hasWallet && !INTERNAL_GATEWAY"
       :variant="row.walletStatusVariant"
       class="h-5 px-1.5 py-0 text-[10px] font-medium"
     >
@@ -34,6 +34,7 @@
 
 <script setup lang="ts">
 import Badge from '@/components/ui/badge.vue'
+import { INTERNAL_GATEWAY } from '@/config/internalGateway'
 import { useI18n } from '@/i18n'
 import type { UserManagementRow } from './user-management-types'
 

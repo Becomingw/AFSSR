@@ -1,6 +1,6 @@
 <template>
   <div class="space-y-6 pb-8">
-    <TableCard title="独立余额 API Keys">
+    <TableCard title="独立 API Keys">
       <template #actions>
         <!-- 搜索框 -->
         <div class="relative">
@@ -700,7 +700,7 @@
 
         <div class="space-y-2">
           <Label class="text-sm font-semibold">目标 CLI</Label>
-          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <Button
               v-for="option in installCliOptions"
               :key="option.value"
@@ -720,6 +720,8 @@
               v-for="option in installSystemOptions"
               :key="option.value"
               :variant="installSystem === option.value ? 'default' : 'outline'"
+              :disabled="installCli === 'opencode' && option.value === 'windows'"
+              :title="installCli === 'opencode' && option.value === 'windows' ? 'OpenCode 请在 WSL 中选择 Linux 安装' : undefined"
               class="justify-start h-auto py-3"
               @click="selectInstallSystem(option.value)"
             >
@@ -899,7 +901,8 @@ const statusFilters = [
 const installCliOptions: Array<{ value: InstallTargetCli; label: string }> = [
   { value: 'claude_code', label: 'Claude Code' },
   { value: 'codex_cli', label: 'Codex CLI' },
-  { value: 'gemini_cli', label: 'Gemini CLI' }
+  { value: 'gemini_cli', label: 'Gemini CLI' },
+  { value: 'opencode', label: 'OpenCode' }
 ]
 
 const installSystemOptions: Array<{ value: InstallSessionTargetSystem; label: string }> = [
@@ -926,6 +929,9 @@ const installCommand = computed(() => {
 })
 
 const installCommandHint = computed(() => {
+  if (installCli.value === 'opencode') {
+    return 'OpenCode 仅支持 Linux/macOS；Windows 请使用 WSL 并选择 Linux。安装后可执行 python3 "$HOME/.aether/opencode-sync.py" 同步模型目录。'
+  }
   if (installSystem.value === 'windows') {
     return 'Windows 请在 PowerShell 中执行。install code 使用后立即失效，如需再次执行请重新生成。'
   }
@@ -1081,16 +1087,19 @@ async function openInstallDialog(apiKey: AdminApiKey) {
 
 async function selectInstallCli(value: InstallTargetCli) {
   installCli.value = value
+  if (value === 'opencode' && installSystem.value === 'windows') installSystem.value = 'linux'
   await refreshInstallCommand()
 }
 
 async function selectInstallSystem(value: InstallSessionTargetSystem) {
+  if (value === 'windows' && installCli.value === 'opencode') return
   installSystem.value = value
   await refreshInstallCommand()
 }
 
 async function refreshInstallCommand() {
   if (!selectedInstallApiKey.value) return
+  if (installCli.value === 'opencode' && installSystem.value === 'windows') installSystem.value = 'linux'
   installLoading.value = true
   installSession.value = null
   resetInstallCopiedState()

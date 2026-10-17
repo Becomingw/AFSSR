@@ -92,9 +92,9 @@ export async function recoverAllKeysHealth(): Promise<{
 export async function getEndpointStatusMonitor(params?: {
   lookback_hours?: number
   per_format_limit?: number
-}): Promise<EndpointStatusMonitorResponse> {
+}, signal?: AbortSignal): Promise<EndpointStatusMonitorResponse> {
   const response = await client.get<EndpointStatusMonitorResponse>('/api/admin/endpoints/health/api-formats', {
-    params
+    params, ...(signal ? { signal } : {}),
   })
   return response.data
 }
@@ -105,9 +105,9 @@ export async function getEndpointStatusMonitor(params?: {
 export async function getPublicEndpointStatusMonitor(params?: {
   lookback_hours?: number
   per_format_limit?: number
-}): Promise<PublicEndpointStatusMonitorResponse> {
+}, signal?: AbortSignal): Promise<PublicEndpointStatusMonitorResponse> {
   const response = await client.get<PublicEndpointStatusMonitorResponse>('/api/public/health/api-formats', {
-    params
+    params, ...(signal ? { signal } : {}),
   })
   return response.data
 }
@@ -119,9 +119,9 @@ export async function getModelStatusMonitor(params?: {
   lookback_hours?: number
   model_limit?: number
   per_model_limit?: number
-}): Promise<ModelStatusMonitorResponse> {
+}, signal?: AbortSignal): Promise<ModelStatusMonitorResponse> {
   const response = await client.get<ModelStatusMonitorResponse>('/api/admin/endpoints/health/models', {
-    params
+    params, ...(signal ? { signal } : {}),
   })
   return response.data
 }
@@ -133,9 +133,9 @@ export async function getPublicModelStatusMonitor(params?: {
   lookback_hours?: number
   model_limit?: number
   per_model_limit?: number
-}): Promise<ModelStatusMonitorResponse> {
+}, signal?: AbortSignal): Promise<ModelStatusMonitorResponse> {
   const response = await client.get<ModelStatusMonitorResponse>('/api/public/health/models', {
-    params
+    params, ...(signal ? { signal } : {}),
   })
   return response.data
 }

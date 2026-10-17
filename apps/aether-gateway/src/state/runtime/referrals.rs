@@ -105,6 +105,9 @@ impl AppState {
     pub(crate) async fn referral_reward_config(
         &self,
     ) -> Result<Option<ReferralRewardConfig>, GatewayError> {
+        if crate::internal_access::enabled() {
+            return Ok(None);
+        }
         let enabled = self
             .read_system_config_json_value("referral_enabled")
             .await?;

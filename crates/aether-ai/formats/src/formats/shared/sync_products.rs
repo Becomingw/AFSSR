@@ -139,14 +139,19 @@ pub fn maybe_build_standard_same_format_sync_body_from_normalized_payload(
         report_context,
         body_base64,
     )?;
-    Ok(stream_body.or_else(|| {
+    let mut result = stream_body.or_else(|| {
         maybe_build_standard_same_format_sync_body(
             report_kind,
             status_code,
             report_context,
             body_json,
         )
-    }))
+    });
+    if let (Some(body), Some(context)) = (result.as_mut(), report_context) {
+        crate::provider_compat::opencode_go::restore_native_responses_payload(body, context)
+            .map_err(AiSurfaceFinalizeError::new)?;
+    }
+    Ok(result)
 }
 
 pub fn maybe_build_openai_responses_same_family_sync_body_from_normalized_payload(
@@ -162,14 +167,19 @@ pub fn maybe_build_openai_responses_same_family_sync_body_from_normalized_payloa
         report_context,
         body_base64,
     )?;
-    Ok(stream_body.or_else(|| {
+    let mut result = stream_body.or_else(|| {
         maybe_build_openai_responses_same_family_sync_body(
             report_kind,
             status_code,
             report_context,
             body_json,
         )
-    }))
+    });
+    if let (Some(body), Some(context)) = (result.as_mut(), report_context) {
+        crate::provider_compat::opencode_go::restore_native_responses_payload(body, context)
+            .map_err(AiSurfaceFinalizeError::new)?;
+    }
+    Ok(result)
 }
 
 pub fn maybe_build_openai_chat_cross_format_sync_product_from_normalized_payload(

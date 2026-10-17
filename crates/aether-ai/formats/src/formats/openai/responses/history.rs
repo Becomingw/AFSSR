@@ -275,6 +275,18 @@ fn request_input_items(request: &Value) -> Vec<Value> {
 }
 
 fn history_conversion_enabled(report_context: &Value) -> bool {
+    if report_context["provider_type"] == "opencode_go"
+        && report_context["client_api_format"] == "openai:responses"
+        && report_context["provider_api_format"] == "openai:responses"
+        && report_context["mapped_model"]
+            .as_str()
+            .is_some_and(crate::provider_compat::opencode_go::uses_gateway_response_history)
+    {
+        return report_context["original_request_body"]["store"] != false
+            && report_context["api_key_id"]
+                .as_str()
+                .is_some_and(|scope| !scope.trim().is_empty());
+    }
     report_context
         .get("needs_conversion")
         .and_then(Value::as_bool)
@@ -289,6 +301,8 @@ fn history_conversion_enabled(report_context: &Value) -> bool {
             .is_some_and(|format| {
                 format.eq_ignore_ascii_case("openai:chat")
                     || format.eq_ignore_ascii_case("claude:messages")
+                    || (format.eq_ignore_ascii_case("gemini:generate_content")
+                        && report_context["provider_type"] == "opencode_go")
             })
 }
 
@@ -364,6 +378,12 @@ pub fn record_converted_response_history(
         .get("provider_api_format")
         .and_then(Value::as_str)
         == Some("claude:messages")
+        || crate::formats::claude::responses_tools::is_go_chat_provider(report_context)
+        || crate::formats::claude::responses_tools::is_go_gemini_provider(report_context)
+        || (report_context["provider_type"] == "opencode_go"
+            && report_context["mapped_model"]
+                .as_str()
+                .is_some_and(crate::provider_compat::opencode_go::uses_gateway_response_history))
     {
         // Tool definitions belong to the current request, not conversation
         // messages. Keeping Lite envelopes here duplicates them on continuation.
@@ -548,6 +568,77 @@ mod tests {
             expanded["input"][2]["call_id"],
             "call_distributed_history_1"
         );
+    }
+
+    #[test]
+    fn go_muse_and_gemini_history_is_persisted_and_scope_isolated() {
+        for (model, format) in [
+            ("muse-spark-1.2-contributor", "openai:responses"),
+            ("muse-spark-1.3-contributor", "openai:responses"),
+            ("gemini-4-argon-contributor", "gemini:generate_content"),
+        ] {
+            let id = format!("resp_history_{model}");
+            let scope = format!("scope_{model}");
+            let mut report = json!({
+                "provider_type":"opencode_go", "mapped_model":model,
+                "needs_conversion":format != "openai:responses",
+                "client_api_format":"openai:responses", "provider_api_format":format,
+                "api_key_id":scope,
+                "original_request_body":{"store":true,"input":[
+                    {"type":"additional_tools","tools":[{"type":"function","name":"probe","parameters":{"type":"object"}}]},
+                    {"role":"user","content":"synthetic inspection"}
+                ]}
+            });
+            let signed = json!({"type":"reasoning","id":"rs_synthetic","summary":[],"encrypted_content":"unchanged-opaque-state"});
+            let response = json!({"id":id,"status":"completed","output":[signed,
+                {"type":"function_call","name":"probe","call_id":"call_synthetic","arguments":"{}"}]});
+            let record = record_converted_response_history(&report, &response).unwrap();
+            response_history_store()
+                .lock()
+                .unwrap()
+                .remove(&response_history_key(&id, Some(&scope)));
+            assert!(hydrate_response_history(&id, Some("other-scope"), &record.payload).is_err());
+            hydrate_response_history(&id, Some(&scope), &record.payload).unwrap();
+            let continuation = json!({"previous_response_id":id,"include":["reasoning.encrypted_content"],
+                "input":[{"type":"function_call_output","call_id":"call_synthetic","output":"done"}]});
+            assert!(expand_previous_response_for_chat(&continuation, Some("other-scope")).is_err());
+            let expanded = if format == "openai:responses" {
+                crate::provider_compat::opencode_go::expand_go_native_response_history(
+                    &continuation,
+                    model,
+                    Some(&scope),
+                )
+                .unwrap()
+            } else {
+                expand_previous_response_for_chat(&continuation, Some(&scope)).unwrap()
+            };
+            assert!(expanded.get("previous_response_id").is_none());
+            assert_eq!(expanded["input"].as_array().unwrap().len(), 4);
+            assert_eq!(expanded["input"][1], signed);
+            assert_eq!(expanded["include"], continuation["include"]);
+            report["original_request_body"]["store"] = json!(false);
+            if format == "openai:responses" {
+                assert!(record_converted_response_history(&report, &response).is_none());
+                assert!(
+                    crate::provider_compat::opencode_go::expand_go_native_response_history(
+                        &continuation,
+                        model,
+                        None
+                    )
+                    .is_err()
+                );
+                // Other native Responses providers retain their own history semantics.
+                assert_eq!(
+                    crate::provider_compat::opencode_go::expand_go_native_response_history(
+                        &continuation,
+                        "gpt-6-luna",
+                        None
+                    )
+                    .unwrap(),
+                    continuation
+                );
+            }
+        }
     }
 
     #[test]

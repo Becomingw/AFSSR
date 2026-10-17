@@ -6,6 +6,7 @@ import {
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
 import type { UserBatchAction, UserRole } from '@/api/users'
+import { adminRoleLabel } from '@/config/adminRoles'
 import type {
   UserFilterOption,
   UserFilterRole,
@@ -22,8 +23,10 @@ export interface UserBatchActionOption {
 
 export const USER_ROLE_FILTER_OPTIONS: UserFilterOption<UserFilterRole>[] = [
   { value: 'all', label: '全部角色' },
-  { value: 'admin', label: '管理员' },
+  { value: 'admin', label: '超级管理员' },
   { value: 'audit_admin', label: '审计管理员' },
+  { value: 'user_admin', label: '用户及权益管理员' },
+  { value: 'service_admin', label: '服务管理员' },
   { value: 'user', label: '普通用户' },
 ]
 
@@ -67,9 +70,7 @@ export const USER_BATCH_ACTION_OPTIONS: UserBatchActionOption[] = [
 ]
 
 export function formatUserRoleLabel(role: UserRole | string): string {
-  if (role === 'admin') return '管理员'
-  if (role === 'audit_admin') return '审计管理员'
-  return '普通用户'
+  return adminRoleLabel(role)
 }
 
 export function userRoleBadgeVariant(role: UserRole | string): 'default' | 'secondary' {

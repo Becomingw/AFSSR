@@ -1322,7 +1322,7 @@ fn auth_gate_api_format(auth_endpoint_signature: &str) -> String {
 fn auth_gate_identity_only(auth_endpoint_signature: &str) -> bool {
     matches!(
         auth_endpoint_signature.trim().to_ascii_lowercase().as_str(),
-        "aether:ccswitch_usage"
+        "aether:ccswitch_usage" | "aether:opencode"
     )
 }
 

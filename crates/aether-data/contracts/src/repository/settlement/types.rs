@@ -6,6 +6,8 @@ const MAX_USAGE_POLICY_LEDGER_ID_BYTES: usize = 128;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct UsagePolicyRequestWindow {
+    #[serde(default)]
+    pub model: Option<String>,
     pub starts_at_unix_secs: u64,
     pub ends_at_unix_secs: u64,
     pub limit_requests: u64,
@@ -13,6 +15,8 @@ pub struct UsagePolicyRequestWindow {
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ReserveUsagePolicyRequestInput {
+    #[serde(default)]
+    pub model: Option<String>,
     pub request_id: String,
     pub subject_id: String,
     pub event_token: String,
@@ -28,6 +32,9 @@ impl ReserveUsagePolicyRequestInput {
         validate_bounded_id(&self.request_id, "usage policy request_id")?;
         validate_bounded_id(&self.subject_id, "usage policy subject_id")?;
         validate_bounded_id(&self.event_token, "usage policy event_token")?;
+        if let Some(model) = &self.model {
+            validate_bounded_id(model, "usage policy model")?;
+        }
         validate_database_u64(self.admitted_at_unix_secs, "usage policy admitted_at")?;
         validate_database_u64(self.retain_until_unix_secs, "usage policy retain_until")?;
         if self.windows.is_empty() || self.windows.len() > MAX_USAGE_POLICY_TOTAL_RULES {
@@ -36,6 +43,11 @@ impl ReserveUsagePolicyRequestInput {
             )));
         }
         for (index, window) in self.windows.iter().enumerate() {
+            if window.model.is_some() && window.model != self.model {
+                return Err(crate::DataLayerError::InvalidInput(
+                    "model window must match the admitted model".into(),
+                ));
+            }
             validate_database_u64(
                 window.starts_at_unix_secs,
                 &format!("usage policy request window {index} start"),
@@ -123,6 +135,8 @@ impl ReleaseUsagePolicyRequestAdmissionInput {
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct StoredUsagePolicyRequestAdmission {
+    #[serde(default)]
+    pub model: Option<String>,
     pub request_id: String,
     pub subject_id: String,
     pub event_token: String,
@@ -134,6 +148,10 @@ pub struct StoredUsagePolicyRequestAdmission {
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct UsagePolicyCostWindow {
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub models: Option<Vec<String>>,
     pub window_id: String,
     pub starts_at_unix_secs: u64,
     pub ends_at_unix_secs: u64,
@@ -142,6 +160,8 @@ pub struct UsagePolicyCostWindow {
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ReserveUsagePolicyCostInput {
+    #[serde(default)]
+    pub model: Option<String>,
     pub request_id: String,
     pub subject_id: String,
     pub reservation_token: String,
@@ -159,6 +179,9 @@ impl ReserveUsagePolicyCostInput {
         validate_bounded_id(&self.request_id, "usage policy request_id")?;
         validate_bounded_id(&self.subject_id, "usage policy subject_id")?;
         validate_bounded_id(&self.reservation_token, "usage policy reservation_token")?;
+        if let Some(model) = &self.model {
+            validate_bounded_id(model, "usage policy model")?;
+        }
         validate_cost_units(self.reserved_cost_units, "reserved_cost_units")?;
         if self.reservation_expires_at_unix_secs <= self.admitted_at_unix_secs {
             return Err(crate::DataLayerError::InvalidInput(
@@ -176,6 +199,29 @@ impl ReserveUsagePolicyCostInput {
             )));
         }
         for (index, window) in self.windows.iter().enumerate() {
+            if window.model.is_some() && window.model != self.model {
+                return Err(crate::DataLayerError::InvalidInput(
+                    "cost model window must match the admitted model".into(),
+                ));
+            }
+            if let Some(models) = &window.models {
+                if window.model.is_some()
+                    || models.is_empty()
+                    || models.len() > 256
+                    || models
+                        .iter()
+                        .enumerate()
+                        .any(|(i, m)| m.is_empty() || m.len() > 128 || models[..i].contains(m))
+                    || !self
+                        .model
+                        .as_ref()
+                        .is_some_and(|model| models.contains(model))
+                {
+                    return Err(crate::DataLayerError::InvalidInput(
+                        "invalid cost family selector".into(),
+                    ));
+                }
+            }
             validate_non_empty_id(
                 &window.window_id,
                 &format!("usage policy window {index} id"),
@@ -184,8 +230,7 @@ impl ReserveUsagePolicyCostInput {
                 window.limit_cost_units,
                 &format!("usage policy window {index} limit_cost_units"),
             )?;
-            if window.limit_cost_units == 0
-                || window.starts_at_unix_secs >= window.ends_at_unix_secs
+            if window.starts_at_unix_secs >= window.ends_at_unix_secs
                 || self.admitted_at_unix_secs < window.starts_at_unix_secs
                 || self.admitted_at_unix_secs >= window.ends_at_unix_secs
             {
@@ -285,6 +330,8 @@ impl ReconcileUsagePolicyCostInput {
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct StoredUsagePolicyCostReservation {
+    #[serde(default)]
+    pub model: Option<String>,
     pub request_id: String,
     pub subject_id: String,
     pub reservation_token: String,
@@ -336,6 +383,8 @@ fn validate_cost_units(value: u64, field: &str) -> Result<(), crate::DataLayerEr
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct UsageSettlementInput {
+    #[serde(default = "default_charge_wallet")]
+    pub charge_wallet: bool,
     pub request_id: String,
     pub user_id: Option<String>,
     pub api_key_id: Option<String>,
@@ -347,6 +396,10 @@ pub struct UsageSettlementInput {
     pub total_cost_usd: f64,
     pub actual_total_cost_usd: f64,
     pub finalized_at_unix_secs: Option<u64>,
+}
+
+fn default_charge_wallet() -> bool {
+    true
 }
 
 impl UsageSettlementInput {
@@ -526,6 +579,7 @@ mod tests {
     #[test]
     fn rejects_invalid_settlement_input() {
         let input = UsageSettlementInput {
+            charge_wallet: true,
             request_id: "".to_string(),
             user_id: None,
             api_key_id: None,
@@ -563,12 +617,14 @@ mod tests {
     #[test]
     fn validates_request_admission_window_and_retention_bounds() {
         let valid = ReserveUsagePolicyRequestInput {
+            model: None,
             request_id: "request-1".to_string(),
             subject_id: "user-1".to_string(),
             event_token: "event-1".to_string(),
             admitted_at_unix_secs: 100,
             retain_until_unix_secs: 200,
             windows: vec![UsagePolicyRequestWindow {
+                model: None,
                 starts_at_unix_secs: 50,
                 ends_at_unix_secs: 200,
                 limit_requests: 10,
@@ -589,6 +645,7 @@ mod tests {
     fn usage_policy_cost_ids_match_sql_column_bounds() {
         let bounded = "x".repeat(128);
         let reserve = ReserveUsagePolicyCostInput {
+            model: None,
             request_id: bounded.clone(),
             subject_id: bounded.clone(),
             reservation_token: bounded.clone(),
@@ -597,6 +654,8 @@ mod tests {
             reservation_expires_at_unix_secs: 150,
             retain_until_unix_secs: 200,
             windows: vec![UsagePolicyCostWindow {
+                model: None,
+                models: None,
                 window_id: "window-1".to_string(),
                 starts_at_unix_secs: 50,
                 ends_at_unix_secs: 200,
@@ -604,6 +663,12 @@ mod tests {
             }],
         };
         assert!(reserve.validate().is_ok());
+
+        let mut zero_budget = reserve.clone();
+        zero_budget.windows[0].limit_cost_units = 0;
+        assert!(zero_budget.validate().is_ok());
+        zero_budget.windows[0].ends_at_unix_secs = zero_budget.admitted_at_unix_secs;
+        assert!(zero_budget.validate().is_err());
 
         for field in ["request_id", "subject_id", "reservation_token"] {
             let mut too_long = reserve.clone();

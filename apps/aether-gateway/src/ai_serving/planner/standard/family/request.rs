@@ -615,6 +615,17 @@ pub(crate) async fn resolve_local_standard_candidate_payload_parts(
     )
     .await?;
     let body_json = redaction.body_json.as_ref();
+    let expanded_history = crate::ai_serving::prepare_go_native_response_history(
+        state,
+        body_json,
+        spec_metadata.api_format,
+        provider_api_format,
+        transport.provider.provider_type.as_str(),
+        prepared_candidate.mapped_model.as_str(),
+        input.auth_context.api_key_id.as_str(),
+    )
+    .await?;
+    let body_json = expanded_history.as_ref().unwrap_or(body_json);
     let mut provider_request_body =
         match crate::ai_serving::planner::standard::build_standard_request_body_with_model_directives_and_request_headers_and_reasoning_replay_policy(
             body_json,

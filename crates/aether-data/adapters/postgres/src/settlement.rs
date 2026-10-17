@@ -174,6 +174,7 @@ fn usage_policy_request_admission_from_postgres_row(
 ) -> Result<StoredUsagePolicyRequestAdmission, DataLayerError> {
     let state: String = row.try_get("state").map_postgres_err()?;
     Ok(StoredUsagePolicyRequestAdmission {
+        model: row.try_get("model").map_postgres_err()?,
         request_id: row.try_get("request_id").map_postgres_err()?,
         subject_id: row.try_get("subject_id").map_postgres_err()?,
         event_token: row.try_get("event_token").map_postgres_err()?,
@@ -200,6 +201,7 @@ fn usage_policy_request_admission_from_postgres_row(
 
 const FIND_USAGE_POLICY_REQUEST_ADMISSION_POSTGRES_SQL: &str = r#"
 SELECT
+  model,
   request_id,
   subject_id,
   event_token,
@@ -217,6 +219,7 @@ fn usage_policy_cost_reservation_from_postgres_row(
 ) -> Result<StoredUsagePolicyCostReservation, DataLayerError> {
     let state: String = row.try_get("state").map_postgres_err()?;
     Ok(StoredUsagePolicyCostReservation {
+        model: row.try_get("model").map_postgres_err()?,
         request_id: row.try_get("request_id").map_postgres_err()?,
         subject_id: row.try_get("subject_id").map_postgres_err()?,
         reservation_token: row.try_get("reservation_token").map_postgres_err()?,
@@ -257,6 +260,7 @@ fn usage_policy_cost_reservation_from_postgres_row(
 
 const FIND_USAGE_POLICY_COST_RESERVATION_POSTGRES_SQL: &str = r#"
 SELECT
+  model,
   request_id,
   subject_id,
   reservation_token,
@@ -621,6 +625,7 @@ impl SettlementWriteRepository for SqlxSettlementRepository {
                         let existing = usage_policy_request_admission_from_postgres_row(row)?;
                         if existing.request_id != input.request_id
                             || existing.subject_id != input.subject_id
+                            || existing.model != input.model
                         {
                             return Ok(ReserveUsagePolicyRequestOutcome::Conflict);
                         }
@@ -662,6 +667,7 @@ SELECT COUNT(*)::BIGINT
 FROM usage_request_admissions
 WHERE subject_id = $1
   AND state = 'active'
+  AND ($4::text IS NULL OR model = $4)
   AND admitted_at >= TO_TIMESTAMP($2::double precision)
   AND admitted_at < TO_TIMESTAMP($3::double precision)
                             "#,
@@ -675,6 +681,7 @@ WHERE subject_id = $1
                             window.ends_at_unix_secs,
                             "usage policy request window end",
                         )?)
+                        .bind(&window.model)
                         .fetch_one(&mut **tx)
                         .await
                         .map_postgres_err()?;
@@ -694,11 +701,11 @@ WHERE subject_id = $1
                     let insert_result = sqlx::query(
                         r#"
 INSERT INTO usage_request_admissions (
-  request_id, subject_id, event_token, admitted_at, retain_until,
+  request_id, subject_id, event_token, admitted_at, retain_until, model,
   state, released_at, created_at
 ) VALUES (
   $1, $2, $3, TO_TIMESTAMP($4::double precision),
-  TO_TIMESTAMP($5::double precision), 'active', NULL, NOW()
+  TO_TIMESTAMP($5::double precision), $6, 'active', NULL, NOW()
 )
 ON CONFLICT (event_token) DO NOTHING
                         "#,
@@ -714,6 +721,7 @@ ON CONFLICT (event_token) DO NOTHING
                         input.retain_until_unix_secs,
                         "usage policy request retain_until",
                     )?)
+                    .bind(&input.model)
                     .execute(&mut **tx)
                     .await
                     .map_postgres_err()?;
@@ -731,6 +739,7 @@ ON CONFLICT (event_token) DO NOTHING
                     let existing = usage_policy_request_admission_from_postgres_row(&row)?;
                     if existing.request_id != input.request_id
                         || existing.subject_id != input.subject_id
+                        || existing.model != input.model
                     {
                         return Ok(ReserveUsagePolicyRequestOutcome::Conflict);
                     }
@@ -862,6 +871,7 @@ WHERE retain_until <= TO_TIMESTAMP($1::double precision)
                     if let Some(existing) = existing.as_ref() {
                         if existing.request_id != input.request_id
                             || existing.subject_id != input.subject_id
+                            || existing.model != input.model
                         {
                             return Ok(ReserveUsagePolicyCostOutcome::Conflict);
                         }
@@ -900,6 +910,8 @@ WHERE subject_id = $1
   AND admitted_at >= TO_TIMESTAMP($2::double precision)
   AND admitted_at < TO_TIMESTAMP($3::double precision)
   AND reservation_token <> $5
+  AND ($6::text IS NULL OR model = $6)
+  AND ($7::text[] IS NULL OR model = ANY($7))
                             "#,
                         )
                         .bind(&input.subject_id)
@@ -916,6 +928,8 @@ WHERE subject_id = $1
                             "usage policy admitted_at",
                         )?)
                         .bind(&input.reservation_token)
+                        .bind(&window.model)
+                        .bind(&window.models)
                         .fetch_one(&mut **tx)
                         .await
                         .map_postgres_err()?;
@@ -936,11 +950,11 @@ WHERE subject_id = $1
                     sqlx::query(
                         r#"
 INSERT INTO usage_cost_reservations (
-  request_id, subject_id, reservation_token, admitted_at,
+  request_id, subject_id, reservation_token, admitted_at, model,
   reserved_cost_units, actual_cost_units,
   state, reservation_expires_at, retain_until, finalized_at, created_at, updated_at
 ) VALUES (
-  $1, $2, $3, TO_TIMESTAMP($4::double precision), $5, NULL,
+  $1, $2, $3, TO_TIMESTAMP($4::double precision), $8, $5, NULL,
   'reserved', TO_TIMESTAMP($6::double precision), TO_TIMESTAMP($7::double precision),
   NULL, NOW(), NOW()
 )
@@ -979,6 +993,7 @@ ON CONFLICT (reservation_token) DO UPDATE SET
                         input.retain_until_unix_secs,
                         "usage policy retain_until",
                     )?)
+                    .bind(&input.model)
                     .execute(&mut **tx)
                     .await
                     .map_postgres_err()?;
@@ -1169,7 +1184,9 @@ LIMIT 1
                             false
                         };
 
-                        let wallet_row = if let Some(api_key_id) = api_key_id {
+                        let wallet_row = if !input.charge_wallet {
+                            None
+                        } else if let Some(api_key_id) = api_key_id {
                             sqlx::query(
                                 r#"
 SELECT
@@ -1267,7 +1284,9 @@ LIMIT 1
                         }
 
                         let billable_cost_usd = settlement_billable_cost_usd(&input);
-                        let wallet_debit_cost_usd = if !api_key_is_standalone {
+                        let wallet_debit_cost_usd = if !input.charge_wallet {
+                            0.0
+                        } else if !api_key_is_standalone {
                             if let Some(user_id) =
                                 input.user_id.as_deref().filter(|value| !value.is_empty())
                             {

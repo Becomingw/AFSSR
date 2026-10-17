@@ -2,6 +2,13 @@ use super::AdminAppState;
 use crate::GatewayError;
 
 impl<'a> AdminAppState<'a> {
+    pub(crate) async fn leaderboard_overview(
+        &self,
+        query: Option<&str>,
+    ) -> Result<axum::response::Response, GatewayError> {
+        crate::api::leaderboard::report(self.app, query, false).await
+    }
+
     pub(crate) async fn aggregate_finalized_request_candidate_timeline_by_endpoint_ids_since(
         &self,
         endpoint_ids: &[String],

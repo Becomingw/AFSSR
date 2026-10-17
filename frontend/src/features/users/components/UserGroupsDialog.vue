@@ -120,7 +120,7 @@ const USER_OPTIONS_CACHE_TTL_MS = 30 * 1000
 let dialogUsersLoadedAt = 0
 let dialogUsersLoadedVersion = -1
 
-const groupPolicyHelpText = '模型、供应商和端点会在多个用户组之间叠加授权；unrestricted 仍表示不限制，deny_all 只是不授予额外权限。速率限制按付费档位取更高额度，0 表示不限速；用户/API Key 自身限制仍会收窄最终权限。'
+const groupPolicyHelpText = '模型、供应商和端点会在多个用户组之间叠加授权；unrestricted 仍表示不限制，deny_all 只是不授予额外权限。速率限制在用户组之间取更高额度，0 表示不限速；用户/API Key 自身限制仍会收窄最终权限。'
 const groupPolicyHelpTextLocalized = computed(() => locale.value === 'en-US'
   ? 'Models, providers, and endpoints accumulate across multiple user groups. unrestricted still means no restriction, while deny_all grants no extra permission. Rate limits take the higher quota by tier, and 0 means unlimited. User/API key limits still narrow the final permissions.'
   : groupPolicyHelpText)

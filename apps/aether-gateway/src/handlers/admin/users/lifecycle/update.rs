@@ -4,7 +4,8 @@ use super::super::{
     disabled_user_policy_detail, disabled_user_policy_field,
     management_token_may_administer_user_accounts, normalize_admin_feature_settings,
     normalize_admin_optional_user_email, normalize_admin_user_group_ids, normalize_admin_user_role,
-    normalize_admin_username, validate_admin_user_password, AdminUpdateUserPatch,
+    normalize_admin_user_string_list, normalize_admin_username, validate_admin_user_password,
+    AdminUpdateUserPatch,
 };
 use super::support::{
     admin_user_id_from_detail_path, admin_user_password_policy,
@@ -25,6 +26,21 @@ pub(in super::super) async fn build_admin_update_user_response(
     state: &AdminAppState<'_>,
     request_context: &AdminRequestContext<'_>,
     request_body: Option<&axum::body::Bytes>,
+) -> Result<Response<Body>, GatewayError> {
+    build_admin_update_user_response_with_mode(
+        state,
+        request_context,
+        request_body,
+        crate::internal_access::enabled(),
+    )
+    .await
+}
+
+async fn build_admin_update_user_response_with_mode(
+    state: &AdminAppState<'_>,
+    request_context: &AdminRequestContext<'_>,
+    request_body: Option<&axum::body::Bytes>,
+    internal_mode: bool,
 ) -> Result<Response<Body>, GatewayError> {
     let Some(user_id) = admin_user_id_from_detail_path(request_context.path()) else {
         return Ok(build_admin_users_bad_request_response("缺少 user_id"));
@@ -53,7 +69,11 @@ pub(in super::super) async fn build_admin_update_user_response(
                 .into_response())
         }
     };
-    if let Some(field) = disabled_user_policy_field(&raw_payload) {
+    let mut disabled_fields = raw_payload.clone();
+    if internal_mode {
+        disabled_fields.remove("allowed_models");
+    }
+    if let Some(field) = disabled_user_policy_field(&disabled_fields) {
         return Ok((
             http::StatusCode::BAD_REQUEST,
             Json(json!({ "detail": disabled_user_policy_detail(field) })),
@@ -72,6 +92,18 @@ pub(in super::super) async fn build_admin_update_user_response(
     };
     let (field_presence, payload) = patch.into_parts();
     let email_present = field_presence.contains("email");
+    let models_present = field_presence.contains("allowed_models");
+    let allowed_models =
+        match normalize_admin_user_string_list(payload.allowed_models, "allowed_models") {
+            Ok(models)
+                if models.as_ref().is_none_or(|models| {
+                    models.len() <= 1000 && models.iter().all(|model| model.len() <= 128)
+                }) =>
+            {
+                models
+            }
+            _ => return Ok(build_admin_users_bad_request_response("模型权限列表无效")),
+        };
     let feature_settings = if field_presence.contains("feature_settings") {
         match normalize_admin_feature_settings(payload.feature_settings.flatten()) {
             Ok(value) => Some(value),
@@ -171,6 +203,7 @@ pub(in super::super) async fn build_admin_update_user_response(
             || payload.is_active.is_some()
             || field_presence.contains("group_ids")
             || field_presence.contains("feature_settings")
+            || models_present
             || payload.unlimited.is_some());
     if (changes_admin_role
         || resets_admin_password
@@ -233,6 +266,7 @@ pub(in super::super) async fn build_admin_update_user_response(
         || payload.is_active.is_some()
         || group_ids.is_some()
         || feature_settings.is_some();
+    let needs_auth_user_write = needs_auth_user_write || models_present;
     if needs_auth_user_write && !state.has_auth_user_write_capability() {
         return Ok(build_admin_users_read_only_response(
             "当前为只读模式，无法更新用户",
@@ -310,7 +344,7 @@ pub(in super::super) async fn build_admin_update_user_response(
         }
     }
 
-    if role.is_some() || payload.is_active.is_some() {
+    if role.is_some() || payload.is_active.is_some() || models_present {
         if state
             .update_local_auth_user_admin_fields(
                 &user_id,
@@ -319,8 +353,8 @@ pub(in super::super) async fn build_admin_update_user_response(
                 None,
                 false,
                 None,
-                false,
-                None,
+                models_present,
+                allowed_models,
                 false,
                 None,
                 payload.is_active,
@@ -409,4 +443,105 @@ pub(in super::super) async fn build_admin_update_user_response(
         "user",
         &user_id,
     ))
+}
+
+#[cfg(test)]
+mod internal_model_permission_tests {
+    use super::*;
+    use crate::data::GatewayDataState;
+    use aether_data::repository::users::{InMemoryUserReadRepository, UserReadRepository};
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn personal_model_updates_validate_and_preserve_missing_null_empty_semantics() {
+        let repository = Arc::new(InMemoryUserReadRepository::seed_auth_users(vec![]));
+        let user = repository
+            .create_local_auth_user_with_settings(
+                None,
+                false,
+                "model-user".into(),
+                "fixture-hash".into(),
+                "user".into(),
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        let app = crate::AppState::new()
+            .unwrap()
+            .with_auth_users_for_tests([user.clone()])
+            .with_data_state_for_tests(GatewayDataState::with_user_reader_for_tests(
+                repository.clone(),
+            ));
+        let context = crate::control::GatewayPublicRequestContext::from_request_parts(
+            "model-test",
+            &http::Method::PUT,
+            &format!("/api/admin/users/{}", user.id)
+                .parse::<http::Uri>()
+                .unwrap(),
+            &http::HeaderMap::new(),
+            None,
+        );
+        let state = AdminAppState::new(&app);
+        let request = AdminRequestContext::new(&context);
+        for (body, status, expected, mode) in [
+            (
+                json!({"allowed_models":[" glm ","glm"]}),
+                http::StatusCode::OK,
+                Some(vec!["glm".to_string()]),
+                "specific",
+            ),
+            (
+                json!({"allowed_models":[""]}),
+                http::StatusCode::BAD_REQUEST,
+                Some(vec!["glm".to_string()]),
+                "specific",
+            ),
+            (
+                json!({"allowed_models":["fabel"],"allowed_providers":[]}),
+                http::StatusCode::BAD_REQUEST,
+                Some(vec!["glm".to_string()]),
+                "specific",
+            ),
+            (
+                json!({"username":"model-user"}),
+                http::StatusCode::OK,
+                Some(vec!["glm".to_string()]),
+                "specific",
+            ),
+            (
+                json!({"allowed_models":[]}),
+                http::StatusCode::OK,
+                Some(vec![]),
+                "deny_all",
+            ),
+            (
+                json!({"allowed_models":null}),
+                http::StatusCode::OK,
+                None,
+                "inherit",
+            ),
+        ] {
+            let bytes = axum::body::Bytes::from(serde_json::to_vec(&body).unwrap());
+            let response =
+                build_admin_update_user_response_with_mode(&state, &request, Some(&bytes), true)
+                    .await
+                    .unwrap();
+            assert_eq!(response.status(), status);
+            let stored = app.find_user_auth_by_id(&user.id).await.unwrap().unwrap();
+            assert_eq!(stored.allowed_models, expected);
+            assert_eq!(stored.allowed_models_mode, mode);
+        }
+        let bytes = axum::body::Bytes::from_static(b"{\"allowed_models\":[\"glm\"]}");
+        assert_eq!(
+            build_admin_update_user_response_with_mode(&state, &request, Some(&bytes), false)
+                .await
+                .unwrap()
+                .status(),
+            http::StatusCode::BAD_REQUEST
+        );
+    }
 }

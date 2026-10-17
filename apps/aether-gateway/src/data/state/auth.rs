@@ -2715,6 +2715,20 @@ impl GatewayDataState {
         snapshot: Option<StoredAuthApiKeySnapshot>,
         now_unix_secs: u64,
     ) -> Result<Option<GatewayAuthApiKeySnapshot>, DataLayerError> {
+        self.apply_user_group_effective_policies_with_mode(
+            snapshot,
+            now_unix_secs,
+            crate::internal_access::enabled(),
+        )
+        .await
+    }
+
+    async fn apply_user_group_effective_policies_with_mode(
+        &self,
+        snapshot: Option<StoredAuthApiKeySnapshot>,
+        now_unix_secs: u64,
+        internal_mode: bool,
+    ) -> Result<Option<GatewayAuthApiKeySnapshot>, DataLayerError> {
         let Some(mut snapshot) = snapshot else {
             return Ok(None);
         };
@@ -2736,7 +2750,7 @@ impl GatewayDataState {
                 now_unix_secs,
             )));
         };
-        snapshot.user_role = user.role;
+        snapshot.user_role = user.role.clone();
         let groups = self
             .effective_user_groups_for_user(&snapshot.user_id)
             .await?;
@@ -2744,8 +2758,11 @@ impl GatewayDataState {
         let GatewayUserEffectiveListPolicies {
             allowed_providers,
             allowed_api_formats,
-            allowed_models,
+            mut allowed_models,
         } = resolve_group_effective_list_policies(&groups);
+        if internal_mode {
+            allowed_models = resolve_internal_user_model_policy(&user, &groups);
+        }
         let user_rate_limit = resolve_effective_rate_limit_policy(None, "system", &groups);
         snapshot.user_allowed_providers = allowed_providers;
         snapshot.user_allowed_api_formats = allowed_api_formats;
@@ -2761,7 +2778,16 @@ impl GatewayDataState {
         &self,
         user: &StoredUserAuthRecord,
     ) -> Result<GatewayUserEffectiveListPolicies, DataLayerError> {
-        if user.role.eq_ignore_ascii_case("admin") {
+        self.resolve_user_effective_list_policies_with_mode(user, crate::internal_access::enabled())
+            .await
+    }
+
+    async fn resolve_user_effective_list_policies_with_mode(
+        &self,
+        user: &StoredUserAuthRecord,
+        internal_mode: bool,
+    ) -> Result<GatewayUserEffectiveListPolicies, DataLayerError> {
+        if user.role.eq_ignore_ascii_case("admin") && !internal_mode {
             return Ok(GatewayUserEffectiveListPolicies::default());
         }
 
@@ -2770,7 +2796,11 @@ impl GatewayDataState {
         } else {
             Vec::new()
         };
-        Ok(resolve_group_effective_list_policies(&groups))
+        let mut policies = resolve_group_effective_list_policies(&groups);
+        if internal_mode {
+            policies.allowed_models = resolve_internal_user_model_policy(user, &groups);
+        }
+        Ok(policies)
     }
 
     async fn effective_user_groups_for_user(
@@ -2848,8 +2878,21 @@ impl GatewayDataState {
     }
 }
 
-// Per-user list policy columns are retained only for legacy import/export compatibility.
-// Runtime authorization and user-facing catalogs must both treat group policies as authoritative.
+fn resolve_internal_user_model_policy(
+    user: &StoredUserAuthRecord,
+    groups: &[aether_data::repository::users::StoredUserGroup],
+) -> Option<Vec<String>> {
+    match user.allowed_models_mode.as_str() {
+        "specific" => Some(user.allowed_models.clone().unwrap_or_default()),
+        "deny_all" => Some(Vec::new()),
+        _ => union_group_list_policies(groups, |group| {
+            (&group.allowed_models_mode, group.allowed_models.clone())
+        }),
+    }
+}
+
+// Provider/API-format policies remain group-owned; internal model ACLs additionally
+// use the personal restriction in both runtime authorization and catalogs.
 fn resolve_group_effective_list_policies(
     groups: &[aether_data::repository::users::StoredUserGroup],
 ) -> GatewayUserEffectiveListPolicies {
@@ -3914,6 +3957,124 @@ mod tests {
         assert_eq!(
             catalog_policies.allowed_models.as_deref(),
             resolved.effective_allowed_models()
+        );
+    }
+
+    #[tokio::test]
+    async fn internal_personal_model_policy_is_shared_by_auth_and_catalog_without_quota_grants() {
+        let mut user = sample_auth_user("internal-model-user", "user");
+        user.allowed_models = Some(vec!["glm".into(), "personal-only".into()]);
+        user.allowed_models_mode = "specific".into();
+        let repository = Arc::new(InMemoryUserReadRepository::seed_auth_users(vec![
+            user.clone()
+        ]));
+        let group = repository
+            .create_user_group(UpsertUserGroupRecord {
+                name: "Internal Models".into(),
+                description: None,
+                priority: 1,
+                allowed_providers: None,
+                allowed_providers_mode: "unrestricted".into(),
+                allowed_api_formats: None,
+                allowed_api_formats_mode: "unrestricted".into(),
+                allowed_models: Some(vec!["glm".into(), "fabel".into()]),
+                allowed_models_mode: "specific".into(),
+                rate_limit: None,
+                rate_limit_mode: "system".into(),
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        repository
+            .add_user_to_group(&group.id, &user.id)
+            .await
+            .unwrap();
+        let state = GatewayDataState::with_user_reader_for_tests(repository.clone());
+        let mut snapshot = sample_snapshot("internal-key", &user.id);
+        snapshot.api_key_allowed_models = None;
+        let auth = state
+            .apply_user_group_effective_policies_with_mode(Some(snapshot.clone()), 100, true)
+            .await
+            .unwrap()
+            .unwrap();
+        let catalog = state
+            .resolve_user_effective_list_policies_with_mode(&user, true)
+            .await
+            .unwrap();
+        assert_eq!(
+            auth.effective_allowed_models(),
+            Some(&["glm".to_string(), "personal-only".to_string()][..])
+        );
+        assert_eq!(
+            catalog.allowed_models.as_deref(),
+            auth.effective_allowed_models()
+        );
+
+        repository
+            .update_local_auth_user_admin_fields(
+                &user.id,
+                None,
+                false,
+                None,
+                false,
+                None,
+                true,
+                Some(vec![]),
+                false,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let denied = repository
+            .find_user_auth_by_id(&user.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(denied.allowed_models_mode, "deny_all");
+        let auth = state
+            .apply_user_group_effective_policies_with_mode(Some(snapshot.clone()), 100, true)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(auth.effective_allowed_models(), Some(&[][..]));
+        assert_eq!(
+            state
+                .resolve_user_effective_list_policies_with_mode(&denied, true)
+                .await
+                .unwrap()
+                .allowed_models,
+            Some(vec![])
+        );
+
+        repository
+            .update_local_auth_user_admin_fields(
+                &user.id, None, false, None, false, None, true, None, false, None, None,
+            )
+            .await
+            .unwrap();
+        let inherited = repository
+            .find_user_auth_by_id(&user.id)
+            .await
+            .unwrap()
+            .unwrap();
+        let auth = state
+            .apply_user_group_effective_policies_with_mode(Some(snapshot), 100, true)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            auth.effective_allowed_models(),
+            Some(&["fabel".to_string(), "glm".to_string()][..])
+        );
+        assert_eq!(
+            state
+                .resolve_user_effective_list_policies_with_mode(&inherited, true)
+                .await
+                .unwrap()
+                .allowed_models
+                .as_deref(),
+            auth.effective_allowed_models()
         );
     }
 

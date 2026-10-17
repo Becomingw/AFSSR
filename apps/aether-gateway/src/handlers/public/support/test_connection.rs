@@ -23,7 +23,7 @@ pub(super) async fn maybe_build_local_test_connection_response(
         Ok(value) => value,
         Err(response) => return Some(response),
     };
-    if !crate::roles::can_write_admin_console(&auth.user.role) {
+    if !crate::roles::can_manage_services(&auth.user.role) {
         return Some(build_auth_error_response(
             http::StatusCode::FORBIDDEN,
             "仅管理员可以测试供应商连接",

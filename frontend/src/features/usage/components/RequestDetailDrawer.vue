@@ -592,6 +592,12 @@
                 </div>
               </Card>
 
+              <RequestDiagnosticPanel
+                :request-id="detail.request_id || traceTimelineRequestId || null"
+                admin
+                @feedback="openDiagnosticFeedback"
+              />
+
               <!-- 请求链路追踪卡片 -->
               <div>
                 <HorizontalRequestTimeline
@@ -902,6 +908,7 @@
 <script setup lang="ts">
 import { getI18nLocale } from '@/i18n'
 import { ref, shallowRef, watch, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { useRouter } from 'vue-router'
 import axios from 'axios'
 import Button from '@/components/ui/button.vue'
 import { useEscapeKey } from '@/composables/useEscapeKey'
@@ -962,6 +969,7 @@ import { BodyDocument } from '../utils/body-document'
 import { BodyDocumentError, MAX_BODY_BYTES } from '../utils/body-document-protocol'
 import { useToast } from '@/composables/useToast'
 import HorizontalRequestTimeline from './HorizontalRequestTimeline.vue'
+import RequestDiagnosticPanel from './RequestDiagnosticPanel.vue'
 import ReplayDialog from './ReplayDialog.vue'
 import ServiceTierFacts from './ServiceTierFacts.vue'
 import UsageModelDisplay from './UsageModelDisplay.vue'
@@ -1021,6 +1029,12 @@ const emit = defineEmits<{
     updatedAt?: string | null
   }]
 }>()
+
+const diagnosticRouter = useRouter()
+function openDiagnosticFeedback(requestId: string) {
+  emit('close')
+  void diagnosticRouter.push({ path: '/admin/feedback', query: { request_id: requestId } })
+}
 
 const REQUEST_STATE_STATUSES = new Set<RequestStateStatus>([
   'pending',

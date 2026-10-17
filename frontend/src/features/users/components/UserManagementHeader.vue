@@ -1,38 +1,34 @@
 <template>
-  <div class="px-4 sm:px-6 py-3.5 border-b border-border/60">
-    <div class="flex flex-col gap-3 sm:hidden">
-      <div class="flex items-center justify-between">
-        <h3 class="text-base font-semibold">
+  <div>
+    <header class="console-page-header">
+        <h1 class="console-page-title">
           {{ legacyT('用户管理') }}
-        </h3>
-        <div class="flex items-center gap-2">
+        </h1>
+        <div class="flex flex-wrap items-center gap-2">
           <Button
             v-if="canOperateAdmin"
-            variant="ghost"
-            size="icon"
-            class="h-8 w-8"
+            variant="outline"
             :title="legacyT('分组管理')"
             @click="$emit('openGroups')"
           >
             <FolderKanban class="w-3.5 h-3.5" />
+            {{ legacyT('分组管理') }}
           </Button>
           <Button
             v-if="canOperateAdmin"
-            variant="ghost"
-            size="icon"
-            class="h-8 w-8"
             :title="legacyT('新增用户')"
             @click="$emit('createUser')"
           >
             <Plus class="w-3.5 h-3.5" />
+            {{ legacyT('新增用户') }}
           </Button>
           <RefreshButton
             :loading="loading"
             @click="$emit('refresh')"
           />
         </div>
-      </div>
-
+    </header>
+    <div class="console-toolbar">
       <UserFilterControls
         :search-query="searchQuery"
         :filter-role="filterRole"
@@ -52,57 +48,6 @@
       />
     </div>
 
-    <div class="hidden sm:flex items-center justify-between gap-4">
-      <h3 class="text-base font-semibold">
-        {{ legacyT('用户管理') }}
-      </h3>
-
-      <div class="flex items-center gap-2">
-        <UserFilterControls
-          :search-query="searchQuery"
-          :filter-role="filterRole"
-          :filter-group="filterGroup"
-          :filter-status="filterStatus"
-          :sort-option="sortOption"
-          :user-groups="userGroups"
-          :role-options="roleOptions"
-          :status-options="statusOptions"
-          :sort-options="sortOptions"
-          @update:search-query="$emit('update:searchQuery', $event)"
-          @update:filter-role="$emit('update:filterRole', $event)"
-          @update:filter-group="$emit('update:filterGroup', $event)"
-          @update:filter-status="$emit('update:filterStatus', $event)"
-          @update:sort-option="$emit('update:sortOption', $event)"
-        />
-
-        <div class="h-4 w-px bg-border" />
-
-        <Button
-          v-if="canOperateAdmin"
-          variant="ghost"
-          size="icon"
-          class="h-8 w-8"
-          :title="legacyT('分组管理')"
-          @click="$emit('openGroups')"
-        >
-          <FolderKanban class="w-3.5 h-3.5" />
-        </Button>
-        <Button
-          v-if="canOperateAdmin"
-          variant="ghost"
-          size="icon"
-          class="h-8 w-8"
-          :title="legacyT('新增用户')"
-          @click="$emit('createUser')"
-        >
-          <Plus class="w-3.5 h-3.5" />
-        </Button>
-        <RefreshButton
-          :loading="loading"
-          @click="$emit('refresh')"
-        />
-      </div>
-    </div>
   </div>
 </template>
 

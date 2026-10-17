@@ -13,6 +13,7 @@ pub(crate) fn models_api_format(request_context: &GatewayPublicRequestContext) -
         .map(str::trim)
         .filter(|signature| !signature.is_empty())?;
     match crate::ai_serving::normalize_api_format_alias(signature).as_str() {
+        "aether:opencode" => Some("openai:chat"),
         "openai:chat" => Some("openai:chat"),
         "openai:responses" => Some("openai:responses"),
         "openai:responses:compact" => Some("openai:responses:compact"),

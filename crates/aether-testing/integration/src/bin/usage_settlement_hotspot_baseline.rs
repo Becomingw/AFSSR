@@ -471,6 +471,7 @@ FROM generate_series(0, $1::INTEGER - 1) AS gs
 
 fn settlement_input(index: usize) -> UsageSettlementInput {
     UsageSettlementInput {
+        charge_wallet: true,
         request_id: format!("{REQUEST_PREFIX}-{index:08}"),
         user_id: None,
         api_key_id: None,

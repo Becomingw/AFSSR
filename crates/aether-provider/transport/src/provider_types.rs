@@ -174,6 +174,11 @@ const AUTO_STREAM_ENDPOINT_CONFIG_DEFAULTS: &[FixedProviderEndpointConfigDefault
     }];
 
 const STANDARD_RUNTIME_POLICY: ProviderRuntimePolicy = ProviderRuntimePolicy::standard();
+const OPENCODE_GO_RUNTIME_POLICY: ProviderRuntimePolicy = ProviderRuntimePolicy {
+    fixed_provider: true,
+    enable_format_conversion_by_default: true,
+    ..STANDARD_RUNTIME_POLICY
+};
 const CUSTOM_RUNTIME_POLICY: ProviderRuntimePolicy = ProviderRuntimePolicy {
     local_embedding_support: ProviderLocalEmbeddingSupport::AnyKnown,
     ..STANDARD_RUNTIME_POLICY
@@ -273,6 +278,39 @@ const WINDSURF_RUNTIME_POLICY: ProviderRuntimePolicy = ProviderRuntimePolicy {
     supports_local_openai_chat_transport: false,
     supports_local_same_format_transport: false,
     ..STANDARD_RUNTIME_POLICY
+};
+
+const OPENCODE_GO_FIXED_PROVIDER_TEMPLATE: FixedProviderTemplate = FixedProviderTemplate {
+    provider_type: "opencode_go",
+    version: 2,
+    base_url: aether_ai_formats::provider_compat::opencode_go::BASE_URL,
+    endpoints: &[
+        FixedProviderEndpointTemplate {
+            item_key: "openai:responses",
+            api_format: "openai:responses",
+            custom_path: None,
+            config_defaults: EMPTY_ENDPOINT_CONFIG_DEFAULTS,
+        },
+        FixedProviderEndpointTemplate {
+            item_key: "openai:chat",
+            api_format: "openai:chat",
+            custom_path: None,
+            config_defaults: EMPTY_ENDPOINT_CONFIG_DEFAULTS,
+        },
+        FixedProviderEndpointTemplate {
+            item_key: "claude:messages",
+            api_format: "claude:messages",
+            custom_path: None,
+            config_defaults: EMPTY_ENDPOINT_CONFIG_DEFAULTS,
+        },
+        FixedProviderEndpointTemplate {
+            item_key: "gemini:generate_content",
+            api_format: "gemini:generate_content",
+            custom_path: None,
+            config_defaults: EMPTY_ENDPOINT_CONFIG_DEFAULTS,
+        },
+    ],
+    runtime_policy: OPENCODE_GO_RUNTIME_POLICY,
 };
 
 const CLAUDE_CODE_FIXED_PROVIDER_TEMPLATE: FixedProviderTemplate = FixedProviderTemplate {
@@ -489,6 +527,7 @@ pub fn provider_runtime_policy(provider_type: &str) -> ProviderRuntimePolicy {
 
 pub fn fixed_provider_template(provider_type: &str) -> Option<&'static FixedProviderTemplate> {
     match provider_type.trim().to_ascii_lowercase().as_str() {
+        "opencode_go" => Some(&OPENCODE_GO_FIXED_PROVIDER_TEMPLATE),
         "claude_code" => Some(&CLAUDE_CODE_FIXED_PROVIDER_TEMPLATE),
         "codex" => Some(&CODEX_FIXED_PROVIDER_TEMPLATE),
         "chatgpt_web" => Some(&CHATGPT_WEB_FIXED_PROVIDER_TEMPLATE),
@@ -636,6 +675,34 @@ mod tests {
         provider_type_supports_local_same_format_transport, FixedProviderEndpointConfigValue,
         ADMIN_PROVIDER_OAUTH_TEMPLATE_TYPES,
     };
+
+    #[test]
+    fn opencode_go_template_uses_four_native_protocols_and_api_keys() {
+        let template = fixed_provider_template(" OpenCode_Go ").unwrap();
+        assert_eq!(template.base_url, "https://opencode.ai/inference/go/v1");
+        assert_eq!(
+            template
+                .endpoints
+                .iter()
+                .map(|e| e.api_format)
+                .collect::<Vec<_>>(),
+            [
+                "openai:responses",
+                "openai:chat",
+                "claude:messages",
+                "gemini:generate_content"
+            ]
+        );
+        assert!(template.runtime_policy.enable_format_conversion_by_default);
+        assert!(template.runtime_policy.supports_model_fetch);
+        assert!(template.runtime_policy.supports_local_same_format_transport);
+        assert!(provider_type_admin_oauth_template("opencode_go").is_none());
+        assert!(!fixed_provider_key_inherits_api_formats(
+            "opencode_go",
+            "api_key",
+            None
+        ));
+    }
 
     #[test]
     fn claude_code_fixed_provider_uses_messages_api_root_and_conversion_default() {

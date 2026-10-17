@@ -23,7 +23,7 @@
       </div>
       <Select
         :model-value="modelValue"
-        @update:model-value="($event === 'user' || $event === 'admin' || $event === 'audit_admin') && $emit('update:modelValue', $event)"
+        @update:model-value="['user', 'admin', 'audit_admin', 'user_admin', 'service_admin'].includes(String($event)) && $emit('update:modelValue', $event as UserRole)"
       >
         <SelectTrigger class="h-10 w-full">
           <SelectValue />
@@ -33,11 +33,13 @@
             {{ legacyT('普通用户') }}
           </SelectItem>
           <SelectItem value="admin">
-            {{ legacyT('管理员') }}
+            {{ legacyT('超级管理员') }}
           </SelectItem>
           <SelectItem value="audit_admin">
             {{ legacyT('审计管理员') }}
           </SelectItem>
+          <SelectItem value="user_admin">用户及权益管理员</SelectItem>
+          <SelectItem value="service_admin">服务管理员</SelectItem>
         </SelectContent>
       </Select>
     </div>

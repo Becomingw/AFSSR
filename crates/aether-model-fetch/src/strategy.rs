@@ -395,6 +395,8 @@ async fn fetch_standard_models_for_transport(
                     codex_client_version
                 },
             )
+        } else if aether_provider_transport::opencode_go::is_opencode_go_provider(transport) {
+            crate::logic::parse_opencode_go_models_response_page(&body_json)
         } else {
             parse_models_response_page(&transport.endpoint.api_format, &body_json)
         }
@@ -2401,6 +2403,42 @@ mod tests {
         transport.key.api_formats = Some(vec![api_format.to_string()]);
         transport.key.decrypted_api_key = "openai-secret".to_string();
         transport
+    }
+
+    #[tokio::test]
+    async fn go_catalog_stays_native_when_fetched_through_multiple_endpoints() {
+        let runtime = TestRuntime {
+            executed_urls: Arc::new(Mutex::new(Vec::new())),
+            response_body: json!({"data":[{"id":"claude-haiku-5-5"},{"id":"gpt-6-luna"},{"id":"space-bunny"}]}),
+            status_code: 200,
+            response_headers: BTreeMap::new(),
+        };
+        let transports = ["claude:messages", "openai:responses", "openai:chat"]
+            .iter()
+            .map(|format| {
+                let mut transport =
+                    sample_openai_transport(format, format, "https://opencode.ai/inference/go/v1");
+                transport.provider.provider_type = "opencode_go".into();
+                transport
+            })
+            .collect::<Vec<_>>();
+        let outcome = fetch_models_from_transports(&runtime, &transports)
+            .await
+            .unwrap();
+        assert!(outcome.has_success);
+        assert_eq!(outcome.cached_models.len(), 3);
+        for (name, expected) in [
+            ("claude-haiku-5-5", "claude:messages"),
+            ("gpt-6-luna", "openai:responses"),
+            ("space-bunny", "openai:chat"),
+        ] {
+            let model = outcome
+                .cached_models
+                .iter()
+                .find(|model| model["id"] == name)
+                .unwrap();
+            assert_eq!(model["api_formats"], json!([expected]));
+        }
     }
 
     #[test]

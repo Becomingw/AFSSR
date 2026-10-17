@@ -368,7 +368,30 @@ pub fn sanitize_usage_capture_controls_for_persistence(
 }
 
 pub fn sanitize_usage_headers_for_persistence(value: Option<Value>) -> Option<Value> {
-    value.filter(Value::is_object)
+    let mut value = value.filter(Value::is_object)?;
+    for (name, value) in value.as_object_mut()? {
+        let name = name.trim().to_ascii_lowercase();
+        if (matches!(
+            name.as_str(),
+            "authorization"
+                | "proxy-authorization"
+                | "cookie"
+                | "set-cookie"
+                | "x-api-key"
+                | "api-key"
+                | "apikey"
+                | "x-auth-token"
+                | "x-access-token"
+                | "x-goog-api-key"
+                | "x-amz-security-token"
+        ) || name.ends_with("-api-key")
+            || name.ends_with("-auth-token"))
+            && !value.is_null()
+        {
+            *value = Value::String("[redacted]".to_string());
+        }
+    }
+    Some(value)
 }
 
 fn sanitize_usage_routing_fields(
@@ -811,8 +834,8 @@ mod tests {
     }
 
     #[test]
-    fn header_capture_preserves_original_values() {
-        let headers = json!({
+    fn header_capture_redacts_credentials_but_preserves_routing_values() {
+        let mut headers = json!({
             "Authorization": "Bearer original-token",
             "originator": "codex-cli",
             "user-agent": "codex-tui/test",
@@ -830,10 +853,10 @@ mod tests {
             "x-custom-header": "original-value",
             "x-null": null
         });
-        assert_eq!(
-            super::sanitize_usage_headers_for_persistence(Some(headers.clone())),
-            Some(headers)
-        );
+        let sanitized = super::sanitize_usage_headers_for_persistence(Some(headers.clone()));
+        headers["Authorization"] = json!("[redacted]");
+        headers["set-cookie"] = json!("[redacted]");
+        assert_eq!(sanitized, Some(headers));
         for invalid in [json!(null), json!("headers"), json!(["headers"])] {
             assert!(super::sanitize_usage_headers_for_persistence(Some(invalid)).is_none());
         }
@@ -849,7 +872,7 @@ mod tests {
 
         assert_eq!(
             usage.request_headers,
-            Some(json!({"authorization": "Bearer secret"}))
+            Some(json!({"authorization": "[redacted]"}))
         );
         assert!(usage.request_body.is_none());
         assert!(usage.request_body_ref.is_none());
@@ -902,15 +925,15 @@ mod tests {
         assert!(captured.client_response_body_ref.is_none());
         assert_eq!(
             captured.request_headers,
-            Some(json!({"Content-Type": "application/json", "Authorization": "Bearer secret"}))
+            Some(json!({"Content-Type": "application/json", "Authorization": "[redacted]"}))
         );
         assert_eq!(
             captured.provider_request_headers,
-            Some(json!({"x-api-key": "secret"}))
+            Some(json!({"x-api-key": "[redacted]"}))
         );
         assert_eq!(
             captured.response_headers,
-            Some(json!({"set-cookie": "secret"}))
+            Some(json!({"set-cookie": "[redacted]"}))
         );
         assert_eq!(
             captured.client_response_headers,

@@ -20,6 +20,9 @@ const meApiMock = vi.hoisted(() => ({
   toggleApiKey: vi.fn(),
 }))
 
+const openCodeApiMock = vi.hoisted(() => ({ getOpenCodeConfig: vi.fn(), downloadOpenCodeConfig: vi.fn() }))
+vi.mock('@/api/opencode', () => openCodeApiMock)
+
 vi.mock('@/api/me', () => ({
   meApi: meApiMock,
 }))
@@ -96,6 +99,11 @@ async function mountMyApiKeys() {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  openCodeApiMock.getOpenCodeConfig.mockResolvedValue({ provider: { aether: {
+    npm: '@ai-sdk/openai-compatible',
+    options: { baseURL: 'https://aether.example.com/v1' },
+    models: { 'gpt-5': { name: 'GPT 5', limit: { context: 128000, output: 8000 } } },
+  } } })
   meApiMock.getClientConfig.mockResolvedValue({
     base_url: 'https://aether.example.com',
     site_name: 'Aether Local',
@@ -175,6 +183,61 @@ describe('MyApiKeys CC Switch import', () => {
     await flushPromises()
 
     expect(toastMock.error).toHaveBeenCalledWith('该密钥缺少完整密钥信息，请重新创建 API Key')
+  })
+
+  it('exports the selected key scoped OpenCode catalog only after an explicit click', async () => {
+    meApiMock.getApiKeys.mockResolvedValue([apiKey()])
+    meApiMock.getFullApiKey.mockResolvedValue({ key: 'sk-selected' })
+    await mountMyApiKeys()
+    document.querySelector<HTMLButtonElement>('[data-testid="ccswitch-open-user-key-1"]')?.click()
+    await flushPromises()
+    document.querySelector<HTMLButtonElement>('[data-testid="ccswitch-target-opencode"]')?.click()
+    await flushPromises()
+    expect(openCodeApiMock.getOpenCodeConfig).not.toHaveBeenCalled()
+    document.querySelector<HTMLButtonElement>('[data-testid="opencode-download-config"]')?.click()
+    await flushPromises()
+    expect(openCodeApiMock.getOpenCodeConfig).toHaveBeenCalledWith('sk-selected')
+    expect(openCodeApiMock.downloadOpenCodeConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: expect.any(Object) }), 'sk-selected', 'gpt-5',
+    )
+    expect(document.body.textContent).not.toContain('sk-selected')
+  })
+
+  it('blocks OpenCode quick import when the selected key cannot use that model', async () => {
+    meApiMock.getApiKeys.mockResolvedValue([apiKey()])
+    meApiMock.getFullApiKey.mockResolvedValue({ key: 'sk-restricted' })
+    openCodeApiMock.getOpenCodeConfig.mockResolvedValueOnce({ provider: { aether: { models: {} } } })
+    await mountMyApiKeys()
+    document.querySelector<HTMLButtonElement>('[data-testid="ccswitch-open-user-key-1"]')?.click()
+    await flushPromises()
+    document.querySelector<HTMLButtonElement>('[data-testid="ccswitch-target-opencode"]')?.click()
+    await flushPromises()
+    document.querySelector<HTMLButtonElement>('[data-testid="ccswitch-confirm"]')?.click()
+    await flushPromises()
+    expect(toastMock.error).toHaveBeenCalledWith('当前 API Key 无权使用所选模型，请重新选择')
+  })
+
+  it('offers OpenCode installation and switches an unsupported Windows selection to Linux', async () => {
+    meApiMock.getApiKeys.mockResolvedValue([apiKey()])
+    await mountMyApiKeys()
+    document.querySelector<HTMLButtonElement>('[title="一键安装并配置 CLI"]')?.click()
+    await flushPromises()
+    const button = (text: string) => Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
+      .find(item => item.textContent?.trim() === text)
+    button('Windows')?.click()
+    await flushPromises()
+    button('OpenCode')?.click()
+    await flushPromises()
+    expect(meApiMock.createApiKeyInstallSession).toHaveBeenLastCalledWith('user-key-1', {
+      target_cli: 'opencode', target_system: 'linux',
+    })
+    expect(button('Windows')?.disabled).toBe(true)
+    expect(document.body.textContent).toContain('opencode-sync.py')
+    button('macOS')?.click()
+    await flushPromises()
+    expect(meApiMock.createApiKeyInstallSession).toHaveBeenLastCalledWith('user-key-1', {
+      target_cli: 'opencode', target_system: 'macos',
+    })
   })
 
   it('does not fall back to an unlisted model when no available models are returned', async () => {

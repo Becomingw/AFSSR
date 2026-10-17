@@ -1,10 +1,7 @@
 <template>
   <div class="space-y-6 pb-8">
     <!-- 用户表格 -->
-    <Card
-      variant="default"
-      class="overflow-hidden"
-    >
+    <section class="min-w-0">
       <UserManagementHeader
         :search-query="searchQuery"
         :filter-role="filterRole"
@@ -16,7 +13,7 @@
         :status-options="userStatusFilterOptions"
         :sort-options="userSortOptions"
         :loading="usersStore.loading"
-        :can-operate-admin="authStore.canOperateAdmin"
+        :can-operate-admin="authStore.canManageUsers"
         @update:search-query="searchQuery = $event"
         @update:filter-role="filterRole = $event"
         @update:filter-group="filterGroup = $event"
@@ -37,7 +34,7 @@
         :can-clear-selection="canClearSelection"
         :select-all-filtered="selectAllFiltered"
         :loading="usersStore.loading"
-        :can-operate-admin="authStore.canOperateAdmin"
+        :can-operate-admin="authStore.canManageUsers"
         :group-count="userGroups.length"
         @toggle-select-filtered="toggleSelectFiltered"
         @toggle-select-current-page="toggleSelectCurrentPage"
@@ -54,7 +51,8 @@
         :is-current-page-fully-selected="isCurrentPageFullySelected"
         :selection-disabled="selectAllFiltered || usersStore.loading"
         :loading="usersStore.loading"
-        :can-operate-admin="authStore.canOperateAdmin"
+        :can-operate-admin="authStore.canManageUsers"
+        :can-manage-admin-accounts="authStore.isAdmin"
         :has-filters="hasUserFilters"
         :sort-by="sortBy"
         :sort-order="sortOrder"
@@ -79,7 +77,7 @@
         @update:current="handlePageChange"
         @update:page-size="handlePageSizeChange"
       />
-    </Card>
+    </section>
 
     <!-- 用户表单对话框（创建/编辑共用） -->
     <UserFormDialog
@@ -87,6 +85,7 @@
       :open="showUserFormDialog"
       :user="editingUser"
       :groups="userGroups"
+      :can-assign-roles="authStore.isAdmin"
       @close="closeUserFormDialog"
       @submit="handleUserFormSubmit"
     />
@@ -98,6 +97,7 @@
       :selected-count="selectedCount"
       :filters="batchSelectionFilters"
       :groups="userGroups"
+      :can-assign-roles="authStore.isAdmin"
       @close="showUserBatchDialog = false"
       @completed="handleUserBatchCompleted"
     />
@@ -110,6 +110,7 @@
     />
 
     <UserPlanDialog
+      v-if="!INTERNAL_GATEWAY"
       :open="showUserPlansDialog"
       :user-id="selectedUser?.id || null"
       :user-name="selectedUser?.username || ''"
@@ -137,6 +138,7 @@
       :open="showApiKeysDialog"
       :api-keys="userApiKeys"
       :creating="creatingApiKey"
+      :read-only="!authStore.canManageUsers || (!authStore.isAdmin && selectedUser?.role !== 'user')"
       :format-rate-limit="formatRateLimitSimple"
       :format-concurrent-limit="formatConcurrentLimitSimple"
       :format-ip-rules="formatIpRules"
@@ -171,6 +173,7 @@
     />
 
     <WalletOpsDrawer
+      v-if="!INTERNAL_GATEWAY"
       :open="showWalletActionDialogState"
       :wallet="walletActionTarget?.wallet || null"
       :owner-name="walletActionTarget?.user.username || ''"
@@ -193,6 +196,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useUsersStore } from '@/stores/users'
+import { INTERNAL_GATEWAY } from '@/config/internalGateway'
 import { useAuthStore } from '@/stores/auth'
 import {
   usersApi,
@@ -217,7 +221,6 @@ import { walletStatusBadge, walletStatusLabel } from '@/utils/walletDisplay'
 
 // UI 组件
 import {
-  Card,
   Pagination,
 } from '@/components/ui'
 
@@ -370,7 +373,7 @@ const batchSelectionFilters = computed<UserBatchSelectionFilters>(() => {
   const filters: UserBatchSelectionFilters = {}
   const search = searchQuery.value.trim()
   if (search) filters.search = search
-  if (filterRole.value === 'admin' || filterRole.value === 'audit_admin' || filterRole.value === 'user') filters.role = filterRole.value
+  if (filterRole.value !== 'all') filters.role = filterRole.value
   if (filterStatus.value === 'active') filters.is_active = true
   if (filterStatus.value === 'inactive') filters.is_active = false
   if (filterGroup.value !== 'all') filters.group_id = filterGroup.value
@@ -589,6 +592,7 @@ function hasPackageEntitlement(items: BillingEntitlement[] | undefined): boolean
 }
 
 async function loadUserWallets(options: { cacheTtlMs?: number } = {}) {
+  if (INTERNAL_GATEWAY) return
   const requestId = ++userWalletsRequestId
   try {
     const wallets = await adminWalletApi.listAllWallets(
@@ -745,6 +749,8 @@ function editUser(user: User) {
     is_active: user.is_active,
     group_ids: (user.groups || []).map(group => group.id),
     feature_settings: user.feature_settings ?? null,
+    allowed_models: user.allowed_models ? [...user.allowed_models] : null,
+    allowed_models_mode: user.allowed_models_mode,
   }
   showUserFormDialog.value = true
 }
@@ -770,6 +776,7 @@ async function handleUserFormSubmit(data: UserFormData & { password?: string; un
       if (data.password) {
         updateData.password = data.password
       }
+      if (INTERNAL_GATEWAY && 'allowed_models' in data) updateData.allowed_models = data.allowed_models
       await usersStore.updateUser(data.id, updateData)
       invalidateUserOptions()
       success(legacyT('用户信息已更新'))

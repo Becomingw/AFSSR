@@ -66,9 +66,9 @@ use self::support_announcements::{
 use self::support_auth::auth_registration::{
     auth_password_policy_level, validate_auth_register_password,
 };
-use self::support_auth::auth_session::{
-    build_auth_wallet_summary_payload, handle_auth_me, resolve_authenticated_local_user,
-    AuthenticatedLocalUserContext,
+use self::support_auth::auth_session::{build_auth_wallet_summary_payload, handle_auth_me};
+pub(crate) use self::support_auth::auth_session::{
+    resolve_authenticated_local_user, AuthenticatedLocalUserContext,
 };
 use self::support_auth::{auth_email_is_verified, consume_auth_email_registration_proof};
 use self::support_auth::{
@@ -270,7 +270,9 @@ async fn build_local_public_support_response(
                 models_api_format(request_context).unwrap_or("openai:chat"),
             ));
         }
-        if let Some(response) = maybe_build_local_models_response(state, request_context).await {
+        if let Some(response) =
+            maybe_build_local_models_response(state, request_context, headers, remote_addr).await
+        {
             return Some(response);
         }
     }

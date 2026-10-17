@@ -6,9 +6,8 @@ use self::body_buffer::{
     buffer_and_normalize_request_body, build_request_body_buffer_error_response,
     RequestBodyBufferError, RequestBodyBufferPolicy,
 };
-use self::local::{
-    maybe_build_local_admin_proxy_response, maybe_build_local_internal_proxy_response,
-};
+pub(crate) use self::local::maybe_build_local_admin_proxy_response;
+use self::local::maybe_build_local_internal_proxy_response;
 pub(crate) use self::websocket::live::{live_websocket, maybe_handle_live_http};
 pub(crate) use self::websocket::realtime::realtime_websocket;
 pub(crate) use self::websocket::responses::responses_websocket;
@@ -78,6 +77,7 @@ use crate::{
 use axum::body::{to_bytes, Body, Bytes};
 use axum::extract::{ConnectInfo, Request, State};
 use axum::http::{self, header::HeaderName, header::HeaderValue, Response};
+use axum::response::IntoResponse;
 use futures_util::StreamExt;
 use std::{collections::BTreeMap, time::Instant};
 use tracing::{debug, info, warn};
@@ -1049,6 +1049,25 @@ async fn proxy_request_inner(
     request: Request,
 ) -> Result<Response<Body>, GatewayError> {
     let started_at = Instant::now();
+    if crate::internal_access::enabled()
+        && (crate::internal_access::commercial_path(request.uri().path())
+            || crate::internal_access::retired_generation_path(request.uri().path()))
+    {
+        let message = if crate::internal_access::commercial_path(request.uri().path()) {
+            "Commercial features are not available in AFSSR internal gateway"
+        } else {
+            "Use /v1/responses, /v1/messages, or /v1/chat/completions for model generation"
+        };
+        let mut response = (
+            http::StatusCode::NOT_FOUND,
+            axum::Json(serde_json::json!({"detail":message})),
+        )
+            .into_response();
+        if let Ok(value) = HeaderValue::from_str(&extract_or_generate_trace_id(request.headers())) {
+            response.headers_mut().insert(TRACE_ID_HEADER, value);
+        }
+        return Ok(response);
+    }
     let direct_client_ip = effective_client_ip(request.headers(), &remote_addr);
     let trace_id = extract_or_generate_trace_id(request.headers());
     let accepted_at = request
@@ -1906,12 +1925,29 @@ async fn proxy_request_inner(
     let plan_usage_started_at = Instant::now();
     let plan_usage_event_id = uuid::Uuid::new_v4().to_string();
     let now_unix_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
+    let quota_model = control_decision.and_then(|decision| {
+        buffered_body.as_ref().and_then(|body| {
+            crate::control::extract_requested_model(decision, &parts.uri, &parts.headers, body)
+        })
+    });
+    let quota_model = if crate::internal_access::enabled() {
+        match control_decision {
+            Some(decision) => {
+                crate::internal_access::quota_model(&state, decision, quota_model.as_deref())
+                    .await?
+            }
+            None => quota_model,
+        }
+    } else {
+        quota_model
+    };
     let plan_usage_admission =
         match crate::plan_usage_policy::check_and_acquire_http_plan_usage_policy(
             &state,
             control_decision,
             &plan_usage_event_id,
             now_unix_ms,
+            quota_model.as_deref(),
         )
         .await
         {
@@ -2350,8 +2386,21 @@ async fn proxy_request_inner(
                 local_execution_runtime_miss_context
                     .all_candidates_skipped_for_reasons(PROVIDER_KEY_CAPACITY_LIMIT_SKIP_REASONS)
             });
+        let upstream_client_failure =
+            if auth_api_key_concurrency_limited || provider_key_capacity_limited {
+                None
+            } else {
+                local_execution_runtime_miss_context
+                    .upstream_client_failure()
+                    .or_else(|| {
+                        local_execution_exhaustion
+                            .as_ref()
+                            .and_then(|outcome| outcome.upstream_client_failure())
+                    })
+            };
         let local_execution_runtime_miss_detail = provider_key_capacity_limited
             .then_some(PROVIDER_KEY_CAPACITY_LIMIT_REACHED_DETAIL.to_string())
+            .or_else(|| upstream_client_failure.map(|(_, message)| message.to_string()))
             .or_else(|| {
                 (!auth_api_key_concurrency_limited)
                     .then(|| {
@@ -2475,7 +2524,11 @@ async fn proxy_request_inner(
         let mut response = build_local_http_error_response(
             &trace_id,
             control_decision,
-            local_execution_runtime_miss_status(provider_key_capacity_limited),
+            upstream_client_failure
+                .map(|(status, _)| status)
+                .unwrap_or_else(|| {
+                    local_execution_runtime_miss_status(provider_key_capacity_limited)
+                }),
             local_execution_runtime_miss_client_message(
                 local_execution_runtime_miss_detail.as_str(),
             )

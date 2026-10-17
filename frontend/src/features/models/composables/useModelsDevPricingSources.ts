@@ -3,6 +3,7 @@ import { ref } from 'vue'
 export interface ModelsDevPricingSource {
   provider_id: string
   provider_name: string
+  model_id?: string
 }
 
 export const MODELS_DEV_PRICING_SOURCE_CONFIG_KEY = 'models_dev_pricing_source'
@@ -25,6 +26,7 @@ function normalizePricingSource(value: unknown): ModelsDevPricingSource | null {
   return {
     provider_id: providerId,
     provider_name: providerName,
+    ...(typeof source.model_id === 'string' && source.model_id.trim() ? { model_id: source.model_id.trim() } : {}),
   }
 }
 
@@ -58,6 +60,7 @@ export function modelsDevPricingSourcesEqual(
 ): boolean {
   return left?.provider_id.trim().toLowerCase() === right?.provider_id.trim().toLowerCase()
     && left?.provider_name.trim() === right?.provider_name.trim()
+    && left?.model_id === right?.model_id
 }
 
 function parseStoredSources(key: string): Record<string, ModelsDevPricingSource> | null {

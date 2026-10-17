@@ -41,6 +41,15 @@ pub enum FinalizeStreamRewriteMode {
 pub fn resolve_finalize_stream_rewrite_mode(
     report_context: &Value,
 ) -> Option<FinalizeStreamRewriteMode> {
+    if crate::formats::claude::responses_tools::is_go_functionized_responses_provider(
+        report_context,
+    ) && crate::is_openai_responses_family_format(
+        report_context["client_api_format"]
+            .as_str()
+            .unwrap_or_default(),
+    ) {
+        return Some(FinalizeStreamRewriteMode::Standard);
+    }
     let needs_conversion = report_context
         .get("needs_conversion")
         .and_then(Value::as_bool)
@@ -738,6 +747,11 @@ fn rewrite_openai_responses_compat_stream_line(
         Err(_) => return Ok(line),
     };
     let mut changed = rewrite_stream_payload_model_from_context(report_context, &mut value);
+    changed |= crate::provider_compat::opencode_go::restore_native_responses_payload(
+        &mut value,
+        report_context,
+    )
+    .map_err(AiSurfaceFinalizeError::new)?;
     let event_type = value
         .get("type")
         .and_then(Value::as_str)

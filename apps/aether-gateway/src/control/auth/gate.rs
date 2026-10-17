@@ -177,6 +177,9 @@ async fn available_balance_capacity_usd(
     state: &AppState,
     auth_context: &GatewayControlAuthContext,
 ) -> Result<Option<f64>, GatewayError> {
+    if crate::internal_access::enabled() {
+        return Ok(None);
+    }
     let quota_started_at = std::time::Instant::now();
     let quota_result = state
         .find_user_daily_quota_availability_for_auth(&auth_context.user_id)
@@ -274,7 +277,7 @@ async fn estimate_execution_plan_cost_upper_bound_usd_inner(
         .await?;
         return Ok(None);
     };
-    if !openai_request_input_is_self_contained(&api_format, body_json) {
+    if !request_input_is_self_contained(&api_format, body_json) {
         validate_execution_plan_pricing_for_unavailable_estimate(
             state,
             plan,
@@ -285,7 +288,7 @@ async fn estimate_execution_plan_cost_upper_bound_usd_inner(
         .await?;
         return Ok(None);
     }
-    let input_tokens = json_token_count_upper_bound(body_json);
+    let input_tokens = request_input_token_count_policy_bound(&api_format, body_json);
     let Ok(input_tokens) = i64::try_from(input_tokens) else {
         validate_execution_plan_pricing_for_unavailable_estimate(
             state,
@@ -609,19 +612,255 @@ fn max_output_tokens_from_request(value: &serde_json::Value) -> Option<u64> {
     ["max_tokens", "max_completion_tokens", "max_output_tokens"]
         .iter()
         .filter_map(|field| value.get(*field).and_then(serde_json::Value::as_u64))
+        .chain(
+            ["generationConfig", "generation_config"]
+                .iter()
+                .filter_map(|field| value.get(*field))
+                .flat_map(|config| {
+                    ["maxOutputTokens", "max_output_tokens"]
+                        .iter()
+                        .filter_map(move |field| {
+                            config.get(*field).and_then(serde_json::Value::as_u64)
+                        })
+                }),
+        )
         .filter(|value| *value > 0)
         .max()
 }
 
 fn output_choice_count_upper_bound(api_format: &str, value: &serde_json::Value) -> u64 {
-    if api_format != "openai:chat" {
-        return 1;
+    match api_format {
+        "openai:chat" => value
+            .get("n")
+            .and_then(serde_json::Value::as_u64)
+            .filter(|value| *value > 0)
+            .unwrap_or(1),
+        "gemini:generate_content" => ["generationConfig", "generation_config"]
+            .iter()
+            .filter_map(|field| value.get(*field))
+            .flat_map(|config| {
+                ["candidateCount", "candidate_count"]
+                    .iter()
+                    .filter_map(move |field| config.get(*field).and_then(serde_json::Value::as_u64))
+            })
+            .filter(|value| *value > 0)
+            .max()
+            .unwrap_or(1),
+        _ => 1,
     }
+}
+
+fn request_input_is_self_contained(api_format: &str, value: &serde_json::Value) -> bool {
+    match api_format {
+        "claude:messages" => claude_request_input_is_self_contained(value),
+        _ => openai_request_input_is_self_contained(api_format, value),
+    }
+}
+
+fn only_fields(object: &serde_json::Map<String, serde_json::Value>, fields: &[&str]) -> bool {
+    object.keys().all(|key| fields.contains(&key.as_str()))
+}
+
+fn nonempty_string(value: Option<&serde_json::Value>) -> Option<&str> {
     value
-        .get("n")
-        .and_then(serde_json::Value::as_u64)
-        .filter(|value| *value > 0)
-        .unwrap_or(1)
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn claude_cache_control_is_bounded(value: Option<&serde_json::Value>) -> bool {
+    let Some(value) = value else { return true };
+    value.as_object().is_some_and(|object| {
+        only_fields(object, &["type", "ttl"])
+            && object.get("type").and_then(serde_json::Value::as_str) == Some("ephemeral")
+            && object
+                .get("ttl")
+                .is_none_or(|ttl| matches!(ttl.as_str(), Some("5m" | "1h")))
+    })
+}
+
+fn claude_text_content_is_self_contained(value: &serde_json::Value) -> bool {
+    value.is_string()
+        || value
+            .as_array()
+            .is_some_and(|blocks| blocks.iter().all(claude_text_block_is_self_contained))
+}
+
+fn claude_text_block_is_self_contained(value: &serde_json::Value) -> bool {
+    value.as_object().is_some_and(|object| {
+        only_fields(object, &["type", "text", "cache_control"])
+            && object.get("type").and_then(serde_json::Value::as_str) == Some("text")
+            && object.get("text").is_some_and(serde_json::Value::is_string)
+            && claude_cache_control_is_bounded(object.get("cache_control"))
+    })
+}
+
+fn claude_request_input_is_self_contained(value: &serde_json::Value) -> bool {
+    let Some(body) = value.as_object() else {
+        return false;
+    };
+    // Opt in only to local text/function semantics; opaque state, server tools and
+    // future extensions must not turn a hard cost limit into an unbounded request.
+    if !only_fields(
+        body,
+        &[
+            "model",
+            "messages",
+            "system",
+            "max_tokens",
+            "stream",
+            "temperature",
+            "top_p",
+            "top_k",
+            "stop_sequences",
+            "tools",
+            "tool_choice",
+            "metadata",
+            "service_tier",
+            "cache_control",
+            "thinking",
+        ],
+    ) || nonempty_string(body.get("model")).is_none()
+        || body
+            .get("max_tokens")
+            .and_then(serde_json::Value::as_u64)
+            .is_none_or(|n| n == 0)
+        || !claude_cache_control_is_bounded(body.get("cache_control"))
+        || body.get("thinking").is_some_and(|v| {
+            !v.as_object().is_some_and(|thinking| {
+                only_fields(thinking, &["type"])
+                    && thinking.get("type").and_then(serde_json::Value::as_str) == Some("disabled")
+            })
+        })
+        || body
+            .get("system")
+            .is_some_and(|v| !claude_text_content_is_self_contained(v))
+        || body.get("metadata").is_some_and(|v| {
+            !v.as_object().is_some_and(|metadata| {
+                only_fields(metadata, &["user_id"])
+                    && metadata.values().all(serde_json::Value::is_string)
+            })
+        })
+    {
+        return false;
+    }
+    if let Some(value) = body.get("tools") {
+        let Some(definitions) = value.as_array() else {
+            return false;
+        };
+        for definition in definitions {
+            let Some(tool) = definition.as_object() else {
+                return false;
+            };
+            if !only_fields(
+                tool,
+                &[
+                    "name",
+                    "description",
+                    "input_schema",
+                    "type",
+                    "cache_control",
+                    "strict",
+                ],
+            ) || nonempty_string(tool.get("name")).is_none()
+                || tool
+                    .get("type")
+                    .is_some_and(|v| v.as_str() != Some("custom"))
+                || !tool
+                    .get("input_schema")
+                    .is_some_and(serde_json::Value::is_object)
+                || tool.get("description").is_some_and(|v| !v.is_string())
+                || tool.get("strict").is_some_and(|v| !v.is_boolean())
+                || !claude_cache_control_is_bounded(tool.get("cache_control"))
+            {
+                return false;
+            }
+        }
+    }
+    if let Some(value) = body.get("tool_choice") {
+        let Some(choice) = value.as_object() else {
+            return false;
+        };
+        let kind = choice.get("type").and_then(serde_json::Value::as_str);
+        if !only_fields(choice, &["type", "name", "disable_parallel_tool_use"])
+            || !matches!(kind, Some("auto" | "any" | "none" | "tool"))
+            || choice
+                .get("disable_parallel_tool_use")
+                .is_some_and(|v| !v.is_boolean())
+            || (kind == Some("tool") && nonempty_string(choice.get("name")).is_none())
+            || (kind != Some("tool") && choice.contains_key("name"))
+        {
+            return false;
+        }
+    }
+    let Some(messages) = body.get("messages").and_then(serde_json::Value::as_array) else {
+        return false;
+    };
+    if messages.is_empty() {
+        return false;
+    }
+    for value in messages {
+        let Some(message) = value.as_object() else {
+            return false;
+        };
+        let role = message.get("role").and_then(serde_json::Value::as_str);
+        if !only_fields(message, &["role", "content"])
+            || !matches!(role, Some("user" | "assistant"))
+        {
+            return false;
+        }
+        let Some(content) = message.get("content") else {
+            return false;
+        };
+        if content.is_string() {
+            continue;
+        }
+        let Some(blocks) = content.as_array() else {
+            return false;
+        };
+        for value in blocks {
+            let Some(block) = value.as_object() else {
+                return false;
+            };
+            if !claude_cache_control_is_bounded(block.get("cache_control")) {
+                return false;
+            }
+            match block.get("type").and_then(serde_json::Value::as_str) {
+                Some("text") if claude_text_block_is_self_contained(value) => {}
+                Some("tool_use") if role == Some("assistant") => {
+                    // Historical names/IDs and arbitrary argument objects are literal
+                    // tokens, independent of the currently available tool definitions.
+                    if !only_fields(block, &["type", "id", "name", "input", "cache_control"])
+                        || nonempty_string(block.get("id")).is_none()
+                        || nonempty_string(block.get("name")).is_none()
+                        || !block.get("input").is_some_and(serde_json::Value::is_object)
+                    {
+                        return false;
+                    }
+                }
+                Some("tool_result") if role == Some("user") => {
+                    if !only_fields(
+                        block,
+                        &[
+                            "type",
+                            "tool_use_id",
+                            "content",
+                            "is_error",
+                            "cache_control",
+                        ],
+                    ) || nonempty_string(block.get("tool_use_id")).is_none()
+                        || block
+                            .get("content")
+                            .is_some_and(|v| !claude_text_content_is_self_contained(v))
+                        || block.get("is_error").is_some_and(|v| !v.is_boolean())
+                    {
+                        return false;
+                    }
+                }
+                _ => return false,
+            }
+        }
+    }
+    true
 }
 
 fn openai_request_input_is_self_contained(api_format: &str, value: &serde_json::Value) -> bool {
@@ -703,6 +942,43 @@ fn json_token_count_upper_bound(value: &serde_json::Value) -> u64 {
     serde_json::to_vec(value)
         .map(|bytes| u64::try_from(bytes.len()).unwrap_or(u64::MAX))
         .unwrap_or(u64::MAX)
+}
+
+fn request_input_token_count_policy_bound(api_format: &str, value: &serde_json::Value) -> u64 {
+    let bytes = json_token_count_upper_bound(value);
+    if api_format != "claude:messages" {
+        return bytes;
+    }
+    let mut nodes = 0_u64;
+    let mut pending = vec![value];
+    while let Some(value) = pending.pop() {
+        nodes = nodes.saturating_add(1);
+        match value {
+            serde_json::Value::Object(object) => pending.extend(object.values()),
+            serde_json::Value::Array(items) => pending.extend(items),
+            _ => {}
+        }
+    }
+    let tools = value
+        .get("tools")
+        .and_then(serde_json::Value::as_array)
+        .map_or(0, |tools| u64::try_from(tools.len()).unwrap_or(u64::MAX));
+    claude_framed_input_policy_bound(bytes, nodes, tools)
+}
+
+fn claude_framed_input_policy_bound(bytes: u64, nodes: u64, tools: u64) -> u64 {
+    // Claude tool definitions generate an additional system prompt. The published
+    // overhead table includes 804 tokens, beyond the literal names/schema/history:
+    // https://platform.claude.com/docs/en/about-claude/pricing
+    // https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview
+    // Reserve policy margins, not a claimed exact vendor count: 4096 framing,
+    // 1024 per tool and 128 per JSON node (including messages, blocks and schemas).
+    // This assumes a protocol-conforming provider, not an unobservable reseller
+    // injecting arbitrary context. Unknown/nonlocal semantics fail closed above.
+    bytes
+        .saturating_add(4096)
+        .saturating_add(tools.saturating_mul(1024))
+        .saturating_add(nodes.saturating_mul(128))
 }
 
 fn model_directive_base_model_is_allowed_for_request(
@@ -820,6 +1096,7 @@ mod tests {
     use aether_data::repository::wallet::StoredWalletSnapshot;
     use aether_data_contracts::repository::billing::{
         BillingReadRepository, StoredBillingModelContext, UserDailyQuotaAvailabilityRecord,
+        UserPlanEntitlementRecord,
     };
     use aether_data_contracts::repository::candidate_selection::{
         StoredMinimalCandidateSelectionRow, StoredProviderModelMapping,
@@ -835,7 +1112,7 @@ mod tests {
         available_balance_capacity_usd, execution_plan_balance_capacity_rejection,
         execution_plan_cost_upper_bound_cache_key, max_output_tokens_from_request,
         openai_request_input_is_self_contained, output_choice_count_upper_bound,
-        request_model_local_rejection, GatewayLocalAuthRejection,
+        request_input_is_self_contained, request_model_local_rejection, GatewayLocalAuthRejection,
     };
     use crate::control::{GatewayControlAuthContext, GatewayControlDecision};
     use crate::data::GatewayDataState;
@@ -1091,6 +1368,7 @@ mod tests {
     struct FixedBillingReadRepository {
         quota: UserDailyQuotaAvailabilityRecord,
         context: StoredBillingModelContext,
+        entitlements: Vec<UserPlanEntitlementRecord>,
         quota_calls: Arc<AtomicUsize>,
         model_context_by_model_id_calls: Arc<AtomicUsize>,
     }
@@ -1103,6 +1381,7 @@ mod tests {
             Self {
                 quota,
                 context,
+                entitlements: Vec::new(),
                 quota_calls: Arc::new(AtomicUsize::new(0)),
                 model_context_by_model_id_calls: Arc::new(AtomicUsize::new(0)),
             }
@@ -1117,6 +1396,7 @@ mod tests {
             Self {
                 quota,
                 context,
+                entitlements: Vec::new(),
                 quota_calls,
                 model_context_by_model_id_calls,
             }
@@ -1125,6 +1405,19 @@ mod tests {
 
     #[async_trait]
     impl BillingReadRepository for FixedBillingReadRepository {
+        async fn list_user_plan_entitlements(
+            &self,
+            user_id: &str,
+        ) -> Result<Option<Vec<UserPlanEntitlementRecord>>, DataLayerError> {
+            Ok(Some(
+                self.entitlements
+                    .iter()
+                    .filter(|record| record.user_id == user_id)
+                    .cloned()
+                    .collect(),
+            ))
+        }
+
         async fn find_model_context(
             &self,
             _provider_id: &str,
@@ -2170,5 +2463,464 @@ mod tests {
             "claude:messages",
             &self_contained
         ));
+    }
+
+    fn claude_text_request() -> serde_json::Value {
+        json!({
+            "model": "gpt-5", "max_tokens": 256,
+            "system": [{"type": "text", "text": "Synthetic fixture only.", "cache_control": {"type": "ephemeral", "ttl": "1h"}}],
+            "messages": [{"role": "user", "content": "hello"}]
+        })
+    }
+
+    fn claude_tool_request() -> serde_json::Value {
+        let mut body = claude_text_request();
+        body["tools"] = json!([{
+            "name": "literal_lookup", "description": "Returns literal data, not remote context.",
+            "input_schema": {"type": "object", "properties": {
+                "file_id": {"type": "string"}, "vector_store_ids": {"type": "array"},
+                "source": {"type": "object", "properties": {"type": {"const": "url"}}}
+            }}
+        }]);
+        body["tool_choice"] = json!({"type": "auto"});
+        body["messages"] = json!([
+            {"role": "user", "content": [{"type": "text", "text": "Use the literal argument."}]},
+            {"role": "assistant", "content": [{"type": "tool_use", "id": "call_1", "name": "literal_lookup",
+                "input": {"file_id": "literal", "source": {"type": "url", "url": "https://example.invalid"}}}]},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "call_1",
+                "content": [{"type": "text", "text": "literal result"}]}]},
+            {"role": "assistant", "content": [{"type": "tool_use", "id": "call_2", "name": "literal_lookup", "input": {}}]},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "call_2", "content": "done", "is_error": false}]}
+        ]);
+        body
+    }
+
+    #[test]
+    fn claude_bounded_text_and_ordinary_tool_history_are_supported() {
+        for body in [claude_text_request(), claude_tool_request()] {
+            assert!(request_input_is_self_contained("claude:messages", &body));
+            assert_eq!(max_output_tokens_from_request(&body), Some(256));
+        }
+        let mut history = claude_tool_request();
+        history["tools"] = json!([]);
+        history["thinking"] = json!({"type": "disabled"});
+        assert!(request_input_is_self_contained("claude:messages", &history));
+        history.as_object_mut().unwrap().remove("tools");
+        assert!(request_input_is_self_contained("claude:messages", &history));
+        for (pointer, value) in [
+            ("/messages/2/content/0/tool_use_id", json!("historical_id")),
+            ("/messages/3/content/0/id", json!("call_1")),
+            ("/messages/1/content/0/name", json!("historical_name")),
+        ] {
+            let mut body = claude_tool_request();
+            *body.pointer_mut(pointer).unwrap() = value;
+            assert!(request_input_is_self_contained("claude:messages", &body));
+        }
+    }
+
+    #[test]
+    fn claude_input_policy_includes_framing_tools_and_structural_margins() {
+        let plain = claude_text_request();
+        let tools = claude_tool_request();
+        let plain_bytes = super::json_token_count_upper_bound(&plain);
+        let tool_bytes = super::json_token_count_upper_bound(&tools);
+        let plain_bound = super::request_input_token_count_policy_bound("claude:messages", &plain);
+        let tool_bound = super::request_input_token_count_policy_bound("claude:messages", &tools);
+        assert!(plain_bound > plain_bytes + 4096);
+        assert!(tool_bound > tool_bytes + 4096 + 1024);
+        assert!(tool_bound - tool_bytes > plain_bound - plain_bytes);
+        assert_eq!(
+            super::request_input_token_count_policy_bound("openai:chat", &plain),
+            plain_bytes
+        );
+        for (bytes, nodes, tools) in [(u64::MAX, 0, 0), (0, u64::MAX, 0), (0, 0, u64::MAX)] {
+            let bound = super::claude_framed_input_policy_bound(bytes, nodes, tools);
+            assert_eq!(bound, u64::MAX);
+            assert!(
+                i64::try_from(bound).is_err(),
+                "overflow cannot reach paid authorization"
+            );
+        }
+    }
+
+    #[test]
+    fn claude_media_references_and_opaque_content_fail_closed() {
+        for block in [
+            json!({"type": "image", "source": {"type": "base64", "data": "AA=="}}),
+            json!({"type": "document", "source": {"type": "url", "url": "https://example.invalid"}}),
+            json!({"type": "file", "file_id": "file_1"}),
+            json!({"type": "url", "url": "https://example.invalid"}),
+            json!({"type": "thinking", "thinking": "opaque", "signature": "signed"}),
+            json!({"type": "redacted_thinking", "data": "opaque"}),
+            json!({"type": "server_tool_use", "id": "server_1", "name": "web_search", "input": {}}),
+            json!({"type": "text", "text": "hello", "source": {"file_id": "file_1"}}),
+            json!({"type": "future_block", "text": "opaque"}),
+        ] {
+            let mut body = claude_text_request();
+            body["messages"][0]["content"] = json!([block.clone()]);
+            assert!(!request_input_is_self_contained("claude:messages", &body));
+            body["system"] = json!([block]);
+            body["messages"][0]["content"] = json!("hello");
+            assert!(!request_input_is_self_contained("claude:messages", &body));
+        }
+        for field in [
+            "container",
+            "context_management",
+            "mcp_servers",
+            "previous_response_id",
+            "conversation",
+            "cached_content",
+            "thinking",
+            "unknown",
+        ] {
+            let mut body = claude_text_request();
+            body[field] = json!({"id": "external"});
+            assert!(
+                !request_input_is_self_contained("claude:messages", &body),
+                "{field}"
+            );
+        }
+    }
+
+    #[test]
+    fn claude_server_tools_and_nontext_tool_results_fail_closed() {
+        for kind in [
+            "web_search_20250305",
+            "computer_20250124",
+            "bash_20250124",
+            "code_execution_20250522",
+            "mcp",
+            "future",
+        ] {
+            let mut body = claude_tool_request();
+            body["tools"][0]["type"] = json!(kind);
+            assert!(
+                !request_input_is_self_contained("claude:messages", &body),
+                "{kind}"
+            );
+        }
+        for content in [
+            json!([{"type": "image", "source": {"type": "url", "url": "https://example.invalid"}}]),
+            json!([{"type": "document", "source": {"file_id": "file_1"}}]),
+            json!({"file_id": "file_1"}),
+        ] {
+            let mut body = claude_tool_request();
+            body["messages"][2]["content"][0]["content"] = content;
+            assert!(!request_input_is_self_contained("claude:messages", &body));
+        }
+    }
+
+    #[test]
+    fn claude_malformed_bounds_tools_and_cache_hints_fail_closed() {
+        for bound in [json!(0), json!(-1), json!(1.5), json!("256"), json!(null)] {
+            let mut body = claude_text_request();
+            body["max_tokens"] = bound;
+            assert!(!request_input_is_self_contained("claude:messages", &body));
+        }
+        for hint in [
+            json!({"type": "reference"}),
+            json!({"type": "ephemeral", "ttl": "24h"}),
+            json!({"type": "ephemeral", "id": "remote"}),
+        ] {
+            let mut body = claude_text_request();
+            body["system"][0]["cache_control"] = hint;
+            assert!(!request_input_is_self_contained("claude:messages", &body));
+        }
+        for (pointer, value) in [
+            ("/messages/2/content/0/tool_use_id", json!(null)),
+            ("/messages/3/content/0/id", json!(null)),
+            ("/messages/1/role", json!("user")),
+            ("/messages/2/role", json!("assistant")),
+            ("/messages/1/content/0/name", json!(null)),
+            ("/tools/0/input_schema", json!("opaque")),
+            ("/tool_choice", json!({"type": "tool", "name": null})),
+        ] {
+            let mut body = claude_tool_request();
+            *body.pointer_mut(pointer).expect("fixture pointer") = value;
+            assert!(
+                !request_input_is_self_contained("claude:messages", &body),
+                "{pointer}"
+            );
+        }
+    }
+
+    #[test]
+    fn gemini_output_aliases_count_conservatively_but_semantics_remain_unsupported() {
+        for config in ["generationConfig", "generation_config"] {
+            for tokens in ["maxOutputTokens", "max_output_tokens"] {
+                for candidates in ["candidateCount", "candidate_count"] {
+                    let body = json!({config: {tokens: 256, candidates: 3}});
+                    assert_eq!(max_output_tokens_from_request(&body), Some(256));
+                    assert_eq!(
+                        output_choice_count_upper_bound("gemini:generate_content", &body),
+                        3
+                    );
+                    assert!(!request_input_is_self_contained(
+                        "gemini:generate_content",
+                        &body
+                    ));
+                }
+            }
+        }
+        let body = json!({"max_tokens": 1, "generationConfig": {"maxOutputTokens": 256, "candidateCount": 2},
+            "generation_config": {"max_output_tokens": 512, "candidate_count": 3}});
+        assert_eq!(max_output_tokens_from_request(&body), Some(512));
+        assert_eq!(
+            output_choice_count_upper_bound("gemini:generate_content", &body),
+            3
+        );
+        let body = json!({"generationConfig": {"maxOutputTokens": u64::MAX, "candidateCount": 2}});
+        let bound = max_output_tokens_from_request(&body)
+            .unwrap()
+            .saturating_mul(output_choice_count_upper_bound(
+                "gemini:generate_content",
+                &body,
+            ));
+        assert!(i64::try_from(bound).is_err());
+        assert!(!request_input_is_self_contained(
+            "future:messages",
+            &claude_text_request()
+        ));
+    }
+
+    #[tokio::test]
+    async fn claude_estimator_bounds_text_tools_and_rejects_external_context() {
+        let context = billing_context_with_pricing(
+            Some(json!({"tiers": [{"up_to": null,
+            "input_price_per_1m": 1.0, "output_price_per_1m": 2.0,
+            "cache_creation_price_per_1m": 1.25, "cache_read_price_per_1m": 0.1}]})),
+            None,
+            None,
+            None,
+        );
+        let state = state_with_quota_and_wallet(quota_availability(0.1, false), context);
+        for body in [claude_text_request(), claude_tool_request()] {
+            let estimate = super::estimate_execution_plan_cost_upper_bound_usd_inner(
+                &state,
+                &execution_plan(body, "claude:messages"),
+                Some(&billing_report_context()),
+            )
+            .await
+            .expect("pricing should validate")
+            .expect("self-contained request must have a bound");
+            assert!(estimate.is_finite() && estimate > 0.0 && estimate < 0.1);
+        }
+        let mut body = claude_text_request();
+        body["messages"][0]["content"] =
+            json!([{"type": "document", "source": {"file_id": "external"}}]);
+        assert_eq!(
+            super::estimate_execution_plan_cost_upper_bound_usd_inner(
+                &state,
+                &execution_plan(body, "claude:messages"),
+                Some(&billing_report_context())
+            )
+            .await
+            .expect("pricing should validate"),
+            None
+        );
+        let mut body = claude_text_request();
+        body["max_tokens"] = json!(u64::MAX);
+        assert_eq!(
+            super::estimate_execution_plan_cost_upper_bound_usd_inner(
+                &state,
+                &execution_plan(body, "claude:messages"),
+                Some(&billing_report_context())
+            )
+            .await
+            .expect("overflow must fail closed"),
+            None
+        );
+    }
+
+    #[derive(Default)]
+    struct ObservedCostReservations {
+        inner: aether_data::repository::settlement::InMemorySettlementRepository,
+        allowed: Arc<AtomicUsize>,
+        rejected: Arc<AtomicUsize>,
+        reserved_units: Arc<std::sync::atomic::AtomicU64>,
+    }
+
+    use aether_data_contracts::repository::settlement;
+    use settlement::SettlementWriteRepository;
+
+    #[async_trait]
+    impl SettlementWriteRepository for ObservedCostReservations {
+        async fn reserve_usage_policy_request(
+            &self,
+            input: settlement::ReserveUsagePolicyRequestInput,
+        ) -> Result<settlement::ReserveUsagePolicyRequestOutcome, DataLayerError> {
+            self.inner.reserve_usage_policy_request(input).await
+        }
+
+        async fn release_usage_policy_request_admission(
+            &self,
+            input: settlement::ReleaseUsagePolicyRequestAdmissionInput,
+        ) -> Result<Option<settlement::StoredUsagePolicyRequestAdmission>, DataLayerError> {
+            self.inner
+                .release_usage_policy_request_admission(input)
+                .await
+        }
+
+        async fn reserve_usage_policy_cost(
+            &self,
+            input: settlement::ReserveUsagePolicyCostInput,
+        ) -> Result<settlement::ReserveUsagePolicyCostOutcome, DataLayerError> {
+            assert!(
+                input.reserved_cost_units > 0,
+                "paid text must reserve a nonzero bound"
+            );
+            let units = input.reserved_cost_units;
+            let outcome = self.inner.reserve_usage_policy_cost(input).await?;
+            match &outcome {
+                settlement::ReserveUsagePolicyCostOutcome::Allowed { .. } => {
+                    self.reserved_units.store(units, Ordering::SeqCst);
+                    self.allowed.fetch_add(1, Ordering::SeqCst);
+                }
+                settlement::ReserveUsagePolicyCostOutcome::Rejected { .. } => {
+                    self.rejected.fetch_add(1, Ordering::SeqCst);
+                }
+                _ => {}
+            }
+            Ok(outcome)
+        }
+
+        async fn reconcile_usage_policy_cost(
+            &self,
+            input: settlement::ReconcileUsagePolicyCostInput,
+        ) -> Result<Option<settlement::StoredUsagePolicyCostReservation>, DataLayerError> {
+            self.inner.reconcile_usage_policy_cost(input).await
+        }
+
+        async fn settle_usage(
+            &self,
+            input: settlement::UsageSettlementInput,
+        ) -> Result<Option<settlement::StoredUsageSettlement>, DataLayerError> {
+            self.inner.settle_usage(input).await
+        }
+    }
+
+    #[tokio::test]
+    async fn claude_messages_executor_reserves_finite_plan_budget_before_upstream() {
+        // Real admission, estimator, candidate loop and repository; only transport
+        // is replaced. This cannot spend money or imply a real provider passed.
+        for (limit, expected_status) in [(0.1, 200), (0.00000001, 429), (0.0, 429)] {
+            let now = u64::try_from(chrono::Utc::now().timestamp()).expect("current epoch");
+            let context = billing_context_with_pricing(
+                Some(json!({"tiers": [{"up_to": null,
+                "input_price_per_1m": 1.0, "output_price_per_1m": 2.0}]})),
+                None,
+                None,
+                None,
+            );
+            let mut fixture_usage = aether_billing::BillingUsageInput::new("chat");
+            fixture_usage.api_format = Some("claude:messages".to_string());
+            fixture_usage.input_tokens = 1000;
+            fixture_usage.output_tokens = 32;
+            let fixture_cost = aether_billing::BillingService::new()
+                .calculate(
+                    &aether_billing::BillingModelPricingSnapshot::from(&context),
+                    &fixture_usage,
+                )
+                .expect("fixture pricing")
+                .actual_total_cost;
+            let fixture_cost_units = aether_data_contracts::repository::billing::nonnegative_usd_to_usage_policy_cost_units(fixture_cost)
+                .expect("finite fixture cost");
+            let mut billing =
+                FixedBillingReadRepository::new(quota_availability(1.0, true), context);
+            billing.entitlements.push(UserPlanEntitlementRecord {
+                id: "claude-entitlement".to_string(), user_id: "user-1".to_string(),
+                plan_id: "claude-plan".to_string(), payment_order_id: "claude-order".to_string(),
+                status: "active".to_string(), starts_at_unix_secs: now - 60, expires_at_unix_secs: now + 3600,
+                entitlements_snapshot: json!([{"type": "usage_policy", "rules": [{
+                    "metric": "actual_cost_usd", "window": {"kind": "rolling", "seconds": 3600}, "limit": limit
+                }]}]), created_at_unix_secs: now - 60, updated_at_unix_secs: now - 60,
+            });
+            let reservations = Arc::new(ObservedCostReservations::default());
+            let upstream_calls = Arc::new(AtomicUsize::new(0));
+            let calls = upstream_calls.clone();
+            let observed = reservations.allowed.clone();
+            let reserved_units = reservations.reserved_units.clone();
+            let data = GatewayDataState::with_billing_reader_for_tests(Arc::new(billing))
+                .with_settlement_writer_for_tests(reservations.clone());
+            let state = AppState::new().expect("state should build")
+                .with_data_state_for_tests(data)
+                .with_auth_wallets_for_tests(vec![sample_wallet("user-1", 1.0)])
+                .with_usage_runtime_for_tests(crate::usage::UsageRuntimeConfig { enabled: true, ..Default::default() })
+                .with_execution_runtime_sync_override_for_tests(move |plan| {
+                    assert!(observed.load(Ordering::SeqCst) > 0, "reservation must precede transport");
+                    assert!(reserved_units.load(Ordering::SeqCst) >= fixture_cost_units, "reservation must cover the fixture's priced usage");
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(aether_contracts::ExecutionResult {
+                        request_id: plan.request_id.clone(), candidate_id: plan.candidate_id.clone(),
+                        status_code: 200, headers: Default::default(), response_observation: None,
+                        body: Some(aether_contracts::ResponseBody { json_body: Some(json!({
+                            "id": "msg_fixture", "type": "message", "role": "assistant", "model": "gpt-5",
+                            "content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn",
+                            "usage": {"input_tokens": 1000, "output_tokens": 32}
+                        })), body_bytes_b64: None }), telemetry: None, error: None,
+                    })
+                });
+            let mut decision = GatewayControlDecision::synthetic(
+                "/v1/messages",
+                Some("ai_public".to_string()),
+                Some("claude".to_string()),
+                Some("messages".to_string()),
+                Some("claude:messages".to_string()),
+            )
+            .with_execution_runtime_candidate(true);
+            decision.auth_context =
+                decision_with_allowed_models(vec!["gpt-5".to_string()]).auth_context;
+            let admission = crate::plan_usage_policy::check_and_acquire_http_plan_usage_policy(
+                &state,
+                Some(&decision),
+                "request-1",
+                now * 1000,
+                Some("gpt-5"),
+            )
+            .await
+            .expect("HTTP admission must preserve the finite cost policy");
+            let mut request = http::Request::builder()
+                .uri("/v1/messages")
+                .body(())
+                .expect("request");
+            request.extensions_mut().insert(
+                admission
+                    .reservation_context
+                    .expect("finite cost reservation context"),
+            );
+            let (parts, _) = request.into_parts();
+            let mut plan = execution_plan(claude_tool_request(), "claude:messages");
+            plan.url = "https://example.invalid/v1/messages".to_string();
+            let outcome = crate::executor::execute_sync_plan_and_reports(
+                &state,
+                &parts,
+                "claude-budget-fixture",
+                &decision,
+                "claude_chat_sync",
+                vec![crate::ai_serving::AiSyncAttempt {
+                    plan,
+                    report_kind: None,
+                    report_context: Some(billing_report_context()),
+                }],
+            )
+            .await
+            .expect("bounded Claude execution should reach an admission outcome");
+            let crate::executor::LocalExecutionRequestOutcome::Responded(response) = outcome else {
+                panic!("expected HTTP outcome")
+            };
+            assert_eq!(response.status().as_u16(), expected_status, "limit {limit}");
+            assert_eq!(
+                upstream_calls.load(Ordering::SeqCst),
+                usize::from(expected_status == 200)
+            );
+            assert_eq!(
+                reservations.allowed.load(Ordering::SeqCst),
+                usize::from(expected_status == 200)
+            );
+            assert_eq!(
+                reservations.rejected.load(Ordering::SeqCst),
+                usize::from(expected_status == 429)
+            );
+        }
     }
 }

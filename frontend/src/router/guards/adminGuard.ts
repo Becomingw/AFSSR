@@ -2,6 +2,7 @@ import type { RouteLocationNormalized } from 'vue-router'
 import type { useAuthStore } from '@/stores/auth'
 import type { useModuleStore } from '@/stores/modules'
 import { log } from '@/utils/logger'
+import { canAccessAdminPage } from '@/config/adminRoles'
 
 /**
  * 检查管理员权限和管理端模块可用性。
@@ -16,6 +17,8 @@ export async function checkAdminAccess(
     log.warn('Non-admin user attempted to access admin page, redirecting to user dashboard')
     return '/dashboard'
   }
+
+  if (!canAccessAdminPage(authStore.user?.role, to.path)) return '/admin/dashboard'
 
   // 检查路由链中是否有模块要求
   const moduleName = to.matched.find(record => record.meta.module)?.meta.module as

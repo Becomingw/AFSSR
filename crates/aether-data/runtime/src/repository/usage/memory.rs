@@ -2360,6 +2360,62 @@ impl UsageReadRepository for InMemoryUsageReadRepository {
         Ok(grouped.into_values().collect())
     }
 
+    async fn summarize_usage_activity(
+        &self,
+        q: &aether_data_contracts::repository::usage::UsageActivityQuery,
+    ) -> Result<Vec<aether_data_contracts::repository::usage::UsageActivityRow>, DataLayerError>
+    {
+        use aether_data_contracts::repository::usage::UsageActivityRow;
+        q.validate()?;
+        let mut grouped = BTreeMap::<
+            (String, i64, i64),
+            (UsageActivityRow, std::collections::BTreeSet<u64>),
+        >::new();
+        for item in self
+            .by_request_id
+            .read()
+            .expect("usage repository lock")
+            .values()
+        {
+            let Some(user) = &item.user_id else { continue };
+            // The legacy *_unix_ms field stores epoch seconds, as used by existing queries.
+            let t = item.created_at_unix_ms;
+            if t < q.from
+                || t >= q.until
+                || item.status != "completed"
+                || item.status_code.is_some_and(|c| !(200..300).contains(&c))
+                || matches!(item.provider_name.as_str(), "pending" | "unknown")
+            {
+                continue;
+            }
+            let local = t as i64 + i64::from(q.tz_offset_minutes) * 60;
+            let day = local.div_euclid(86400);
+            let hour = local.div_euclid(3600).rem_euclid(24);
+            let (row, buckets) = grouped.entry((user.clone(), day, hour)).or_insert_with(|| {
+                (
+                    UsageActivityRow {
+                        user_id: user.clone(),
+                        day,
+                        hour,
+                        first_at: t,
+                        ..Default::default()
+                    },
+                    Default::default(),
+                )
+            });
+            row.requests += 1;
+            row.first_at = row.first_at.min(t);
+            buckets.insert(t / 300);
+            row.active_minutes = buckets.len() as u64 * 5;
+        }
+        if grouped.len() > 100000 {
+            return Err(DataLayerError::InvalidInput(
+                "Activity result too large; select a shorter range".into(),
+            ));
+        }
+        Ok(grouped.into_values().map(|(row, _)| row).collect())
+    }
+
     async fn list_recent_usage_audits(
         &self,
         user_id: Option<&str>,

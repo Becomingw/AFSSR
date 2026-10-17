@@ -40,6 +40,16 @@ pub(super) fn classify_admin_model_provider_family_route(
             "admin:models",
             false,
         ))
+    } else if method == http::Method::POST
+        && normalized_path == "/api/admin/models/external/refresh"
+    {
+        Some(classified(
+            "admin_proxy",
+            "model_external_manage",
+            "refresh_external_catalog",
+            "admin:models",
+            false,
+        ))
     } else if method == http::Method::DELETE
         && normalized_path == "/api/admin/models/external/cache"
     {

@@ -1,5 +1,8 @@
 <template>
-  <div :class="mobile ? 'rounded-xl border border-border/60 bg-muted/40 p-3.5' : 'space-y-1.5'">
+  <div v-if="INTERNAL_GATEWAY" class="text-sm">
+    <RouterLink to="/admin/access-policies" class="text-primary">用户权益</RouterLink>
+  </div>
+  <div v-else :class="mobile ? 'rounded-xl border border-border/60 bg-muted/40 p-3.5' : 'space-y-1.5'">
     <div :class="mobile ? 'flex items-start justify-between gap-3' : ''">
       <div class="space-y-1">
         <p :class="mobile ? 'text-[11px] text-muted-foreground' : 'flex items-center gap-1 text-[11px] text-muted-foreground'">
@@ -44,6 +47,8 @@
 
 <script setup lang="ts">
 import Badge from '@/components/ui/badge.vue'
+import { INTERNAL_GATEWAY } from '@/config/internalGateway'
+import { RouterLink } from 'vue-router'
 import { useI18n } from '@/i18n'
 import type { UserManagementRow } from './user-management-types'
 

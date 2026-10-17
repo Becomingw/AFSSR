@@ -135,6 +135,11 @@ pub fn build_router_with_state(state: AppState) -> Router {
     router = api::mount_oauth_routes(router);
     router = api::mount_internal_routes(router);
     router = api::mount_admin_routes(router);
+    router = api::mount_mcp_routes(router, state.clone());
+    router = api::mount_feedback_routes(router);
+    router = api::diagnostics::mount_diagnostic_routes(router);
+    router = api::mount_leaderboard_routes(router);
+    router = api::mount_account_routes(router);
     let mut router = router
         .route("/{*path}", any(proxy_request))
         .layer(axum::middleware::from_fn(middleware::access_log_middleware))
@@ -182,7 +187,7 @@ async fn frontend_static_middleware(
 fn frontend_path_bypasses_static(path: &str) -> bool {
     matches!(
         path,
-        "/health" | "/test-connection" | crate::constants::READYZ_PATH
+        "/health" | "/test-connection" | "/mcp" | "/mcp/" | crate::constants::READYZ_PATH
     ) || path.starts_with("/api/")
         || path.starts_with("/v1/")
         || path.starts_with("/v1beta/")

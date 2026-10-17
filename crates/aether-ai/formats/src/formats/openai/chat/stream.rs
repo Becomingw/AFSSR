@@ -2,9 +2,32 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{json, Map, Value};
 
+fn preserve_go_native_reasoning(context: &Value) -> bool {
+    crate::formats::claude::responses_tools::is_go_functionized_responses_provider(context)
+        && crate::is_openai_responses_family_format(
+            context["client_api_format"].as_str().unwrap_or_default(),
+        )
+}
+
+fn native_reasoning_event(kind: &str) -> bool {
+    matches!(
+        kind,
+        "response.reasoning_summary_part.added"
+            | "response.reasoning_summary_part.done"
+            | "response.reasoning_text.delta"
+            | "response.reasoning_text.done"
+            | "response.reasoning_summary_text.delta"
+            | "response.reasoning_summary_text.done"
+            | "response.web_search_call.in_progress"
+            | "response.web_search_call.searching"
+            | "response.web_search_call.completed"
+    )
+}
+
 use crate::formats::claude::responses_tools::{
-    decode_custom_arguments, encode_thinking_carrier, encode_web_context, is_claude_provider,
-    restore_tool_search_call, web_sources, ClaudeResponsesTools,
+    decode_code_mode_arguments, decode_schema_arguments, encode_thinking_carrier,
+    encode_web_context, is_claude_provider, restore_tool_search_call, web_sources,
+    ClaudeResponsesTools,
 };
 use crate::formats::openai::namespace::NamespaceToolAliases;
 use crate::formats::openai::responses::{
@@ -1206,6 +1229,14 @@ impl OpenAIResponsesProviderState {
         output_index: Option<usize>,
         final_item: bool,
     ) -> bool {
+        if preserve_go_native_reasoning(report_context)
+            && matches!(
+                item.get("type").and_then(Value::as_str),
+                Some("reasoning" | "web_search_call")
+            )
+        {
+            return false;
+        }
         match item.get("type").and_then(Value::as_str).unwrap_or_default() {
             "function_call" => {
                 self.emit_tool_call_item(report_context, out, item, output_index);
@@ -1326,6 +1357,29 @@ impl OpenAIResponsesProviderState {
             let Some(item) = raw_item.as_object() else {
                 continue;
             };
+            if preserve_go_native_reasoning(report_context)
+                && matches!(
+                    item.get("type").and_then(Value::as_str),
+                    Some("reasoning" | "web_search_call")
+                )
+            {
+                if !self
+                    .opaque_completed_item_keys
+                    .contains(&Self::output_item_key(item))
+                {
+                    let event = json!({"type":"response.output_item.done", "response_id":self.response_id,
+                        "output_index":output_index, "item":item});
+                    self.emit_output_item_event(
+                        report_context,
+                        out,
+                        &event,
+                        item,
+                        Some(output_index),
+                        true,
+                    );
+                }
+                continue;
+            }
             if !self.emit_output_item(report_context, out, item, Some(output_index), true)
                 && !self
                     .opaque_completed_item_keys
@@ -1361,6 +1415,22 @@ impl OpenAIResponsesProviderState {
         value: &Value,
     ) -> Result<Vec<CanonicalStreamFrame>, AiSurfaceFinalizeError> {
         let mut out = Vec::new();
+        if preserve_go_native_reasoning(report_context)
+            && native_reasoning_event(value["type"].as_str().unwrap_or_default())
+        {
+            self.ensure_started(report_context, &mut out);
+            let (id, model) = self.identity(report_context);
+            out.push(CanonicalStreamFrame {
+                id,
+                model,
+                event: CanonicalStreamEvent::OpenAiResponsesOutputItem {
+                    output_index: None,
+                    item: Value::Null,
+                    raw_event: value.clone(),
+                },
+            });
+            return Ok(out);
+        }
         if let Some(response) = value.get("response").and_then(Value::as_object) {
             self.response_id = response
                 .get("id")
@@ -1945,7 +2015,11 @@ struct OpenAIResponsesClientToolState {
     web_sources: Vec<Value>,
     custom: bool,
     tool_search: bool,
+    schema_wrapped: bool,
+    unwrapped_arguments: Option<String>,
     custom_input: Option<String>,
+    code_mode_helper: Option<crate::provider_compat::codex_code_mode::CodeModeHelper>,
+    raw_code_mode_input: bool,
 }
 
 #[derive(Clone, Default)]
@@ -2007,6 +2081,7 @@ pub struct OpenAIResponsesClientEmitter {
     namespace_tool_aliases: NamespaceToolAliases,
     claude_responses_tools: ClaudeResponsesTools,
     claude_provider: bool,
+    go_provider: bool,
     claude_thinking_blocks: Vec<Value>,
     claude_reasoning_signature: String,
 }
@@ -2309,8 +2384,11 @@ impl OpenAIChatClientEmitter {
 impl OpenAIResponsesClientEmitter {
     fn preserve_claude_thinking_part(&mut self) {
         if self.claude_provider
-            && crate::formats::shared::model_directives::claude_model_is_haiku_5_5(self.model())
             && !self.claude_reasoning_signature.is_empty()
+            && (self.go_provider
+                || crate::formats::shared::model_directives::claude_model_is_haiku_5_5(
+                    self.model(),
+                ))
         {
             self.claude_thinking_blocks
                 .push(json!({"type":"thinking", "thinking":self.reasoning_part,
@@ -2323,6 +2401,7 @@ impl OpenAIResponsesClientEmitter {
             namespace_tool_aliases: NamespaceToolAliases::from_report_context(report_context),
             claude_responses_tools: ClaudeResponsesTools::from_report_context(report_context),
             claude_provider: is_claude_provider(report_context),
+            go_provider: report_context["provider_type"] == "opencode_go",
             ..Self::default()
         }
     }
@@ -2788,8 +2867,16 @@ impl OpenAIResponsesClientEmitter {
                 continue;
             }
             if state.tool_search {
+                let arguments = if state.schema_wrapped {
+                    decode_schema_arguments(&state.arguments)
+                        .map_err(AiSurfaceFinalizeError::new)?
+                } else {
+                    state.arguments.clone()
+                };
+                self.tool_calls.get_mut(&index).unwrap().unwrapped_arguments =
+                    Some(arguments.clone());
                 let mut item = json!({"type":"function_call", "id":item_id, "call_id":call_id,
-                    "arguments":state.arguments, "status":"completed"});
+                    "arguments":arguments, "status":"completed"});
                 restore_tool_search_call(&mut item).map_err(AiSurfaceFinalizeError::new)?;
                 out.extend(self.encode_response_event(
                     "response.output_item.done",
@@ -2800,8 +2887,27 @@ impl OpenAIResponsesClientEmitter {
                 )?);
                 continue;
             }
+            let arguments = if state.schema_wrapped {
+                let arguments = decode_schema_arguments(&state.arguments)
+                    .map_err(AiSurfaceFinalizeError::new)?;
+                self.tool_calls.get_mut(&index).unwrap().unwrapped_arguments =
+                    Some(arguments.clone());
+                out.extend(self.encode_response_event(
+                    "response.function_call_arguments.delta",
+                    json!({"type":"response.function_call_arguments.delta", "response_id":self.response_id(),
+                        "output_index":output_index, "item_id":item_id, "call_id":call_id, "delta":arguments}),
+                )?);
+                arguments
+            } else {
+                state.arguments.clone()
+            };
             let custom_input = if state.custom {
-                let input = decode_custom_arguments(&state.arguments)
+                let input = state
+                    .code_mode_helper
+                    .map_or_else(
+                        || decode_code_mode_arguments(&state.arguments, state.raw_code_mode_input),
+                        |helper| helper.encode(&state.arguments),
+                    )
                     .map_err(AiSurfaceFinalizeError::new)?;
                 self.tool_calls.get_mut(&index).unwrap().custom_input = Some(input.clone());
                 // The provider streams a JSON string wrapper; emit the decoded
@@ -2825,14 +2931,14 @@ impl OpenAIResponsesClientEmitter {
                 "item_id": item_id, "call_id": call_id, "name": name,
             });
             done[if state.custom { "input" } else { "arguments" }] =
-                json!(custom_input.as_deref().unwrap_or(&state.arguments));
+                json!(custom_input.as_deref().unwrap_or(&arguments));
             out.extend(self.encode_response_event(event_type, done)?);
             let mut completed_item = json!({
                 "type": "function_call",
                 "id": item_id.clone(),
                 "call_id": call_id,
                 "name": name,
-                "arguments": state.arguments.as_str(),
+                "arguments": arguments,
                 "status": "completed",
             });
             if state.custom {
@@ -3035,7 +3141,7 @@ impl OpenAIResponsesClientEmitter {
                     } else {
                         state.name.clone()
                     },
-                    "arguments": state.arguments.clone(),
+                    "arguments": state.unwrapped_arguments.as_ref().unwrap_or(&state.arguments),
                     "status": "completed",
                 });
                 if state.custom {
@@ -3269,9 +3375,10 @@ impl OpenAIResponsesClientEmitter {
             }
             CanonicalStreamEvent::ReasoningSignature(signature) => {
                 if self.claude_provider
-                    && crate::formats::shared::model_directives::claude_model_is_haiku_5_5(
-                        self.model(),
-                    )
+                    && (self.go_provider
+                        || crate::formats::shared::model_directives::claude_model_is_haiku_5_5(
+                            self.model(),
+                        ))
                 {
                     self.claude_reasoning_signature.push_str(&signature);
                     return self.ensure_reasoning_item_started();
@@ -3301,8 +3408,16 @@ impl OpenAIResponsesClientEmitter {
             CanonicalStreamEvent::OpenAiResponsesOutputItem {
                 output_index,
                 item,
-                raw_event,
+                mut raw_event,
             } => {
+                if self.go_provider
+                    && native_reasoning_event(raw_event["type"].as_str().unwrap_or_default())
+                {
+                    let mut out = self.ensure_started()?;
+                    raw_event["sequence_number"] = json!(self.next_sequence_number());
+                    out.extend(encode_json_sse(raw_event["type"].as_str(), &raw_event)?);
+                    return Ok(out);
+                }
                 let event_type = raw_event
                     .get("type")
                     .and_then(Value::as_str)
@@ -3339,6 +3454,9 @@ impl OpenAIResponsesClientEmitter {
                     self.opaque_output_items
                         .insert(materialized_output_index, item);
                 }
+                if self.go_provider && !self.claude_provider {
+                    raw_event["sequence_number"] = json!(self.next_sequence_number());
+                }
                 out.extend(encode_json_sse(Some(event_type.as_str()), &raw_event)?);
                 Ok(out)
             }
@@ -3366,6 +3484,10 @@ impl OpenAIResponsesClientEmitter {
                 let state = self.tool_calls.entry(index).or_default();
                 state.custom = custom;
                 state.tool_search = tool_search;
+                state.schema_wrapped = claude_tool.is_some_and(|tool| tool.schema_wrapped);
+                state.code_mode_helper = claude_tool.and_then(|tool| tool.code_mode_helper);
+                state.raw_code_mode_input =
+                    claude_tool.is_some_and(|tool| tool.raw_code_mode_input);
                 state.call_id = call_id.clone();
                 state.name = emitted_name;
                 state.namespace = emitted_namespace;
@@ -3489,7 +3611,7 @@ impl OpenAIResponsesClientEmitter {
                 let response_id = self.response_id().to_string();
                 let state = self.tool_calls.entry(index).or_default();
                 state.arguments.push_str(&arguments);
-                if state.web_search || state.custom || state.tool_search {
+                if state.web_search || state.custom || state.tool_search || state.schema_wrapped {
                     return Ok(out);
                 }
                 let call_id = if state.call_id.is_empty() {

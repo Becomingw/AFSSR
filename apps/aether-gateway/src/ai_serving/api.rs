@@ -1,5 +1,22 @@
 use crate::ai_serving::{is_json_request, GatewayControlDecision};
 
+pub(crate) mod compatibility_formats {
+    pub(crate) use aether_ai_formats::{
+        api::StreamingStandardFormatMatrix,
+        formats::{
+            context::{FormatContext, FormatError},
+            registry::{
+                build_stream_transcoder, convert_request, convert_response, emit_request,
+                emit_response, parse_request, parse_response,
+            },
+        },
+        protocol::canonical::{
+            CanonicalContentBlock, CanonicalMessage, CanonicalRequest, CanonicalResponse,
+            CanonicalRole, CanonicalStopReason, CanonicalToolDefinition,
+        },
+    };
+}
+
 pub(crate) use crate::ai_serving::{
     build_gemini_stream_plan_from_decision, build_gemini_sync_plan_from_decision,
     build_local_gemini_files_stream_attempt_source_for_kind,

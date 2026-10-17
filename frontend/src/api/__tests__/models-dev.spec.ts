@@ -4,10 +4,11 @@ const apiMocks = vi.hoisted(() => ({
   get: vi.fn(),
   put: vi.fn(),
   delete: vi.fn(),
+  post: vi.fn(),
 }))
 
 vi.mock('@/api/client', () => ({
-  default: { get: apiMocks.get, put: apiMocks.put, delete: apiMocks.delete },
+  default: apiMocks,
 }))
 
 import {
@@ -24,6 +25,7 @@ beforeEach(() => {
   apiMocks.get.mockReset()
   apiMocks.put.mockReset()
   apiMocks.delete.mockReset()
+  apiMocks.post.mockReset()
   apiMocks.delete.mockResolvedValue({ data: { cleared: true } })
 })
 
@@ -40,7 +42,7 @@ describe('external models access config', () => {
   it.each([
     ['a proxy node', 'proxy-1'],
     ['direct access', null],
-  ] as const)('updates %s and clears the browser cache', async (_label, proxyNodeId) => {
+  ] as const)('updates %s without invalidating the snapshot', async (_label, proxyNodeId) => {
     localStorage.setItem('models_dev_cache', JSON.stringify({ timestamp: Date.now(), data: {} }))
     apiMocks.put.mockResolvedValue({
       data: { proxy_node_id: proxyNodeId, cache_cleared: true },
@@ -54,7 +56,7 @@ describe('external models access config', () => {
       '/api/admin/models/external/config',
       { proxy_node_id: proxyNodeId },
     )
-    expect(localStorage.getItem('models_dev_cache')).toBeNull()
+    expect(localStorage.getItem('models_dev_cache')).not.toBeNull()
   })
 })
 
@@ -137,7 +139,7 @@ describe('getModelsDevList', () => {
     expect(audioPriced?.tieredPricing).toBeUndefined()
   })
 
-  it('clears the gateway cache before rebuilding the online model list', async () => {
+  it('explicitly refreshes and synchronizes without a delete-before-fetch gap', async () => {
     apiMocks.get.mockResolvedValue({
       data: {
         openai: {
@@ -154,11 +156,36 @@ describe('getModelsDevList', () => {
       },
     })
 
+    apiMocks.post.mockImplementation(async () => ({ data: { catalog: (await apiMocks.get()).data,
+      sync: { updated: 1, unchanged: 0, unmatched: 0, failed: [] } } }))
     await getModelsDevList(false)
     await refreshModelsDevList(false)
 
-    expect(apiMocks.delete).toHaveBeenCalledOnce()
-    expect(apiMocks.delete).toHaveBeenCalledWith('/api/admin/models/external/cache')
+    expect(apiMocks.delete).not.toHaveBeenCalled()
+    expect(apiMocks.post).toHaveBeenCalledWith('/api/admin/models/external/refresh', {}, { timeout: 120_000 })
     expect(apiMocks.get).toHaveBeenCalledTimes(2)
+  })
+
+  it('deduplicates concurrent loads and retains snapshots beyond the old TTL', async () => {
+    const catalog = { openai: { name: 'OpenAI', official: true, models: {} } }
+    let finish!: (value: { data: typeof catalog }) => void
+    apiMocks.get.mockReturnValue(new Promise(resolve => { finish = resolve }))
+    const first = getModelsDevList(false), second = getModelsDevList(false)
+    expect(apiMocks.get).toHaveBeenCalledTimes(1)
+    finish({ data: catalog })
+    await first; await second
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 86400_000)
+    await getModelsDevList(false)
+    expect(apiMocks.get).toHaveBeenCalledTimes(1)
+    vi.restoreAllMocks()
+  })
+
+  it('preserves the last good snapshot when explicit refresh fails', async () => {
+    apiMocks.get.mockResolvedValue({ data: { openai: { name: 'OpenAI', official: true, models: { model: { id: 'model', name: 'Model' } } } } })
+    const before = await getModelsDevList(false)
+    apiMocks.post.mockRejectedValue(new Error('offline'))
+    await expect(refreshModelsDevList(false)).rejects.toThrow('offline')
+    expect(await getModelsDevList(false)).toEqual(before)
+    expect(apiMocks.get).toHaveBeenCalledTimes(1)
   })
 })

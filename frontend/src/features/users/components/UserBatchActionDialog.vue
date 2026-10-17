@@ -24,18 +24,18 @@
         />
         <UserBatchActionCards
           v-model="selectedAction"
-          :actions="USER_BATCH_ACTION_OPTIONS"
+          :actions="canAssignRoles ? USER_BATCH_ACTION_OPTIONS : USER_BATCH_ACTION_OPTIONS.filter(action => action.value !== 'update_role')"
         />
       </div>
 
       <UserBatchRolePanel
-        v-if="selectedAction === 'update_role'"
+        v-if="selectedAction === 'update_role' && canAssignRoles"
         v-model="targetRole"
         :warning-text="targetRoleWarning"
       />
 
       <UserBatchQuotaPanel
-        v-if="selectedAction === 'update_access_control'"
+        v-if="selectedAction === 'update_access_control' && !INTERNAL_GATEWAY"
         v-model="quotaMode"
       />
 
@@ -66,6 +66,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { INTERNAL_GATEWAY } from '@/config/internalGateway'
 import {
   Dialog,
   Button,
@@ -95,14 +96,15 @@ import type {
   UserGroup,
 } from '@/api/users'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   open: boolean
   selectedIds: string[]
   selectAllFiltered: boolean
   selectedCount: number
   filters: UserBatchSelectionFilters
   groups: UserGroup[]
-}>()
+  canAssignRoles?: boolean
+}>(), { canAssignRoles: true })
 
 const emit = defineEmits<{
   close: []
@@ -140,6 +142,8 @@ const targetRoleWarning = computed(() => {
   if (targetRole.value === 'audit_admin') {
     return legacyT('提示：设置为审计管理员会授予后台只读查看能力。')
   }
+  if (targetRole.value === 'user_admin') return '授予用户及权益管理权限，不授予服务管理权限。'
+  if (targetRole.value === 'service_admin') return '授予服务接入管理权限，不授予用户及权益管理权限。'
   return legacyT('提示：设置为普通用户会移除目标用户的管理员权限。')
 })
 const executeButtonLabel = computed(() => legacyT(`确认${selectedActionLabel.value}（${impactCount.value}）`))

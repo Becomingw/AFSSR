@@ -105,7 +105,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, watch } from 'vue'
+import { computed, ref, onMounted, onUnmounted, watch } from 'vue'
 import { Activity, Loader2 } from 'lucide-vue-next'
 import Card from '@/components/ui/card.vue'
 import Badge from '@/components/ui/badge.vue'
@@ -150,8 +150,12 @@ const loadingMonitors = ref(false)
 const monitors = ref<EndpointMonitor[]>([])
 const lookbackHours = ref('6')
 const visibleMonitors = computed(() => monitors.value.filter(monitor => monitor.total_attempts > 0))
+let monitorRequest: AbortController | null = null
 
 async function loadMonitors() {
+  monitorRequest?.abort()
+  const request = new AbortController()
+  monitorRequest = request
   loadingMonitors.value = true
   try {
     const params = {
@@ -160,17 +164,20 @@ async function loadMonitors() {
     }
 
     if (props.isAdmin) {
-      const data = await getEndpointStatusMonitor(params)
+      const data = await getEndpointStatusMonitor(params, request.signal)
+      if (request.signal.aborted) return
       monitors.value = data.formats || []
     } else {
-      const data = await getPublicEndpointStatusMonitor(params)
+      const data = await getPublicEndpointStatusMonitor(params, request.signal)
+      if (request.signal.aborted) return
       monitors.value = data.formats || []
     }
     emitSummary()
   } catch (err: unknown) {
+    if (request.signal.aborted) return
     showError(parseApiError(err, '加载健康监控数据失败'), '错误')
   } finally {
-    loadingMonitors.value = false
+    if (monitorRequest === request) loadingMonitors.value = false
   }
 }
 
@@ -239,11 +246,12 @@ function hasApiPath(monitor: EndpointMonitor): monitor is PublicEndpointStatusMo
   return 'api_path' in monitor && typeof monitor.api_path === 'string' && monitor.api_path.length > 0
 }
 
-watch(lookbackHours, () => {
+watch([lookbackHours, () => props.isAdmin], () => {
   loadMonitors()
 })
 
 onMounted(() => {
   refreshData()
 })
+onUnmounted(() => monitorRequest?.abort())
 </script>

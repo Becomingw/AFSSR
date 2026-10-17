@@ -27,6 +27,19 @@ grammar-constrained decoding.
 
 ## Verification
 
+Local internal-gateway development (2026-10-15) adds user/group model allocations,
+rolling/calendar request caps, shared monthly cost budgets and commercial UI/API
+retirement. It is not deployed on HK or Korean staging. Read the
+[internal gateway runbook](operations/internal-gateway.md) before enabling it;
+unallocated users fail closed. This development status is distinct from the
+historical production/source snapshots below.
+
+Local development now includes a dedicated `opencode_go` API-key provider with
+native model protocol routing, current/legacy Go headers and reversible Claude
+root-combinator tool schemas. See [the Go runbook](operations/opencode-go.md).
+These changes are not part of the production `haiku-compat6-20261013` tag and
+have not yet passed live acceptance on the separate Korean staging server.
+
 The deployed snapshot passed 906 format-library tests and 23 Haiku mapping
 tests. Eight public API scenarios made 18 successful inference requests,
 including real web search -> client tool -> result -> final answer.
@@ -71,3 +84,26 @@ take a protected backup, and never run these SQL examples blindly.
 
 Production endpoint snapshots, database data, real environment files,
 credentials, user histories, binaries and container archives are not included.
+
+## Agent MCP
+
+The embedded administrative MCP endpoint is `/mcp`; the console entry is
+`/admin/mcp`. It uses user-bound management API keys with live role/scope checks,
+default read-only issuance and preview/confirmation for writes. Public deployment
+requires an explicit Host allowlist. See [Agent MCP operations](operations/agent-mcp.md)
+for coverage, authentication, proxy configuration, limits and verification.
+
+## User Feedback
+
+User feedback is an issue-style workflow with private ownership, shared administrator
+replies, resolve/close/reopen actions and an append-only history. MCP exposes the
+same administrative workflow, with feedback-only key scopes, incremental polling,
+version checks and idempotent commands. See [Feedback operations](operations/feedback.md).
+
+## Usage Leaderboard
+
+Model popularity, user volume rankings, estimated activity, hourly leaders and
+daily early birds are available in the administration console and as a masked
+user view. The MCP exposes the administrator summary through `admin:stats:read`.
+See [Leaderboard operations](operations/leaderboard.md) for metric definitions,
+privacy boundaries and retention limitations.

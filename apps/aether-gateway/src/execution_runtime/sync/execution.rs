@@ -3404,7 +3404,15 @@ fn maybe_build_implicit_sync_finalize_outcome(
         .unwrap_or(false);
     let has_captured_stream_body = body_json.is_none() && body_base64.is_some();
     let has_cross_format_sync_body = needs_conversion && body_json.is_some();
-    if status_code >= 400 || (!has_captured_stream_body && !has_cross_format_sync_body) {
+    let has_same_format_tool_restore = body_json.is_some()
+        && report_context
+            .as_ref()
+            .is_some_and(crate::ai_serving::native_responses_tools_need_restore);
+    if status_code >= 400
+        || (!has_captured_stream_body
+            && !has_cross_format_sync_body
+            && !has_same_format_tool_restore)
+    {
         return Ok(None);
     }
 
@@ -3423,8 +3431,24 @@ fn maybe_build_implicit_sync_finalize_outcome(
         body_base64: body_base64.clone(),
         telemetry: telemetry.clone(),
     };
-    let Some(outcome) = maybe_build_sync_finalize_outcome(trace_id, decision, &payload)? else {
-        return Ok(None);
+    let requires_go_client_format = report_context.as_ref().is_some_and(|context| {
+        context["provider_type"] == "opencode_go"
+            && context["client_api_format"] == "openai:responses"
+            && (needs_conversion || has_same_format_tool_restore)
+    });
+    let outcome = match maybe_build_sync_finalize_outcome(trace_id, decision, &payload) {
+        Ok(Some(outcome)) => outcome,
+        Ok(None) | Err(_) if requires_go_client_format => {
+            // A failed conversion must not return raw Chat/Messages JSON with
+            // HTTP 200 to a Responses client. Never reflect provider arguments.
+            return Err(GatewayError::Client {
+                status: StatusCode::BAD_GATEWAY,
+                message: "Upstream response cannot be represented in the client Responses format"
+                    .to_string(),
+            });
+        }
+        Ok(None) => return Ok(None),
+        Err(error) => return Err(error),
     };
 
     Ok(Some(ImplicitSyncFinalizeOutcome { payload, outcome }))
@@ -3721,6 +3745,82 @@ mod tests {
         .expect("same-format sync JSON guard should not error");
 
         assert!(outcome.is_none());
+    }
+
+    #[tokio::test]
+    async fn implicit_sync_finalize_restores_go_tools_even_without_format_conversion() {
+        let report = Some(
+            json!({"provider_type":"opencode_go", "provider_api_format":"openai:responses",
+            "client_api_format":"openai:responses", "mapped_model":"grok-4.6", "needs_conversion":false,
+            "original_request_body":{"model":"grok-4.6","tools":[{"type":"custom","name":"probe","description":"synthetic","format":{"type":"text"}}]}}),
+        );
+        let body = Some(
+            json!({"id":"resp_go_sync", "object":"response","status":"completed", "output":[
+            {"type":"function_call","id":"fc_go_sync","call_id":"call_go_sync","name":"probe","arguments":"{\"input\":\"alpha\"}"}]}),
+        );
+        let decision = GatewayControlDecision::synthetic(
+            "/v1/responses",
+            Some("ai_public".to_string()),
+            Some("openai".to_string()),
+            Some("responses".to_string()),
+            Some("openai:responses".to_string()),
+        );
+        let outcome = maybe_build_implicit_sync_finalize_outcome(
+            "trace-go-sync",
+            &decision,
+            "openai_responses_sync",
+            &report,
+            StatusCode::OK.as_u16(),
+            &BTreeMap::new(),
+            &body,
+            &None,
+            &None,
+        )
+        .unwrap()
+        .unwrap();
+        let bytes = to_bytes(outcome.outcome.response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let response: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(response["output"][0]["type"], "custom_tool_call");
+        assert_eq!(response["output"][0]["input"], "alpha");
+        assert!(response["output"][0].get("arguments").is_none());
+    }
+
+    #[test]
+    fn implicit_sync_finalize_rejects_invalid_go_wrapper_instead_of_passing_raw_json() {
+        let report = Some(
+            json!({"provider_type":"opencode_go", "provider_api_format":"openai:chat",
+            "client_api_format":"openai:responses", "mapped_model":"mimo-v2.5", "needs_conversion":true,
+            "original_request_body":{"tools":[{"type":"custom","name":"probe","format":{"type":"text"}}]}}),
+        );
+        let body = Some(
+            json!({"id":"chatcmpl_invalid_go","choices":[{"index":0,"message":{"role":"assistant","tool_calls":[
+            {"id":"call_invalid_go","type":"function","function":{"name":"probe","arguments":"{\"unexpected\":\"synthetic-secret\"}"}}]},"finish_reason":"tool_calls"}]}),
+        );
+        let decision = GatewayControlDecision::synthetic(
+            "/v1/responses",
+            None,
+            None,
+            None,
+            Some("openai:responses".to_string()),
+        );
+        let result = maybe_build_implicit_sync_finalize_outcome(
+            "trace-invalid-go",
+            &decision,
+            "openai_responses_sync",
+            &report,
+            StatusCode::OK.as_u16(),
+            &BTreeMap::new(),
+            &body,
+            &None,
+            &None,
+        );
+        let Err(GatewayError::Client { status, message }) = result else {
+            panic!("expected failed conversion, not passthrough");
+        };
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert!(!message.contains("synthetic-secret"));
     }
 
     #[tokio::test]

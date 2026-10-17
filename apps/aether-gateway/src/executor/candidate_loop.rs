@@ -3026,6 +3026,7 @@ mod tests {
             Some(&decision),
             request_id,
             now_unix_secs.saturating_mul(1_000),
+            None,
         )
         .await
         .expect("HTTP plan admission should succeed");
@@ -3087,6 +3088,7 @@ mod tests {
 
         let probe = settlement
             .reserve_usage_policy_cost(ReserveUsagePolicyCostInput {
+                model: None,
                 request_id: request_id.to_string(),
                 subject_id: subject_id.to_string(),
                 reservation_token,
@@ -3095,6 +3097,8 @@ mod tests {
                 reservation_expires_at_unix_secs: admitted_at_unix_secs.saturating_add(86_400),
                 retain_until_unix_secs: admitted_at_unix_secs.saturating_add(32 * 86_400),
                 windows: vec![UsagePolicyCostWindow {
+                    models: None,
+                    model: None,
                     window_id: "release-state-probe".to_string(),
                     starts_at_unix_secs: admitted_at_unix_secs.saturating_sub(1),
                     ends_at_unix_secs: admitted_at_unix_secs.saturating_add(1),

@@ -22,7 +22,6 @@ use crate::state::AppState;
 #[derive(Clone, Copy)]
 struct OperationalPermission {
     required_permissions: &'static [&'static str],
-    write: bool,
     requires_full_admin_role: bool,
 }
 
@@ -112,8 +111,10 @@ async fn authorize_operational_request(
             {
                 return operational_permission_denied_response(permission.required_permissions[0]);
             }
-            if permission.write && !crate::roles::can_write_admin_console(&principal.user_role) {
-                return operational_permission_denied_response(permission.required_permissions[0]);
+            if let Some(required) = permission.required_permissions.iter().find(|required| {
+                !crate::roles::role_has_management_permission(&principal.user_role, required)
+            }) {
+                return operational_permission_denied_response(required);
             }
         }
         Ok(None) => {
@@ -142,9 +143,10 @@ async fn authorize_operational_request(
             {
                 return operational_permission_denied_response(permission.required_permissions[0]);
             }
-            if permission.write && !crate::roles::can_write_admin_console(&authenticated.user.role)
-            {
-                return operational_permission_denied_response(permission.required_permissions[0]);
+            if let Some(required) = permission.required_permissions.iter().find(|required| {
+                !crate::roles::role_has_management_permission(&authenticated.user.role, required)
+            }) {
+                return operational_permission_denied_response(required);
             }
             let missing_permission =
                 permission
@@ -195,7 +197,6 @@ fn operational_permission(method: &http::Method, path: &str) -> Option<Operation
     if path == "/_gateway/metrics" {
         return Some(OperationalPermission {
             required_permissions: &["admin:monitoring:read"],
-            write: false,
             requires_full_admin_role: false,
         });
     }
@@ -207,14 +208,12 @@ fn operational_permission(method: &http::Method, path: &str) -> Option<Operation
             } else {
                 &["admin:video_tasks:read"]
             },
-            write,
             requires_full_admin_role: false,
         });
     }
     if path.starts_with("/_gateway/audit/auth/users/") {
         return Some(OperationalPermission {
             required_permissions: &["admin:api_keys:read"],
-            write: false,
             requires_full_admin_role: false,
         });
     }
@@ -225,7 +224,6 @@ fn operational_permission(method: &http::Method, path: &str) -> Option<Operation
                 "admin:usage:read",
                 "admin:api_keys:read",
             ],
-            write: false,
             requires_full_admin_role: true,
         });
     }
@@ -234,14 +232,12 @@ fn operational_permission(method: &http::Method, path: &str) -> Option<Operation
     {
         return Some(OperationalPermission {
             required_permissions: &["admin:monitoring:admin"],
-            write: false,
             requires_full_admin_role: true,
         });
     }
     if path.starts_with("/_gateway/audit/") {
         return Some(OperationalPermission {
             required_permissions: &["admin:usage:read"],
-            write: false,
             requires_full_admin_role: false,
         });
     }

@@ -141,6 +141,13 @@ pub(crate) fn is_deferred_upstream_response(response: &Response<Body>) -> bool {
 }
 
 impl LocalExecutionRuntimeMissContext {
+    pub(crate) fn upstream_client_failure(&self) -> Option<(http::StatusCode, &'static str)> {
+        let candidate = select_last_runtime_miss_executed_candidate(&self.candidate_contexts)?;
+        if candidate.candidate.status != RequestCandidateStatus::Failed {
+            return None;
+        }
+        client_safe_upstream_failure(candidate.candidate.status_code?)
+    }
     pub(crate) fn persisted_candidate_count(&self) -> usize {
         self.candidate_contexts.len()
     }
@@ -214,6 +221,12 @@ impl LocalExecutionRuntimeMissContext {
         }
 
         Some("上游请求体转换失败（原因代码: provider_request_body_build_failed）".to_string())
+    }
+}
+
+impl LocalExecutionExhaustion {
+    pub(crate) fn upstream_client_failure(&self) -> Option<(http::StatusCode, &'static str)> {
+        client_safe_upstream_failure(self.upstream_status_code?)
     }
 }
 
@@ -345,7 +358,10 @@ pub(crate) async fn record_failed_usage_for_exhausted_request(
         upstream_error_type,
     } = exhaustion;
 
-    let status_code = http::StatusCode::SERVICE_UNAVAILABLE.as_u16();
+    let status_code = upstream_status_code
+        .and_then(client_safe_upstream_failure)
+        .map(|(status, _)| status.as_u16())
+        .unwrap_or(http::StatusCode::SERVICE_UNAVAILABLE.as_u16());
     let candidate_status_code = upstream_status_code.unwrap_or(status_code);
     data.status_code = Some(status_code);
     data.error_message = Some(local_execution_runtime_miss_detail.to_string());
@@ -452,7 +468,10 @@ pub(crate) async fn record_failed_usage_for_runtime_miss_request(
         .and_then(|value| value.selected_provider_model_name.clone())
         .filter(|value| !value.eq_ignore_ascii_case(model.as_str()));
 
-    let status_code = http::StatusCode::SERVICE_UNAVAILABLE.as_u16();
+    let status_code = context
+        .upstream_client_failure()
+        .map(|(status, _)| status.as_u16())
+        .unwrap_or(http::StatusCode::SERVICE_UNAVAILABLE.as_u16());
     let client_message =
         beautify_local_execution_client_error_message(local_execution_runtime_miss_detail);
     let client_body = runtime_miss_client_error_body(api_format.as_deref(), &client_message);
@@ -721,6 +740,26 @@ fn error_category_for_failed_status(status_code: u16) -> Option<String> {
         Some("client_error".to_string())
     } else {
         None
+    }
+}
+
+fn client_safe_upstream_failure(status: u16) -> Option<(http::StatusCode, &'static str)> {
+    // Do not turn a provider credential error (401/403) into a downstream
+    // authentication failure, or expose untrusted upstream bodies/headers.
+    match status {
+        400 => Some((
+            http::StatusCode::BAD_REQUEST,
+            "上游拒绝了请求格式或模型参数（HTTP 400），请检查此模型的参数转换。",
+        )),
+        422 => Some((
+            http::StatusCode::UNPROCESSABLE_ENTITY,
+            "上游无法处理此模型或工具请求（HTTP 422），请检查上游能力与协议映射。",
+        )),
+        429 => Some((
+            http::StatusCode::TOO_MANY_REQUESTS,
+            "上游渠道达到限流或额度限制（HTTP 429），请稍后重试。",
+        )),
+        _ => None,
     }
 }
 
@@ -1190,6 +1229,32 @@ fn trimmed_non_empty(value: Option<&str>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn upstream_client_failures_preserve_safe_status_without_leaking_auth_errors() {
+        for status in [400, 422, 429] {
+            let (mapped, message) = super::client_safe_upstream_failure(status).unwrap();
+            assert_eq!(mapped.as_u16(), status);
+            assert!(message.contains(&status.to_string()));
+            let exhaustion = super::LocalExecutionExhaustion {
+                request_id: "synthetic".to_string(),
+                data: Default::default(),
+                candidate_id: None,
+                candidate_index: None,
+                upstream_status_code: Some(status),
+                upstream_error_type: None,
+            };
+            assert_eq!(
+                exhaustion.upstream_client_failure().unwrap().0.as_u16(),
+                status
+            );
+        }
+        for status in [200, 401, 403, 404, 500, 502, 503] {
+            assert!(super::client_safe_upstream_failure(status).is_none());
+        }
+        assert!(super::LocalExecutionRuntimeMissContext::default()
+            .upstream_client_failure()
+            .is_none());
+    }
     use super::{
         apply_runtime_miss_usage_routing, beautify_local_execution_client_error_message,
         insert_runtime_miss_candidate_usage_metadata,

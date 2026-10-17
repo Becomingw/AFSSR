@@ -138,6 +138,13 @@ pub async fn build_standard_models_fetch_execution_plan_for_client_version(
         headers.remove("anthropic-version");
         headers.insert("accept".to_string(), "application/json".to_string());
     }
+    let is_go = aether_provider_transport::opencode_go::is_opencode_go_provider(transport);
+    if is_go {
+        headers.insert(
+            "user-agent".to_string(),
+            aether_provider_transport::opencode_go::USER_AGENT.to_string(),
+        );
+    }
     let mut protected_headers = Vec::<String>::new();
     if is_codex_openai_models_fetch {
         protected_headers.push("user-agent".to_string());
@@ -145,7 +152,7 @@ pub async fn build_standard_models_fetch_execution_plan_for_client_version(
     }
 
     if api_format.starts_with("openai:") || api_format.starts_with("claude:") {
-        let resolved_auth = if is_deepseek_anthropic_models_fetch {
+        let resolved_auth = if is_deepseek_anthropic_models_fetch || is_go {
             resolve_oauth_header_auth(runtime, transport)
                 .await?
                 .or_else(|| resolve_local_openai_bearer_auth(transport))
@@ -788,6 +795,33 @@ mod tests {
     struct TestRuntime {
         oauth_auth: Option<aether_provider_transport::LocalResolvedOAuthRequestAuth>,
         proxy: Option<ProxySnapshot>,
+    }
+
+    #[tokio::test]
+    async fn go_catalog_fetch_uses_bearer_even_for_legacy_messages_endpoint() {
+        let runtime = TestRuntime {
+            oauth_auth: None,
+            proxy: None,
+        };
+        for base in [
+            "https://opencode.ai/inference/go/v1",
+            "https://opencode.ai/zen/go/v1",
+        ] {
+            let mut transport = sample_transport("opencode_go", "claude:messages", "api_key");
+            transport.endpoint.base_url = base.into();
+            transport.key.decrypted_api_key = "synthetic-go-key".into();
+            let plan = build_models_fetch_execution_plan(&runtime, &transport)
+                .await
+                .unwrap();
+            assert!(plan.url.starts_with(&format!("{base}/models")));
+            assert_eq!(plan.method, "GET");
+            assert_eq!(plan.headers["authorization"], "Bearer synthetic-go-key");
+            assert_eq!(
+                plan.headers["user-agent"],
+                aether_provider_transport::opencode_go::USER_AGENT
+            );
+            assert!(!plan.headers.contains_key("x-api-key"));
+        }
     }
 
     #[async_trait]

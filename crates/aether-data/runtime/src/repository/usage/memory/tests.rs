@@ -64,6 +64,43 @@ fn sample_usage(request_id: &str, created_at_unix_ms: i64) -> StoredRequestUsage
     .expect("usage should build")
 }
 
+#[tokio::test]
+async fn leaderboard_activity_deduplicates_buckets_and_excludes_failures() {
+    use aether_data_contracts::repository::usage::UsageActivityQuery;
+    let start = 172800u64;
+    let mut items: Vec<_> = [1, 2, 300, 3599, 3600, 86400]
+        .iter()
+        .enumerate()
+        .map(|(i, t)| sample_usage(&format!("activity-{i}"), (start + t) as i64))
+        .collect();
+    let mut failure = sample_usage("failed", (start + 700) as i64);
+    failure.status = "failed".into();
+    items.push(failure);
+    let mut unknown = sample_usage("unknown", (start + 1000) as i64);
+    unknown.provider_name = "unknown".into();
+    items.push(unknown);
+    let repo = InMemoryUsageReadRepository::seed(items);
+    let q = UsageActivityQuery {
+        from: start,
+        until: start + 86400,
+        tz_offset_minutes: 480,
+    };
+    let rows = repo.summarize_usage_activity(&q).await.unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].hour, 8);
+    assert_eq!(rows[0].requests, 4);
+    assert_eq!(rows[0].active_minutes, 15);
+    assert_eq!(rows[0].first_at, start + 1);
+    assert_eq!(rows[1].active_minutes, 5);
+    assert!(repo
+        .summarize_usage_activity(&UsageActivityQuery {
+            until: start + 32 * 86400,
+            ..q
+        })
+        .await
+        .is_err());
+}
+
 fn sample_upsert_usage_record(request_id: &str) -> UpsertUsageRecord {
     UpsertUsageRecord {
         request_id: request_id.to_string(),
@@ -155,7 +192,7 @@ async fn upsert_preserves_full_http_captures_across_lifecycle_updates() {
     );
     assert_eq!(
         stored_pending.request_headers,
-        Some(json!({"content-type": "application/json", "authorization": "Bearer private"}))
+        Some(json!({"content-type": "application/json", "authorization": "[redacted]"}))
     );
 
     let mut streaming = sample_upsert_usage_record(&pending.request_id);
@@ -190,7 +227,7 @@ async fn upsert_preserves_full_http_captures_across_lifecycle_updates() {
     );
     assert_eq!(
         stored_terminal.response_headers,
-        Some(json!({"content-type": "text/event-stream", "set-cookie": "private"}))
+        Some(json!({"content-type": "text/event-stream", "set-cookie": "[redacted]"}))
     );
 
     let found = repository
@@ -200,6 +237,8 @@ async fn upsert_preserves_full_http_captures_across_lifecycle_updates() {
         .unwrap();
     assert_eq!(found.request_body, pending.request_body);
     assert_eq!(found.response_body, terminal.response_body);
+    assert_eq!(found.request_headers, stored_pending.request_headers);
+    assert_eq!(found.response_headers, stored_terminal.response_headers);
     assert_eq!(
         repository.upsert(pending).await.unwrap().response_body,
         terminal.response_body

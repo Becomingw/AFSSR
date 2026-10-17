@@ -320,7 +320,7 @@ pub(crate) fn build_local_plan_usage_limited_response(
     control_decision: Option<&GatewayControlDecision>,
     rejection: &PlanUsagePolicyRejection,
 ) -> Result<Response<Body>, GatewayError> {
-    let message = "套餐使用限制已达到上限，请稍后重试";
+    let message = "使用额度已达到上限，请稍后重试";
     let fallback_payload = json!({
         "error": {
             "type": "plan_usage_limit_exceeded",

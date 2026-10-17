@@ -1,25 +1,24 @@
 <template>
-  <div :class="mobile ? 'flex flex-wrap items-center gap-2' : 'flex items-center gap-2'">
-    <div :class="mobile ? 'relative min-w-40 flex-1' : 'relative'">
+  <div class="grid min-w-0 w-full grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
+    <div class="relative col-span-2 min-w-0 sm:w-64 sm:flex-none">
       <Search class="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground z-10 pointer-events-none" />
       <Input
         :id="mobile ? 'users-search-mobile' : 'users-search'"
         :model-value="searchQuery"
         type="text"
+        :aria-label="legacyT('搜索用户名或邮箱')"
         :placeholder="searchPlaceholder"
-        :class="mobile ? 'w-full pl-8 pr-3 h-8 text-sm bg-background/50 border-border/60' : 'w-48 pl-8 pr-3 h-8 text-sm bg-background/50 border-border/60 focus:border-primary/40 transition-colors'"
+        class="h-9 w-full pl-8 pr-3 text-sm"
         @update:model-value="$emit('update:searchQuery', $event)"
       />
     </div>
 
-    <div class="hidden sm:block h-4 w-px bg-border" />
-
-    <div class="xl:hidden">
+    <div class="min-w-0 sm:w-44">
       <Select
         :model-value="filterRole"
         @update:model-value="updateRole"
       >
-        <SelectTrigger :class="mobile ? 'w-24 h-8 text-xs border-border/60' : 'w-32 h-8 text-xs border-border/60'">
+        <SelectTrigger class="h-9 w-full text-xs" :aria-label="legacyT('角色')">
           <SelectValue :placeholder="legacyT(mobile ? '角色' : '全部角色')" />
         </SelectTrigger>
         <SelectContent>
@@ -34,12 +33,12 @@
       </Select>
     </div>
 
-    <div class="xl:hidden">
+    <div class="min-w-0 sm:w-28">
       <Select
         :model-value="filterStatus"
         @update:model-value="updateStatus"
       >
-        <SelectTrigger :class="mobile ? 'w-20 h-8 text-xs border-border/60' : 'w-28 h-8 text-xs border-border/60'">
+        <SelectTrigger class="h-9 w-full text-xs" :aria-label="legacyT('状态')">
           <SelectValue :placeholder="legacyT(mobile ? '状态' : '全部状态')" />
         </SelectTrigger>
         <SelectContent>
@@ -58,7 +57,7 @@
       :model-value="filterGroup"
       @update:model-value="$emit('update:filterGroup', $event)"
     >
-      <SelectTrigger :class="mobile ? 'w-24 h-8 text-xs border-border/60' : 'w-32 h-8 text-xs border-border/60'">
+      <SelectTrigger class="h-9 w-full text-xs sm:w-36" :aria-label="legacyT('分组')">
         <SelectValue :placeholder="legacyT(mobile ? '分组' : '全部分组')" />
       </SelectTrigger>
       <SelectContent>
@@ -75,12 +74,12 @@
       </SelectContent>
     </Select>
 
-    <div class="xl:hidden">
+    <div class="min-w-0 sm:w-40">
       <Select
         :model-value="sortOption"
         @update:model-value="updateSort"
       >
-        <SelectTrigger :class="mobile ? 'w-32 h-8 text-xs border-border/60' : 'w-40 h-8 text-xs border-border/60'">
+        <SelectTrigger class="h-9 w-full text-xs" :aria-label="legacyT('排序')">
           <SelectValue :placeholder="legacyT('排序')" />
         </SelectTrigger>
         <SelectContent>

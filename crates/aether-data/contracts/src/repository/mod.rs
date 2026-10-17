@@ -1,3 +1,4 @@
+pub mod account_usage;
 pub mod announcements;
 pub mod audit;
 pub mod auth;
@@ -6,6 +7,7 @@ pub mod background_tasks;
 pub mod billing;
 pub mod candidate_selection;
 pub mod candidates;
+pub mod feedback;
 pub mod gemini_file_mappings;
 pub mod global_models;
 pub mod management_tokens;

@@ -214,15 +214,31 @@ pub(crate) fn build_cross_format_openai_responses_request_body_with_codex_model_
     model_capabilities: Option<&crate::ai_serving::CodexResponsesModelCapabilities>,
     enable_model_directives: bool,
 ) -> Option<Value> {
-    let provider_request_body = surface_build_cross_format_openai_responses_request_body(
-        body_json,
-        mapped_model,
-        client_api_format,
-        provider_api_format,
-        upstream_is_stream,
-        enable_model_directives,
-        history_scope,
-    )?;
+    let provider_request_body = if provider_type.eq_ignore_ascii_case("opencode_go") {
+        let mut context = crate::ai_serving::FormatContext::default()
+            .with_mapped_model(mapped_model)
+            .with_upstream_stream(upstream_is_stream)
+            .with_report_context(serde_json::json!({"provider_type":provider_type,
+                "provider_api_format":provider_api_format}));
+        context.history_scope = history_scope.map(str::to_string);
+        crate::ai_serving::convert_request(
+            client_api_format,
+            provider_api_format,
+            body_json,
+            &context,
+        )
+        .ok()?
+    } else {
+        surface_build_cross_format_openai_responses_request_body(
+            body_json,
+            mapped_model,
+            client_api_format,
+            provider_api_format,
+            upstream_is_stream,
+            enable_model_directives,
+            history_scope,
+        )?
+    };
     let mut provider_request_body =
         apply_standard_provider_request_body_rules_with_request_headers(
             provider_request_body,

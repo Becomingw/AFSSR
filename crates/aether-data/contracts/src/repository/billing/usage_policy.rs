@@ -97,7 +97,9 @@ pub enum UsagePolicyValidationError {
     TooManyPolicies { max_policies: usize },
     #[error("usage_policy entries must contain at most {max_rules} rules in total")]
     TooManyTotalRules { max_rules: usize },
-    #[error("usage_policy.rules[{index}].limit must be finite and positive")]
+    #[error(
+        "usage_policy.rules[{index}].limit must be finite and positive, or zero for a cost budget"
+    )]
     InvalidLimit { index: usize },
     #[error("usage_policy.rules[{index}].limit must be a positive exact integer")]
     InvalidIntegerLimit { index: usize },
@@ -173,7 +175,10 @@ impl UsagePolicyEntitlement {
 
 impl UsagePolicyRule {
     fn validate(&self, index: usize) -> Result<(), UsagePolicyValidationError> {
-        if !self.limit.is_finite() || self.limit <= 0.0 {
+        if !self.limit.is_finite()
+            || self.limit < 0.0
+            || (self.limit == 0.0 && self.metric != UsagePolicyMetric::ActualCostUsd)
+        {
             return Err(UsagePolicyValidationError::InvalidLimit { index });
         }
         match self.metric {
@@ -251,7 +256,11 @@ impl UsagePolicyRule {
         if self.metric != UsagePolicyMetric::ActualCostUsd {
             return None;
         }
-        usd_to_usage_policy_cost_units(self.limit)
+        if self.limit == 0.0 {
+            Some(0)
+        } else {
+            usd_to_usage_policy_cost_units(self.limit)
+        }
     }
 }
 
@@ -532,6 +541,24 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn zero_cost_budgets_are_distinct_from_missing_or_invalid_limits() {
+        let value = json!([{"type":"usage_policy","rules":[{
+            "metric":"actual_cost_usd","window":{"kind":"rolling","seconds":18000},"limit":0
+        }]}]);
+        let policies = parse_usage_policy_entitlements(&value).unwrap();
+        assert_eq!(policies[0].rules[0].cost_limit_units(), Some(0));
+        assert_eq!(usd_to_usage_policy_cost_units(0.0), None);
+        for invalid in [-1.0, 0.000000001] {
+            let mut value = value.clone();
+            value[0]["rules"][0]["limit"] = json!(invalid);
+            assert!(parse_usage_policy_entitlements(&value).is_err());
+        }
+        let mut concurrency = value;
+        concurrency[0]["rules"][0]["metric"] = json!("concurrency");
+        assert!(parse_usage_policy_entitlements(&concurrency).is_err());
     }
 
     #[test]

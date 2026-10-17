@@ -573,6 +573,19 @@ pub(super) fn classify_admin_observability_family_route(
     } else if method == http::Method::GET
         && matches!(
             normalized_path,
+            "/api/admin/stats/leaderboard/overview" | "/api/admin/stats/leaderboard/overview/"
+        )
+    {
+        Some(classified(
+            "admin_proxy",
+            "stats_manage",
+            "leaderboard_overview",
+            "admin:stats",
+            false,
+        ))
+    } else if method == http::Method::GET
+        && matches!(
+            normalized_path,
             "/api/admin/stats/leaderboard/api-keys" | "/api/admin/stats/leaderboard/api-keys/"
         )
     {
@@ -685,6 +698,16 @@ pub(super) fn classify_admin_observability_family_route(
             "admin_proxy",
             "monitoring",
             "monitoring_cache",
+            "admin:monitoring",
+            false,
+        ))
+    } else if method == http::Method::GET
+        && normalized_path.starts_with("/api/admin/monitoring/diagnostics/")
+    {
+        Some(classified(
+            "admin_proxy",
+            "monitoring",
+            "request_diagnostics",
             "admin:monitoring",
             false,
         ))

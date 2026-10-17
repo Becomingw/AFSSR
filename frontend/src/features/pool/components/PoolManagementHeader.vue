@@ -1,11 +1,11 @@
 <template>
-  <div class="px-4 sm:px-6 py-3 sm:py-3.5 border-b border-border/60">
+  <div class="pb-4 border-b border-border">
     <div class="flex flex-col gap-3 xl:hidden">
       <div class="min-w-0">
         <div class="flex min-w-0 items-center gap-2">
-          <h3 class="text-base font-semibold">
+          <h1 class="console-page-title">
             {{ legacyT('号池管理') }}
-          </h3>
+          </h1>
           <span
             v-if="selectedCount > 0"
             class="shrink-0 text-xs font-medium tabular-nums text-primary"
@@ -23,13 +23,13 @@
         </p>
       </div>
 
-      <div class="grid grid-cols-3 items-center gap-2">
+      <div class="grid grid-cols-2 items-center gap-2">
         <Select
           v-model="providerModel"
           :disabled="providerSelectDisabled"
         >
           <SelectTrigger
-            class="h-9 text-xs border-border/60"
+            class="col-span-2 h-9 text-xs border-border/60"
             :disabled="providerSelectDisabled"
           >
             <SelectValue :placeholder="legacyT('选择 Provider')" />
@@ -162,9 +162,9 @@
       </div>
     </div>
 
-    <div class="hidden xl:flex items-center justify-between gap-4">
+    <div class="hidden xl:flex min-w-0 flex-wrap items-center justify-between gap-4">
       <div class="flex items-center gap-2">
-        <h3 class="text-base font-semibold">
+        <h1 class="console-page-title">
           {{ legacyT('号池管理') }}
           <span
             v-if="metaText"
@@ -172,11 +172,11 @@
           >
             | {{ metaText }}
           </span>
-        </h3>
+        </h1>
       </div>
 
       <div
-        class="flex items-center gap-2"
+        class="flex min-w-0 flex-wrap items-center gap-2"
         data-testid="pool-header-actions"
       >
         <Select

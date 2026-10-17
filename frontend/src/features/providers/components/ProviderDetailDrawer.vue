@@ -66,7 +66,7 @@
                     </h3>
                     <div class="flex flex-wrap items-center justify-end gap-2">
                       <Button
-                        v-if="endpoints.length > 0 && provider.provider_type === 'custom'"
+                        v-if="endpoints.length > 0 && ['custom', 'opencode_go'].includes(provider.provider_type || '')"
                         variant="outline"
                         size="sm"
                         class="h-9"
@@ -833,7 +833,7 @@
   />
 
   <ProviderKeyBatchImportDialog
-    v-if="open && keyBatchImportDialogOpen && provider?.provider_type === 'custom'"
+    v-if="open && keyBatchImportDialogOpen && provider && ['custom', 'opencode_go'].includes(provider.provider_type || '')"
     :open="keyBatchImportDialogOpen"
     :provider-id="provider.id"
     :provider-name="provider.name"

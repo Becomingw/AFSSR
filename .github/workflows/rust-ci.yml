@@ -549,6 +549,14 @@ jobs:
           AETHER_TEST_POSTGRES_URL: postgres://aether:aether@127.0.0.1:5432/aether_test
         run: cargo test -p aether-data --all-features postgres_provider_upstream_metadata_migration_preserves_json_when_url_is_set --lib -- --nocapture
 
+      - name: Verify internal model quota isolation and concurrent admission
+        # This test owns its own disposable local database.
+        env:
+          RUSTC_WRAPPER: sccache
+          SCCACHE_GHA_ENABLED: "true"
+          AETHER_REQUIRE_LOCAL_POSTGRES_TESTS: "1"
+        run: cargo test --locked -p aether-data --lib postgres_internal_model_quotas_are_atomic_and_isolated -- --nocapture
+
       - name: Run Postgres API key lifecycle tests
         env:
           RUSTC_WRAPPER: sccache

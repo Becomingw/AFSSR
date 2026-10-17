@@ -1160,6 +1160,12 @@ order = 21
 primary_key = ["reservation_token"]
 
 [[table.usage_cost_reservations.columns]]
+name = "model"
+type = "text"
+length = 128
+nullable = true
+
+[[table.usage_cost_reservations.columns]]
 name = "request_id"
 type = "text"
 length = 128
@@ -1222,6 +1228,10 @@ name = "usage_cost_reservations_subject_admitted_at_idx"
 columns = ["subject_id", "admitted_at"]
 
 [[table.usage_cost_reservations.indexes]]
+name = "usage_cost_reservations_subject_model_admitted_at_idx"
+columns = ["subject_id", "model", "admitted_at"]
+
+[[table.usage_cost_reservations.indexes]]
 name = "usage_cost_reservations_reservation_expires_at_idx"
 columns = ["reservation_expires_at"]
 
@@ -1240,6 +1250,12 @@ on_delete = "cascade"
 domain = "usage"
 order = 22
 primary_key = ["event_token"]
+
+[[table.usage_request_admissions.columns]]
+name = "model"
+type = "text"
+length = 128
+nullable = true
 
 [[table.usage_request_admissions.columns]]
 name = "request_id"
@@ -1281,6 +1297,10 @@ type = "timestamp"
 [[table.usage_request_admissions.indexes]]
 name = "usage_request_admissions_subject_admitted_at_idx"
 columns = ["subject_id", "admitted_at"]
+
+[[table.usage_request_admissions.indexes]]
+name = "usage_request_admissions_subject_model_time_idx"
+columns = ["subject_id", "model", "admitted_at"]
 
 [[table.usage_request_admissions.indexes]]
 name = "usage_request_admissions_retain_until_token_idx"

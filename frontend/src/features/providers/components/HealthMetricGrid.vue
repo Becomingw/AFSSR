@@ -1,15 +1,15 @@
 <template>
-  <div class="grid w-full grid-cols-2 gap-2 sm:grid-cols-4">
+  <div class="health-metric-grid grid min-w-0 w-full gap-2">
     <div
       v-for="metric in metrics"
       :key="metric.label"
-      class="rounded-lg border border-border/40 bg-muted/20 px-3 py-2"
+      class="min-w-0 rounded-lg border border-border/40 bg-muted/20 px-3 py-2"
     >
       <div class="text-[11px] leading-tight text-muted-foreground">
         {{ metric.label }}
       </div>
       <div
-        class="mt-1 text-sm font-semibold tabular-nums"
+        class="mt-1 break-words text-sm font-semibold tabular-nums [overflow-wrap:anywhere]"
         :class="metric.valueClass"
       >
         {{ metric.value }}
@@ -63,3 +63,9 @@ const metrics = computed(() => [
   }
 ])
 </script>
+
+<style scoped>
+.health-metric-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 7rem), 1fr));
+}
+</style>

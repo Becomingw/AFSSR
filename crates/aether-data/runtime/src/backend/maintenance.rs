@@ -198,6 +198,24 @@ impl DataBackends {
         }
     }
 
+    pub async fn compare_and_swap_system_config_json(
+        &self,
+        key: &str,
+        expected: Option<&serde_json::Value>,
+        replacement: &serde_json::Value,
+    ) -> Result<bool, DataLayerError> {
+        match self.sql_backend() {
+            Some(backend) => {
+                backend
+                    .compare_and_swap_system_config_json(key, expected, replacement)
+                    .await
+            }
+            None => Err(DataLayerError::sql(
+                "Persistent system config storage unavailable",
+            )),
+        }
+    }
+
     pub async fn compare_and_set_system_config_string_value(
         &self,
         key: &str,
@@ -448,6 +466,24 @@ impl<'a> SqlBackendRef<'a> {
         match self {
             #[cfg(feature = "postgres")]
             Self::Postgres(postgres) => postgres.find_system_config_value(key).await,
+            #[cfg(not(feature = "postgres"))]
+            Self::Disabled(_) => unreachable!("a SQL backend cannot exist without a driver"),
+        }
+    }
+
+    async fn compare_and_swap_system_config_json(
+        self,
+        key: &str,
+        expected: Option<&serde_json::Value>,
+        replacement: &serde_json::Value,
+    ) -> Result<bool, DataLayerError> {
+        match self {
+            #[cfg(feature = "postgres")]
+            Self::Postgres(postgres) => {
+                postgres
+                    .compare_and_swap_system_config_json(key, expected, replacement)
+                    .await
+            }
             #[cfg(not(feature = "postgres"))]
             Self::Disabled(_) => unreachable!("a SQL backend cannot exist without a driver"),
         }

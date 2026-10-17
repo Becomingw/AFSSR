@@ -2,6 +2,9 @@ import type { RouteLocationNormalizedLoaded } from 'vue-router'
 import type { LucideIcon } from 'lucide-vue-next'
 import {
   Activity,
+  Trophy,
+  MessagesSquare,
+  Bot,
   BarChart3,
   Box,
   Cog,
@@ -15,7 +18,6 @@ import {
   Key,
   KeyRound,
   Layers,
-  Package,
   Puzzle,
   Send,
   Server,
@@ -23,7 +25,7 @@ import {
   SlidersHorizontal,
   SquareTerminal,
   Users,
-  Wallet,
+  UserRound,
   Zap,
   Megaphone,
 } from 'lucide-vue-next'
@@ -31,6 +33,8 @@ import type { NavigationGroup } from '@/components/layout/SidebarNav.vue'
 import type { ModuleStatus } from '@/api/modules'
 import { BUILTIN_TOOL_BREADCRUMBS } from '@/config/builtin-tools'
 import type { MessageKey } from '@/i18n'
+import { COMMERCIAL_MODULES } from '@/config/internalGateway'
+import { canAccessAdminPage } from '@/config/adminRoles'
 
 type ModuleRecord = Record<string, ModuleStatus>
 type Translate = (key: MessageKey) => string
@@ -58,7 +62,7 @@ const moduleIconMap: Record<string, LucideIcon> = {
 
 function activeModuleItems(modules: ModuleRecord, group: string): NavItem[] {
   return Object.values(modules)
-    .filter(m => m.active && m.admin_route && m.admin_menu_group === group)
+    .filter(m => m.active && m.admin_route && m.admin_route !== '/dashboard/vscodex' && m.name !== 'vscodex' && m.admin_menu_group === group && !COMMERCIAL_MODULES.has(m.name))
     .sort((a, b) => a.admin_menu_order - b.admin_menu_order)
     .map(m => ({
       name: m.display_name,
@@ -69,11 +73,12 @@ function activeModuleItems(modules: ModuleRecord, group: string): NavItem[] {
 
 export function buildNavigation(options: {
   canAccessAdmin: boolean
+  role?: string
   modules: ModuleRecord
   isModuleActive: (name: string) => boolean
   t?: Translate
 }): NavigationGroup[] {
-  const { canAccessAdmin, modules, isModuleActive } = options
+  const { canAccessAdmin, modules } = options
   const t = options.t ?? ((key: MessageKey) => key)
 
   if (!canAccessAdmin) {
@@ -82,6 +87,7 @@ export function buildNavigation(options: {
         title: t('nav.group.overview'),
         items: [
           { name: t('nav.dashboard'), href: '/dashboard', icon: Home },
+          { name: '使用排行榜', href: '/dashboard/leaderboard', icon: Trophy },
           { name: t('nav.healthMonitor'), href: '/dashboard/endpoint-status', icon: Activity },
         ]
       },
@@ -90,15 +96,13 @@ export function buildNavigation(options: {
         items: [
           { name: t('nav.modelCatalog'), href: '/dashboard/models', icon: Box },
           { name: t('nav.apiKeys'), href: '/dashboard/api-keys', icon: Key },
-          { name: t('nav.vscodex'), href: '/dashboard/vscodex', icon: SquareTerminal },
         ]
       },
       {
         title: t('nav.group.account'),
         items: [
-          { name: t('nav.walletCenter'), href: '/dashboard/wallet', icon: Wallet },
-          { name: t('nav.billingCenter'), href: '/dashboard/billing', icon: Package },
-          ...(isModuleActive('referral') ? [{ name: t('nav.myReferral'), href: '/dashboard/referral', icon: Gift }] : []),
+          { name: '个人资料', href: '/dashboard/settings', icon: UserRound },
+          { name: '反馈讨论', href: '/dashboard/feedback', icon: MessagesSquare },
           { name: t('nav.usageStats'), href: '/dashboard/usage', icon: BarChart3 },
         ]
       }
@@ -106,6 +110,9 @@ export function buildNavigation(options: {
   }
 
   const systemItems: NavItem[] = [
+    { name: '用户反馈', href: '/admin/feedback', icon: MessagesSquare },
+    { name: 'Agent MCP', href: '/admin/mcp', icon: Bot },
+    { name: '模型兼容性', href: '/admin/compatibility', icon: SlidersHorizontal },
     { name: t('nav.announcements'), href: '/admin/announcements', icon: Megaphone },
     { name: t('nav.cacheMonitoring'), href: '/admin/cache-monitoring', icon: Gauge },
     ...activeModuleItems(modules, 'system'),
@@ -113,7 +120,7 @@ export function buildNavigation(options: {
     { name: t('nav.systemSettings'), href: '/admin/system', icon: Cog },
   ]
 
-  return [
+  const groups: NavigationGroup[] = [
     {
       title: t('nav.group.overview'),
       items: [
@@ -121,6 +128,7 @@ export function buildNavigation(options: {
         { name: t('nav.operations'), href: '/admin/operations', icon: Activity },
         { name: t('nav.healthMonitor'), href: '/admin/health-monitor', icon: Activity },
         { name: t('nav.userStats'), href: '/admin/user-stats', icon: BarChart3 },
+        { name: '使用排行榜', href: '/admin/leaderboard', icon: Trophy },
         { name: t('nav.costAnalysis'), href: '/admin/cost-analysis', icon: Gauge },
         { name: t('nav.performanceAnalysis'), href: '/admin/performance-analysis', icon: Activity },
         ...activeModuleItems(modules, 'overview'),
@@ -130,13 +138,12 @@ export function buildNavigation(options: {
       title: t('nav.group.management'),
       items: [
         { name: t('nav.userManagement'), href: '/admin/users', icon: Users },
+        { name: '用户权益', href: '/admin/access-policies', icon: Shield },
         { name: t('nav.providers'), href: '/admin/providers', icon: FolderTree },
         { name: t('nav.modelManagement'), href: '/admin/models', icon: Layers },
         { name: t('nav.routing'), href: '/admin/routing', icon: SlidersHorizontal },
         { name: t('nav.pool'), href: '/admin/pool', icon: Database },
         { name: t('nav.standaloneKeys'), href: '/admin/keys', icon: Key },
-        { name: t('nav.walletManagement'), href: '/admin/wallets', icon: Wallet },
-        { name: t('nav.billingManagement'), href: '/admin/billing-plans', icon: Package },
         ...activeModuleItems(modules, 'management'),
         { name: t('nav.asyncTasks'), href: '/admin/async-tasks', icon: Zap },
         { name: t('nav.usageRecords'), href: '/admin/usage', icon: BarChart3 },
@@ -147,6 +154,7 @@ export function buildNavigation(options: {
       items: systemItems
     }
   ]
+  return groups.map(group => ({ ...group, items: group.items.filter(item => canAccessAdminPage(options.role ?? 'admin', item.href)) })).filter(group => group.items.length > 0)
 }
 
 export function buildBreadcrumbs(options: {

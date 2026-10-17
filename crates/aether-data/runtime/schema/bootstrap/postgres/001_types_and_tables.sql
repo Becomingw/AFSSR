@@ -92,7 +92,9 @@ DO $mig$ BEGIN
   CREATE TYPE public.userrole AS ENUM (
     'admin',
     'audit_admin',
-    'user'
+    'user',
+    'user_admin',
+    'service_admin'
 );
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $mig$;

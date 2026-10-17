@@ -87,6 +87,8 @@ pub(super) struct AdminCreateUserRequest {
 #[derive(serde::Deserialize)]
 pub(super) struct AdminUpdateUserRequest {
     #[serde(default)]
+    pub(super) allowed_models: Option<Vec<String>>,
+    #[serde(default)]
     pub(super) email: Option<String>,
     #[serde(default)]
     pub(super) username: Option<String>,
@@ -161,7 +163,14 @@ pub(super) fn management_token_may_administer_user_accounts(
     request_context: &crate::handlers::admin::request::AdminRequestContext<'_>,
 ) -> bool {
     request_context.decision().is_some_and(|decision| {
-        crate::control::management_token_principal_has_permission(decision, "admin:users:admin")
+        decision
+            .admin_principal
+            .as_ref()
+            .is_some_and(|principal| crate::roles::is_full_admin_role(&principal.user_role))
+            && crate::control::management_token_principal_has_permission(
+                decision,
+                "admin:users:admin",
+            )
     })
 }
 

@@ -77,6 +77,7 @@
                     {{ legacyT('IP 限制：') }}{{ legacyT(formatIpRules(apiKey.ip_rules)) }}
                   </span>
                   <button
+                    v-if="!readOnly"
                     class="rounded p-0.5 transition-colors hover:bg-muted"
                     :title="legacyT('复制完整密钥')"
                     @click="$emit('copy-full-key', apiKey)"
@@ -96,6 +97,7 @@
                 </div>
               </div>
               <Button
+                v-if="!readOnly"
                 variant="ghost"
                 size="icon"
                 class="h-8 w-8"
@@ -105,6 +107,7 @@
                 <SquarePen class="h-4 w-4" />
               </Button>
               <Button
+                v-if="!readOnly"
                 variant="ghost"
                 size="icon"
                 class="h-8 w-8"
@@ -121,6 +124,7 @@
                 />
               </Button>
               <Button
+                v-if="!readOnly"
                 variant="ghost"
                 size="icon"
                 class="h-8 w-8"
@@ -163,6 +167,7 @@
       </Button>
       <Button
         class="h-10 px-5"
+        v-if="!readOnly"
         :disabled="creating"
         @click="$emit('create-key')"
       >
@@ -179,6 +184,7 @@ import { useI18n } from '@/i18n'
 import type { ApiKey } from '@/api/users'
 
 defineProps<{
+  readOnly?: boolean
   open: boolean
   apiKeys: ApiKey[]
   creating: boolean

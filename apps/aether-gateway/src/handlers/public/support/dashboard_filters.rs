@@ -1155,29 +1155,62 @@ pub(super) async fn handle_dashboard_stats_get(
         return dashboard_cached_json_response(state, cache_key, cache_ttl, &payload);
     }
 
-    let wallet = if state.has_wallet_data_reader() {
-        match state
-            .find_wallet(aether_data::repository::wallet::WalletLookupKey::UserId(
-                auth.user.id.as_str(),
-            ))
-            .await
-        {
-            Ok(value) => value,
-            Err(err) => {
+    let (quota_card_name, wallet_value, wallet_sub_value) = if crate::internal_access::enabled() {
+        match crate::internal_access::allocation(state, &auth.user.id).await {
+            Ok((config, allocation)) => {
+                let value = if allocation.unlimited {
+                    "不限额".to_string()
+                } else {
+                    allocation
+                        .monthly_budget_usd
+                        .map(dashboard_format_usd)
+                        .unwrap_or_else(|| "无金额上限".into())
+                };
+                let subtitle = if allocation.unlimited {
+                    "不限额用户".into()
+                } else {
+                    format!(
+                        "{} 个模型子池 · {}",
+                        allocation.models.len(),
+                        config.timezone
+                    )
+                };
+                ("每月金额上限", value, subtitle)
+            }
+            Err(_) => {
                 return build_auth_error_response(
-                    http::StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("dashboard wallet lookup failed: {err:?}"),
+                    http::StatusCode::SERVICE_UNAVAILABLE,
+                    "Internal allowance unavailable".to_string(),
                     false,
-                );
+                )
             }
         }
     } else {
-        None
+        let wallet = if state.has_wallet_data_reader() {
+            match state
+                .find_wallet(aether_data::repository::wallet::WalletLookupKey::UserId(
+                    auth.user.id.as_str(),
+                ))
+                .await
+            {
+                Ok(value) => value,
+                Err(err) => {
+                    return build_auth_error_response(
+                        http::StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("dashboard wallet lookup failed: {err:?}"),
+                        false,
+                    );
+                }
+            }
+        } else {
+            None
+        };
+        let wallet_payload =
+            build_wallet_balance_payload_for_user(state, &auth.user.id, wallet.as_ref()).await;
+        let (wallet_value, wallet_sub_value) =
+            dashboard_wallet_card_value_and_subvalue(&wallet_payload);
+        ("钱包余额", wallet_value, wallet_sub_value)
     };
-    let wallet_payload =
-        build_wallet_balance_payload_for_user(state, &auth.user.id, wallet.as_ref()).await;
-    let (wallet_value, wallet_sub_value) =
-        dashboard_wallet_card_value_and_subvalue(&wallet_payload);
     let payload = json!({
         "stats": [
             {
@@ -1193,7 +1226,7 @@ pub(super) async fn handle_dashboard_stats_get(
                 "icon": "Users",
             },
             {
-                "name": "钱包余额",
+                "name": quota_card_name,
                 "value": wallet_value,
                 "subValue": wallet_sub_value,
                 "icon": "DollarSign",
@@ -1544,7 +1577,7 @@ fn dashboard_parse_limit(
 }
 
 fn dashboard_role_is_admin(role: &str) -> bool {
-    role.eq_ignore_ascii_case("admin")
+    crate::roles::can_access_admin_console(role)
 }
 
 fn dashboard_bad_request_response(detail: String) -> Response<Body> {

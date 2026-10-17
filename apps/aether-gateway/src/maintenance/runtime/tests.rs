@@ -653,12 +653,14 @@ async fn automatic_usage_cleanup_collects_ledgers_when_usage_cleanup_is_disabled
     let repository = Arc::new(InMemorySettlementRepository::default());
     repository
         .reserve_usage_policy_request(ReserveUsagePolicyRequestInput {
+            model: None,
             request_id: "expired-request".to_string(),
             subject_id: "user-1".to_string(),
             event_token: "expired-event".to_string(),
             admitted_at_unix_secs: 1,
             retain_until_unix_secs: 2,
             windows: vec![UsagePolicyRequestWindow {
+                model: None,
                 starts_at_unix_secs: 0,
                 ends_at_unix_secs: 2,
                 limit_requests: 10,
@@ -668,6 +670,7 @@ async fn automatic_usage_cleanup_collects_ledgers_when_usage_cleanup_is_disabled
         .expect("request admission should be seeded");
     repository
         .reserve_usage_policy_cost(ReserveUsagePolicyCostInput {
+            model: None,
             request_id: "expired-cost".to_string(),
             subject_id: "user-1".to_string(),
             reservation_token: "expired-reservation".to_string(),
@@ -676,6 +679,8 @@ async fn automatic_usage_cleanup_collects_ledgers_when_usage_cleanup_is_disabled
             reservation_expires_at_unix_secs: 2,
             retain_until_unix_secs: 2,
             windows: vec![UsagePolicyCostWindow {
+                models: None,
+                model: None,
                 window_id: "expired-window".to_string(),
                 starts_at_unix_secs: 0,
                 ends_at_unix_secs: 2,
@@ -704,12 +709,14 @@ async fn manual_usage_cleanup_does_not_collect_policy_ledgers() {
     let repository = Arc::new(InMemorySettlementRepository::default());
     repository
         .reserve_usage_policy_request(ReserveUsagePolicyRequestInput {
+            model: None,
             request_id: "manual-request".to_string(),
             subject_id: "user-1".to_string(),
             event_token: "manual-event".to_string(),
             admitted_at_unix_secs: 1,
             retain_until_unix_secs: 2,
             windows: vec![UsagePolicyRequestWindow {
+                model: None,
                 starts_at_unix_secs: 0,
                 ends_at_unix_secs: 2,
                 limit_requests: 10,

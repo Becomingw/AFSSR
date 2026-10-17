@@ -451,6 +451,18 @@ pub(crate) async fn resolve_local_openai_responses_candidate_payload_parts_with_
     .await?;
     let body_json = redaction.body_json.as_ref();
 
+    let expanded_history = crate::ai_serving::prepare_go_native_response_history(
+        state,
+        body_json,
+        spec_metadata.api_format,
+        provider_api_format,
+        transport.provider.provider_type.as_str(),
+        mapped_model.as_str(),
+        input.auth_context.api_key_id.as_str(),
+    )
+    .await?;
+    let body_json = expanded_history.as_ref().unwrap_or(body_json);
+
     let needs_bidirectional_conversion = !same_format && conversion_kind.is_some();
     let upstream_is_stream = resolve_upstream_is_stream_for_provider(
         transport.endpoint.config.as_ref(),
@@ -549,7 +561,16 @@ pub(crate) async fn resolve_local_openai_responses_candidate_payload_parts_with_
             candidate_index,
             candidate_id,
             "provider_request_body_build_failed",
-            request_conversion_failure_extra_data(
+            if transport.provider.provider_type.eq_ignore_ascii_case("opencode_go") {
+                crate::ai_serving::runtime_request_conversion_failure_extra_data(
+                    body_json, spec_metadata.api_format, provider_api_format,
+                    &crate::ai_serving::FormatContext::default().with_mapped_model(mapped_model.as_str())
+                        .with_upstream_stream(upstream_is_stream)
+                        .with_history_scope(input.auth_context.api_key_id.as_str())
+                        .with_report_context(serde_json::json!({"provider_type":"opencode_go", "provider_api_format":provider_api_format})),
+                    "openai_responses_request_conversion",
+                )
+            } else { request_conversion_failure_extra_data(
                 body_json,
                 spec_metadata.api_format,
                 provider_api_format,
@@ -557,7 +578,7 @@ pub(crate) async fn resolve_local_openai_responses_candidate_payload_parts_with_
                 Some(parts.uri.path()),
                 upstream_is_stream,
                 "openai_responses_request_conversion",
-            ),
+            ) },
         )
         .await;
         return Ok(None);

@@ -1,10 +1,10 @@
 <template>
-  <div class="px-4 sm:px-6 py-3.5 border-b border-border/60">
+  <div class="pb-4 border-b border-border">
     <div class="flex flex-col gap-3 sm:hidden">
-      <div class="flex items-center justify-between">
-        <h3 class="text-base font-semibold">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <h1 class="console-page-title">
           {{ legacyT('代理节点') }}
-        </h3>
+        </h1>
         <div class="flex items-center gap-2">
           <Button
             size="sm"
@@ -65,11 +65,11 @@
       </div>
     </div>
 
-    <div class="hidden sm:flex items-center justify-between gap-4">
-      <h3 class="text-base font-semibold">
+    <div class="hidden sm:flex min-w-0 flex-wrap items-center justify-between gap-4">
+      <h1 class="console-page-title">
         {{ legacyT('代理节点') }}
-      </h3>
-      <div class="flex items-center gap-2">
+      </h1>
+      <div class="flex min-w-0 flex-wrap items-center gap-2">
         <div class="relative">
           <Search class="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground z-10 pointer-events-none" />
           <Input

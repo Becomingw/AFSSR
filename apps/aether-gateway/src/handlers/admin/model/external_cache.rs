@@ -15,9 +15,8 @@ use std::time::Duration;
 use tracing::warn;
 
 const ADMIN_EXTERNAL_MODELS_LEGACY_CACHE_KEY: &str = "aether:external:models_dev";
-const ADMIN_EXTERNAL_MODELS_CACHE_KEY: &str = "aether:external:models_dev:v2";
-const ADMIN_EXTERNAL_MODELS_CACHE_VERSION: u8 = 2;
-const ADMIN_EXTERNAL_MODELS_CACHE_TTL_SECS: u64 = 15 * 60;
+const ADMIN_EXTERNAL_MODELS_CACHE_KEY: &str = "aether:external:models_dev:v3";
+const ADMIN_EXTERNAL_MODELS_CACHE_VERSION: u8 = 3;
 const ADMIN_EXTERNAL_MODELS_SOURCE_URL_ENV: &str = "AETHER_GATEWAY_EXTERNAL_MODELS_URL";
 const ADMIN_EXTERNAL_MODELS_SOURCE_URL_DEFAULT: &str = "https://models.dev/api.json";
 const ADMIN_EXTERNAL_MODELS_OFFICIAL_HOST: &str = "models.dev";
@@ -35,6 +34,7 @@ const ADMIN_EXTERNAL_MODELS_CACHE_MAX_BYTES: usize = 16 * 1024 * 1024;
 pub(crate) const ADMIN_EXTERNAL_MODELS_CONFIG_MUTATION_LOCK_KEY: &str =
     "admin:external_models_proxy_node_config:mutation";
 const ADMIN_EXTERNAL_MODELS_CONFIG_MUTATION_LOCK_TTL: Duration = Duration::from_secs(10 * 60);
+static CATALOG_FETCH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct AdminExternalModelsCacheEnvelope {
@@ -266,13 +266,13 @@ async fn store_admin_external_models_cache(
         ));
     }
     state
-        .as_ref()
-        .runtime_kv_setex(
-            ADMIN_EXTERNAL_MODELS_CACHE_KEY,
-            &serialized,
-            ADMIN_EXTERNAL_MODELS_CACHE_TTL_SECS,
-        )
-        .await?;
+        .app()
+        .runtime_state()
+        .kv_set(ADMIN_EXTERNAL_MODELS_CACHE_KEY, serialized, None)
+        .await
+        .map_err(|_| {
+            GatewayError::Internal("external models cache storage unavailable".to_string())
+        })?;
     Ok(())
 }
 
@@ -449,20 +449,9 @@ async fn apply_admin_external_models_config_update_locked(
             Some("外部模型目录代理节点 ID"),
         )
         .await?;
-    let cache_cleared = match clear_admin_external_models_cache_entries(state).await {
-        Ok(cache_cleared) => cache_cleared,
-        Err(_) => {
-            // The v2 cache envelope includes the selected node ID, so a stale entry cannot be
-            // reused after this persisted selector changes. Cache invalidation is best-effort.
-            warn!(
-                runtime_backend = state.app().runtime_state_backend(),
-                "failed to clear external models cache after proxy config update"
-            );
-            false
-        }
-    };
     let mut payload = build_admin_external_models_config_payload(state).await?;
-    payload["cache_cleared"] = json!(cache_cleared);
+    // Egress selection applies on the next explicit refresh, not to an existing snapshot.
+    payload["cache_cleared"] = json!(false);
     Ok(Ok(payload))
 }
 
@@ -670,6 +659,15 @@ async fn fetch_admin_external_models_from_source(
     let payload = serde_json::from_slice::<serde_json::Value>(&body).map_err(|_| {
         GatewayError::Internal("external models source returned invalid JSON".to_string())
     })?;
+    if !payload.as_object().is_some_and(|providers| {
+        providers
+            .values()
+            .any(|p| p.get("models").is_some_and(Value::is_object))
+    }) {
+        return Err(GatewayError::Internal(
+            "external models source returned invalid JSON catalog".to_string(),
+        ));
+    }
     Ok(normalize_admin_external_models_payload(payload))
 }
 
@@ -677,17 +675,13 @@ pub(crate) async fn read_admin_external_models_cache(
     state: &AdminAppState<'_>,
     request_id: &str,
 ) -> Result<Option<serde_json::Value>, GatewayError> {
-    let proxy_node_id = read_admin_external_models_proxy_node_id(state).await?;
     if let Some(raw) = state
         .as_ref()
         .runtime_kv_get(ADMIN_EXTERNAL_MODELS_CACHE_KEY)
         .await?
     {
         match parse_admin_external_models_cache(&raw) {
-            Some(envelope)
-                if envelope.schema_version == ADMIN_EXTERNAL_MODELS_CACHE_VERSION
-                    && envelope.proxy_node_id == proxy_node_id =>
-            {
+            Some(envelope) if envelope.schema_version == ADMIN_EXTERNAL_MODELS_CACHE_VERSION => {
                 return Ok(Some(normalize_admin_external_models_payload(
                     envelope.payload,
                 )));
@@ -697,15 +691,43 @@ pub(crate) async fn read_admin_external_models_cache(
         }
     }
 
+    // Coalesce local callers without making each of them fetch or fail while the leader loads.
+    let _fetch_guard = CATALOG_FETCH_LOCK.lock().await;
+    // Serialize with other gateway instances; re-read after acquiring the shared lock.
+    let lock = match acquire_admin_external_models_config_mutation_lock(state).await {
+        Ok(lock) => lock,
+        Err(_) => return Ok(None),
+    };
+    let result = async {
+        if let Some(raw) = state
+            .as_ref()
+            .runtime_kv_get(ADMIN_EXTERNAL_MODELS_CACHE_KEY)
+            .await?
+        {
+            if let Some(envelope) = parse_admin_external_models_cache(&raw)
+                .filter(|v| v.schema_version == ADMIN_EXTERNAL_MODELS_CACHE_VERSION)
+            {
+                return Ok(Some(normalize_admin_external_models_payload(
+                    envelope.payload,
+                )));
+            }
+        }
+        fetch_and_store_admin_external_models(state, request_id).await
+    }
+    .await;
+    release_admin_external_models_config_mutation_lock(state, &lock).await;
+    result
+}
+
+async fn fetch_and_store_admin_external_models(
+    state: &AdminAppState<'_>,
+    request_id: &str,
+) -> Result<Option<Value>, GatewayError> {
+    let proxy_node_id = read_admin_external_models_proxy_node_id(state).await?;
     match fetch_admin_external_models_from_source(state, request_id, proxy_node_id.as_deref()).await
     {
         Ok(payload) => {
-            if store_admin_external_models_cache(state, proxy_node_id.as_deref(), &payload)
-                .await
-                .is_err()
-            {
-                warn!("failed to store fetched external models cache");
-            }
+            store_admin_external_models_cache(state, proxy_node_id.as_deref(), &payload).await?;
             Ok(Some(payload))
         }
         Err(error) => {
@@ -725,6 +747,59 @@ pub(crate) async fn read_admin_external_models_cache(
             Ok(None)
         }
     }
+}
+
+pub(crate) async fn refresh_admin_external_models_catalog(
+    state: &AdminAppState<'_>,
+    request_id: &str,
+) -> Result<Result<Value, (http::StatusCode, Value)>, GatewayError> {
+    let _fetch_guard = CATALOG_FETCH_LOCK.lock().await;
+    let lock = match acquire_admin_external_models_config_mutation_lock(state).await {
+        Ok(lock) => lock,
+        Err(error) => return Ok(Err(error)),
+    };
+    let result = async {
+        // Fetch before replacing: a failed upstream refresh must leave the last good snapshot intact.
+        let Some(catalog) = fetch_and_store_admin_external_models(state, request_id).await? else {
+            return Ok(Err((http::StatusCode::SERVICE_UNAVAILABLE, json!({"detail":"刷新失败，已保留原模型目录"}))));
+        };
+        let index = aether_admin::model_catalog::CatalogIndex::new(&catalog);
+        let mut offset = 0;
+        let mut updated = 0;
+        let mut unchanged = 0;
+        let mut unmatched = 0;
+        let mut failed = Vec::new();
+        loop {
+            let page = state.list_admin_global_models(&aether_data_contracts::repository::global_models::AdminGlobalModelListQuery {
+                offset, limit: 200, ..Default::default()
+            }).await?;
+            if page.items.is_empty() { break; }
+            offset += page.items.len();
+            for model in page.items {
+                let Some(item) = index.find(&model.name, model.config.as_ref()) else { unmatched += 1; continue; };
+                let config = Some(item.config(model.config.as_ref()));
+                // Missing/unsupported prices never erase a configured catalog. Channel overrides remain intact.
+                let pricing = item.pricing().or_else(|| model.default_tiered_pricing.clone());
+                let capabilities = item.capabilities(model.supported_capabilities.as_ref());
+                if config == model.config && pricing == model.default_tiered_pricing && capabilities == model.supported_capabilities { unchanged += 1; continue; }
+                let record = aether_data_contracts::repository::global_models::UpdateAdminGlobalModelRecord::new(
+                    model.id.clone(), model.display_name, model.is_active, model.default_price_per_request,
+                    pricing, capabilities, config,
+                );
+                match record {
+                    Ok(record) => match state.update_admin_global_model(&record).await {
+                        Ok(Some(_)) => updated += 1,
+                        _ => failed.push(model.id),
+                    },
+                    Err(_) => failed.push(model.id),
+                }
+            }
+            if offset >= page.total { break; }
+        }
+        Ok(Ok(json!({"catalog":catalog,"sync":{"updated":updated,"unchanged":unchanged,"unmatched":unmatched,"failed":failed}})))
+    }.await;
+    release_admin_external_models_config_mutation_lock(state, &lock).await;
+    result
 }
 
 pub(crate) async fn clear_admin_external_models_cache(

@@ -596,16 +596,16 @@ async fn gateway_assigns_and_imports_admin_provider_models_locally_with_trusted_
     );
 
     let (upstream_url, upstream_handle) = start_server(upstream).await;
-    let gateway = build_router_with_state(
-        AppState::new()
-            .expect("gateway should build")
-            .with_data_state_for_tests(
-                GatewayDataState::with_provider_catalog_reader_for_tests(
-                    provider_catalog_repository,
-                )
+    let state = AppState::new()
+        .expect("gateway should build")
+        .with_data_state_for_tests(
+            GatewayDataState::with_provider_catalog_reader_for_tests(provider_catalog_repository)
                 .with_global_model_repository_for_tests(global_model_repository.clone()),
-            ),
-    );
+        );
+    state.runtime_state().kv_set("aether:external:models_dev:v3", json!({
+        "schema_version":3,"proxy_node_id":null,"payload":{"openai":{"official":true,"models":{}}}
+    }).to_string(), None).await.expect("seed catalog snapshot");
+    let gateway = build_router_with_state(state);
     let (gateway_url, gateway_handle) = start_server(gateway).await;
 
     let assign_response = reqwest::Client::new()

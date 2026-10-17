@@ -831,6 +831,11 @@ impl AppState {
         initial_gift_usd: f64,
         unlimited: bool,
     ) -> Result<Option<aether_data::repository::wallet::StoredWalletSnapshot>, GatewayError> {
+        let initial_gift_usd = if crate::internal_access::enabled() {
+            0.0
+        } else {
+            initial_gift_usd
+        };
         #[cfg(test)]
         if let Some(store) = self.auth_wallet_store.as_ref() {
             if user_id.trim().is_empty() {
@@ -905,6 +910,11 @@ impl AppState {
         unlimited: bool,
     ) -> Result<Option<aether_data::repository::wallet::InitializeAuthWalletOutcome>, GatewayError>
     {
+        let initial_gift_usd = if crate::internal_access::enabled() {
+            0.0
+        } else {
+            initial_gift_usd
+        };
         #[cfg(test)]
         if let Some(store) = self.auth_wallet_store.as_ref() {
             if user_id.trim().is_empty() {

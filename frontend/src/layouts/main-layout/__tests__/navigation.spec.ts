@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { RouteLocationNormalizedLoaded } from 'vue-router'
 
 import { buildBreadcrumbs, buildNavigation } from '@/layouts/main-layout/navigation'
+import { dashboardRoutes } from '@/router/routes/dashboard'
 import type { MessageKey } from '@/i18n'
 
 const translate = (key: MessageKey) => `tx:${key}`
@@ -21,6 +22,19 @@ function route(path: string, name?: string, meta: Record<string, unknown> = {}):
 }
 
 describe('main layout navigation builder', () => {
+  it('redirects retired remote-control bookmarks to client API keys', () => {
+    const legacy = dashboardRoutes[0]?.children?.find(route => route.path === 'vscodex')
+    expect(legacy?.redirect).toBe('/dashboard/api-keys')
+    expect(legacy?.component).toBeUndefined()
+  })
+  it('filters menus to the delegated administrator domain', () => {
+    const menu = (role: string) => buildNavigation({ canAccessAdmin: true, role, modules: {}, isModuleActive: () => false }).flatMap(group => group.items.map(item => item.href))
+    expect(menu('user_admin')).toContain('/admin/access-policies')
+    expect(menu('user_admin')).not.toContain('/admin/providers')
+    expect(menu('service_admin')).toContain('/admin/pool')
+    expect(menu('service_admin')).not.toContain('/admin/users')
+    expect(menu('service_admin')).not.toContain('/admin/system')
+  })
   it('builds user navigation from translation keys and active modules', () => {
     const navigation = buildNavigation({
       canAccessAdmin: false,
@@ -34,10 +48,13 @@ describe('main layout navigation builder', () => {
       'tx:nav.group.resources',
       'tx:nav.group.account',
     ])
-    expect(navigation.flatMap(group => group.items.map(item => item.name))).toContain('tx:nav.myReferral')
+    const links = navigation.flatMap(group => group.items.map(item => item.href))
+    expect(links).not.toContain('/dashboard/referral')
+    expect(links).not.toContain('/dashboard/wallet')
+    expect(links).not.toContain('/dashboard/billing')
   })
 
-  it('exposes remote control to users and active administrators', () => {
+  it('does not expose retired remote control even with stale module metadata', () => {
     const userNavigation = buildNavigation({
       canAccessAdmin: false,
       modules: {},
@@ -74,19 +91,11 @@ describe('main layout navigation builder', () => {
         .find(item => item.href === '/dashboard/vscodex')
     )
 
-    expect(findVscodeControl(userNavigation)).toMatchObject({
-      name: 'tx:nav.vscodex',
-      href: '/dashboard/vscodex',
-    })
-    expect(findVscodeControl(adminNavigation)).toMatchObject({
-      name: '远程控制',
-      href: '/dashboard/vscodex',
-    })
+    expect(findVscodeControl(userNavigation)).toBeUndefined()
+    expect(findVscodeControl(adminNavigation)).toBeUndefined()
 
     const overviewItems = adminNavigation.find(group => group.title === 'tx:nav.group.overview')?.items ?? []
-    expect(overviewItems.findIndex(item => item.name === '远程控制')).toBe(
-      overviewItems.findIndex(item => item.name === 'tx:nav.performanceAnalysis') + 1,
-    )
+    expect(overviewItems.some(item => item.name === '远程控制')).toBe(false)
   })
 
   it('builds admin navigation with dynamic module menu items sorted by menu order', () => {
@@ -168,54 +177,5 @@ describe('main layout navigation builder', () => {
       { label: 'tx:breadcrumb.routingCreate' },
     ])
 
-    expect(buildBreadcrumbs({
-      route: route('/dashboard/vscodex'),
-      navigation: buildNavigation({
-        canAccessAdmin: true,
-        modules: {
-          vscodex: {
-            active: true,
-          name: 'test-module',
-          available: true,
-          enabled: true,
-          config_validated: true,
-          config_error: null,
-          description: '',
-          category: 'integration',
-          health: 'healthy',
-            admin_route: '/dashboard/vscodex',
-            admin_menu_group: 'overview',
-            admin_menu_order: 80,
-            admin_menu_icon: 'SquareTerminal',
-            display_name: '远程控制',
-          },
-        },
-        isModuleActive: () => false,
-        t: translate,
-      }),
-      modules: {
-        vscodex: {
-          active: true,
-          name: 'test-module',
-          available: true,
-          enabled: true,
-          config_validated: true,
-          config_error: null,
-          description: '',
-          category: 'integration',
-          health: 'healthy',
-          admin_route: '/dashboard/vscodex',
-          admin_menu_group: 'overview',
-          admin_menu_order: 80,
-          admin_menu_icon: 'SquareTerminal',
-          display_name: '远程控制',
-        },
-      },
-      isNavActive: href => href === '/dashboard/vscodex',
-      t: translate,
-    })).toEqual([
-      expect.objectContaining({ label: expect.any(String) }),
-      { label: '远程控制' },
-    ])
   })
 })
