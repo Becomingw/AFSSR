@@ -127,7 +127,7 @@ pub(crate) async fn read_smtp_delivery_config(
             smtp_from_name.as_ref(),
             SMTP_MAX_HEADER_VALUE_BYTES,
         )?
-        .unwrap_or_else(|| "Aether".to_string()),
+        .unwrap_or_else(|| "Arca".to_string()),
     }))
 }
 
@@ -578,7 +578,7 @@ fn build_email_message(
     email: &ComposedEmail,
 ) -> Result<String, GatewayError> {
     validate_smtp_delivery_inputs(config, email)?;
-    let boundary = format!("aether-{}", uuid::Uuid::new_v4().simple());
+    let boundary = format!("arca-{}", uuid::Uuid::new_v4().simple());
     let text_body =
         wrap_base64(&base64::engine::general_purpose::STANDARD.encode(email.text_body.as_bytes()));
     let html_body =
@@ -679,7 +679,7 @@ fn smtp_send_message<S: std::io::Read + std::io::Write>(
     config: &SmtpDeliveryConfig,
     email: &ComposedEmail,
 ) -> Result<(), GatewayError> {
-    smtp_send_command(reader, "EHLO aether.local", &[250])?;
+    smtp_send_command(reader, "EHLO arca.local", &[250])?;
     smtp_authenticate(reader, config)?;
     smtp_deliver_message(reader, config, email)
 }

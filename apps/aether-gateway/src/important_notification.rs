@@ -376,9 +376,9 @@ pub(crate) async fn build_important_notification_test_payload(
         state.app(),
         item_key,
         ImportantNotification {
-            title: "Aether 通知服务测试".to_string(),
-            markdown_body: "这是一条来自 Aether 的通知服务测试。".to_string(),
-            text_body: "这是一条来自 Aether 的通知服务测试。".to_string(),
+            title: "Arca 通知服务测试".to_string(),
+            markdown_body: "这是一条来自 Arca 的通知服务测试。".to_string(),
+            text_body: "这是一条来自 Arca 的通知服务测试。".to_string(),
         },
         &variables,
         filter,
@@ -670,12 +670,13 @@ async fn send_single_email_notification(
     recipient: &str,
     notification: &ImportantNotification,
 ) -> Result<(), GatewayError> {
+    let app_name = smtp_config.from_name.clone();
     send_smtp_email(
         smtp_config,
         ComposedEmail {
             to_email: recipient.to_string(),
             subject: notification.title.clone(),
-            html_body: build_notification_html(notification),
+            html_body: build_notification_html(&app_name, notification),
             text_body: notification.text_body.clone(),
         },
     )
@@ -822,21 +823,14 @@ fn push_recipient_parts(recipients: &mut Vec<String>, raw: &str) {
     }
 }
 
-fn build_notification_html(notification: &ImportantNotification) -> String {
-    format!(
-        "<!doctype html><html><body><h2>{}</h2><pre style=\"font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;line-height:1.6\">{}</pre></body></html>",
-        escape_html(&notification.title),
-        escape_html(&notification.text_body),
+fn build_notification_html(app_name: &str, notification: &ImportantNotification) -> String {
+    crate::email_layout::render_email_html(
+        app_name,
+        &notification.title,
+        notification.text_body.lines().next().unwrap_or_default(),
+        &crate::email_layout::blocks_from_text(&notification.text_body),
+        "此邮件由系统自动发送，请勿直接回复。",
     )
-}
-
-fn escape_html(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;")
 }
 
 #[cfg(test)]

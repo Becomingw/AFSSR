@@ -30,11 +30,11 @@ const ADMIN_EMAIL_TEMPLATE_DEFINITIONS: &[AdminEmailTemplateDefinition] = &[
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>验证码</title>
 </head>
-<body style="margin: 0; padding: 0; background-color: #faf9f5; font-family: Georgia, 'Times New Roman', 'Songti SC', 'STSong', serif;">
+<body style="margin: 0; padding: 0; background-color: #faf9f5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif;">
     <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #faf9f5; padding: 40px 20px;">
         <tr>
             <td align="center">
-                <table width="100%" cellpadding="0" cellspacing="0" style="max-width: 480px;">
+                <table width="100%" cellpadding="0" cellspacing="0" style="max-width: 520px;">
                     <tr>
                         <td style="padding: 0 0 32px; text-align: center;">
                             <div style="font-size: 13px; font-family: 'SF Mono', Monaco, 'Courier New', monospace; color: #6c695c; letter-spacing: 0.15em; text-transform: uppercase;">
@@ -44,7 +44,7 @@ const ADMIN_EMAIL_TEMPLATE_DEFINITIONS: &[AdminEmailTemplateDefinition] = &[
                     </tr>
                     <tr>
                         <td>
-                            <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border: 1px solid rgba(61, 57, 41, 0.1); border-radius: 6px;">
+                            <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border: 1px solid rgba(61, 57, 41, 0.1); border-radius: 10px;">
                                 <tr>
                                     <td style="padding: 48px 40px;">
                                         <h1 style="margin: 0 0 24px; font-size: 24px; font-weight: 500; color: #3d3929; text-align: center; letter-spacing: -0.02em;">
@@ -95,11 +95,11 @@ const ADMIN_EMAIL_TEMPLATE_DEFINITIONS: &[AdminEmailTemplateDefinition] = &[
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>密码重置</title>
 </head>
-<body style="margin: 0; padding: 0; background-color: #faf9f5; font-family: Georgia, 'Times New Roman', 'Songti SC', 'STSong', serif;">
+<body style="margin: 0; padding: 0; background-color: #faf9f5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Helvetica, Arial, sans-serif;">
     <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #faf9f5; padding: 40px 20px;">
         <tr>
             <td align="center">
-                <table width="100%" cellpadding="0" cellspacing="0" style="max-width: 480px;">
+                <table width="100%" cellpadding="0" cellspacing="0" style="max-width: 520px;">
                     <tr>
                         <td style="padding: 0 0 32px; text-align: center;">
                             <div style="font-size: 13px; font-family: 'SF Mono', Monaco, 'Courier New', monospace; color: #6c695c; letter-spacing: 0.15em; text-transform: uppercase;">
@@ -109,7 +109,7 @@ const ADMIN_EMAIL_TEMPLATE_DEFINITIONS: &[AdminEmailTemplateDefinition] = &[
                     </tr>
                     <tr>
                         <td>
-                            <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border: 1px solid rgba(61, 57, 41, 0.1); border-radius: 6px;">
+                            <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border: 1px solid rgba(61, 57, 41, 0.1); border-radius: 10px;">
                                 <tr>
                                     <td style="padding: 48px 40px;">
                                         <h1 style="margin: 0 0 24px; font-size: 24px; font-weight: 500; color: #3d3929; text-align: center; letter-spacing: -0.02em;">

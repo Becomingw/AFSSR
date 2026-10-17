@@ -42,6 +42,7 @@ mod control;
 mod data;
 mod dispatch;
 mod email_delivery;
+mod email_layout;
 mod error;
 mod execution_runtime;
 mod executor;
