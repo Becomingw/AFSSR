@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# Aether Gateway runtime image (cross-compilation)
+# Arca Gateway runtime image (cross-compilation)
 # Binary and frontend assets are pre-built by CI; this Dockerfile only packages them.
 # Usage: docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.app .
 #

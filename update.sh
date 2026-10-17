@@ -26,7 +26,7 @@ usage() {
     cat <<'EOF'
 Usage: ./update.sh [options]
 
-Update Aether Docker Compose deployment in one command.
+Update Arca Docker Compose deployment in one command.
 
 Options:
   --mode MODE             auto, compose, single-node, or local-build

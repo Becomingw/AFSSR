@@ -1,6 +1,6 @@
 # Runtime Redis Operations Runbook
 
-This runbook covers Aether runtime Redis connection pressure incidents. It is
+This runbook covers Arca runtime Redis connection pressure incidents. It is
 not a substitute for fixing application-level connection churn.
 
 ## Persistence Policy
@@ -34,7 +34,7 @@ application logs.
 ### OpenAI Responses continuation history
 
 When an OpenAI Responses request is converted to an OpenAI Chat provider,
-Aether stores the completed continuation transcript in `RuntimeState` under the
+Arca stores the completed continuation transcript in `RuntimeState` under the
 `ai:responses:history:v1` namespace. Records are immutable, scoped by a hashed
 API key identity, limited to 8 MiB, and expire after six hours. Redis `SET` with
 TTL makes completion writes atomic and idempotent.
@@ -132,7 +132,7 @@ different code path or process is still opening short-lived Redis connections.
 
 ## File Descriptor Limits
 
-Aether's compose files intentionally do not set container `ulimits.nofile`.
+Arca's compose files intentionally do not set container `ulimits.nofile`.
 Redis connection churn must be fixed in application code, not hidden by larger
 file descriptor limits.
 

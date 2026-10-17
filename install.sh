@@ -71,7 +71,7 @@ usage() {
     cat <<'EOF'
 Usage: install.sh [options]
 
-Install Aether Gateway.
+Install Arca Gateway.
 
 Options:
   --mode MODE          Deployment mode: compose, compose-single-node, or single-node
@@ -306,9 +306,9 @@ install_os() {
             ;;
         *)
             if ui_is_zh; then
-                die "Aether 二进制安装仅支持 Linux 和 macOS"
+                die "Arca 二进制安装仅支持 Linux 和 macOS"
             else
-                die "Aether binary install is only supported on Linux and macOS"
+                die "Arca binary install is only supported on Linux and macOS"
             fi
             ;;
     esac
@@ -394,7 +394,7 @@ select_version() {
         if ui_is_zh; then
             cat >/dev/tty <<'EOF'
 
-请选择 Aether 版本:
+请选择 Arca 版本:
   1) 最新正式版
   2) 最新 RC 预发布版
   3) 最新 Beta 预发布版
@@ -406,7 +406,7 @@ EOF
         else
             cat >/dev/tty <<'EOF'
 
-Choose Aether version:
+Choose Arca version:
   1) Latest stable release
   2) Latest RC prerelease
   3) Latest beta prerelease
@@ -585,7 +585,7 @@ select_mode() {
         if ui_is_zh; then
             cat >/dev/tty <<EOF
 
-请选择 Aether 部署模式:
+请选择 Arca 部署模式:
   1) Docker Compose 标准部署（Postgres + Redis）
   2) Docker Compose 单节点部署（PostgreSQL）
   3) 系统服务单节点部署（需提供 PostgreSQL DATABASE_URL）
@@ -595,7 +595,7 @@ EOF
         else
             cat >/dev/tty <<EOF
 
-Choose Aether deployment mode:
+Choose Arca deployment mode:
   1) Docker Compose standard deployment (Postgres + Redis)
   2) Docker Compose single-node deployment (PostgreSQL)
   3) System service single-node deployment (PostgreSQL)
@@ -1937,7 +1937,7 @@ ensure_macos_service_account() {
         info "creating macOS user ${SERVICE_USER}"
         dscl . -create "/Users/${SERVICE_USER}"
         dscl . -create "/Users/${SERVICE_USER}" UserShell /usr/bin/false
-        dscl . -create "/Users/${SERVICE_USER}" RealName "Aether Gateway"
+        dscl . -create "/Users/${SERVICE_USER}" RealName "Arca Gateway"
         dscl . -create "/Users/${SERVICE_USER}" UniqueID "${uid}"
         dscl . -create "/Users/${SERVICE_USER}" PrimaryGroupID "${gid}"
         dscl . -create "/Users/${SERVICE_USER}" NFSHomeDirectory "${INSTALL_ROOT}"
@@ -2445,7 +2445,7 @@ prune_old_releases() {
 render_systemd_unit() {
     cat <<EOF
 [Unit]
-Description=Aether Gateway
+Description=Arca Gateway
 Documentation=https://github.com/${REPO}
 After=network-online.target
 Wants=network-online.target
@@ -2574,7 +2574,7 @@ strip_optional_quotes() {
 }
 
 if [[ ! -r "${ENV_TARGET}" ]]; then
-    echo "Aether env file not found or not readable: ${ENV_TARGET}" >&2
+    echo "Arca env file not found or not readable: ${ENV_TARGET}" >&2
     exit 1
 fi
 
@@ -2585,7 +2585,7 @@ while IFS= read -r raw_line || [[ -n "${raw_line}" ]]; do
     [[ "${line:0:1}" == "#" ]] && continue
 
     if [[ "${line}" == export\ * || ! "${line}" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
-        echo "Invalid Aether env line: ${line}" >&2
+        echo "Invalid Arca env line: ${line}" >&2
         exit 1
     fi
 

@@ -1,6 +1,6 @@
 # syntax=docker.m.daocloud.io/docker/dockerfile:1
-# Aether 运行镜像：Rust gateway 直接服务 API + 前端静态文件（国内镜像源版本）
-# 构建命令: docker build --build-arg AETHER_BUILD_VERSION=v0.7.2 -f Dockerfile.app.local -t aether-app:latest .
+# Arca 运行镜像：Rust gateway 直接服务 API + 前端静态文件（国内镜像源版本）
+# 构建命令: docker build --build-arg AETHER_BUILD_VERSION=v0.7.2 -f Dockerfile.app.local -t arca-app:latest .
 
 ARG RUST_VERSION=1.95.0
 ARG NODE_BASE_IMAGE=docker.m.daocloud.io/library/node:22-slim

@@ -9,7 +9,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 cd -- "${SCRIPT_DIR}"
 
-LOCAL_APP_IMAGE="${LOCAL_APP_IMAGE:-aether-app:latest}"
+LOCAL_APP_IMAGE="${LOCAL_APP_IMAGE:-arca-app:latest}"
 export LOCAL_APP_IMAGE
 
 detect_build_version() {
@@ -69,7 +69,7 @@ Options:
   -h, --help              显示帮助
 
 Environment:
-  LOCAL_APP_IMAGE          本地构建镜像名，默认 aether-app:latest
+  LOCAL_APP_IMAGE          本地构建镜像名，默认 arca-app:latest
   AETHER_BUILD_VERSION     应用显示版本，默认 git describe --tags --match 'v[0-9]*' --always --dirty
 EOF
 }

@@ -1,4 +1,4 @@
-# AFSSR
+# Arca
 
 基于 [Aether](https://github.com/fawney19/Aether) 的下游修改版，由
 [Mengfei Wang / Becomingw](https://github.com/Becomingw) 维护。
@@ -8,16 +8,16 @@
 - `haiku-compat6-20261013` 标签对应已部署并通过公网合成验收的源码；
   `main` 还包含尚未部署的本地 GLM 历史兼容修改。
 - 继续使用原 [非商业许可证](LICENSE)，改名不改变许可条件。
-- 本仓库目前仅发布源码，没有发布 AFSSR 的预构建镜像。下方上游文档中的
-  Aether 镜像和更新地址不包含这里的修改，请先阅读 [AFSSR 版本说明](docs/AFSSR.md)。
+- 本仓库目前仅发布源码，没有发布 Arca 的预构建镜像。下方文档中指向上游 Aether
+  的克隆、安装脚本、镜像和更新地址不包含这里的修改，请先阅读 [Arca 版本说明](docs/ARCA.md)。
 
-## 上游 Aether 文档
+## 使用文档（承自 Aether）
 
 <p align="center">
-  <img src="frontend/public/aether_adaptive.svg" width="120" height="120" alt="Aether Logo">
+  <img src="frontend/public/arca.svg" width="120" height="120" alt="Arca Logo">
 </p>
 
-<h1 align="center">Aether</h1>
+<h1 align="center">Arca</h1>
 
 <p align="center">
   <strong>一站式 AI 基础设施平台</strong><br>
@@ -36,17 +36,17 @@
 
 ## 简介
 
-Aether 是一个自托管的 AI API 网关，为团队和个人提供多租户管理、智能负载均衡、成本配额控制和健康监控能力。通过统一的 API 入口，可以无缝对接 Claude、OpenAI、Gemini 等主流 AI 服务及其 CLI 工具。
+Arca 是一个自托管的 AI API 网关，为团队和个人提供多租户管理、智能负载均衡、成本配额控制和健康监控能力。通过统一的 API 入口，可以无缝对接 Claude、OpenAI、Gemini 等主流 AI 服务及其 CLI 工具。
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/architecture/architecture-dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/architecture/architecture-light.svg">
-    <img src="docs/architecture/architecture-light.svg" width="680" alt="Aether Architecture">
+    <img src="docs/architecture/architecture-light.svg" width="680" alt="Arca Architecture">
   </picture>
 </p>
 
-页面预览: https://fawney19.github.io/Aether/
+页面预览: https://becomingw.github.io/Arca/
 
 ## 部署
 
@@ -115,9 +115,9 @@ make db-prepare
 
 安装、云端配对和安全边界请参阅 [`aether-vscodex/README.md`](aether-vscodex/README.md)。
 
-## Aether Tunnel (可选)
+## Arca Tunnel (可选)
 
-Aether Tunnel 是配套的正向代理节点，部署在海外 VPS 上，为墙内的 Aether 实例中转 API 流量。
+Arca Tunnel 是配套的正向代理节点，部署在海外 VPS 上，为墙内的 Arca 实例中转 API 流量。
 
 - Docker Compose 部署或下载预编译二进制直接运行
 - 提供 macOS/Linux 与 Windows 一键脚本，自动下载最新 `tunnel-v*` 制品并向现有 `aether-tunnel.toml` 追加 `[[servers]]`
@@ -128,7 +128,7 @@ Aether Tunnel 是配套的正向代理节点，部署在海外 VPS 上，为墙�
 
 - Embeddings: [OpenAI compatible `POST /v1/embeddings`](docs/api/embeddings.md)
 - Rerank: [OpenAI/Jina compatible `POST /v1/rerank`](docs/api/rerank.md)
-- Responses WebSocket mode: [protocol and Aether behavior](docs/WebSocket-Mode.md)
+- Responses WebSocket mode: [protocol and Arca behavior](docs/WebSocket-Mode.md)
 - WebSocket probes: [Codex](docs/operations/codex-responses-websocket-probe.md) · [OpenAI Responses](docs/operations/openai-responses-websocket-probe.md)
 
 ## 环境变量
@@ -181,7 +181,7 @@ AETHER_BACKUP_ENCRYPTION_KEY='原备份密钥' \
 
 本项目采用 [Aether 非商业开源许可证](LICENSE)。允许个人学习、教育研究、非盈利组织及企业内部非盈利性质的使用；禁止用于盈利目的。商业使用请联系获取商业许可。
 
-## 联系作者
+## 联系原作者（Aether，商业许可咨询）
 
 <p align="center">
   <img src="docs/author/qq_qrcode.jpg" width="200" alt="QQ二维码">
@@ -191,4 +191,4 @@ AETHER_BACKUP_ENCRYPTION_KEY='原备份密钥' \
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=fawney19/Aether&type=date&legend=top-left)](https://www.star-history.com/?repos=fawney19%2FAether&type=date&legend=top-left)
+[![Star History Chart](https://api.star-history.com/svg?repos=Becomingw/Arca&type=date&legend=top-left)](https://www.star-history.com/?repos=Becomingw%2FArca&type=date&legend=top-left)

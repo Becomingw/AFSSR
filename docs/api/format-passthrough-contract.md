@@ -52,7 +52,7 @@ Required behavior:
 - Preserve source fields only when the target has an equivalent field or documented extension passthrough.
 - Fail closed with `FormatError::UnauditedField`, `FormatError::LossyConversionBlocked`, `FormatError::UnsupportedField`, `FormatError::InvalidEnumValue`, or `FormatError::InvalidTargetField` when no lossless mapping exists.
 - Do not use `None` or silent omission to represent conversion failure.
-- Newly added provider fields follow the same rule as other unknown fields: preserve same-format, fail closed cross-format with `UnauditedField`. A code change is required only when Aether intentionally supports a new cross-format semantic mapping.
+- Newly added provider fields follow the same rule as other unknown fields: preserve same-format, fail closed cross-format with `UnauditedField`. A code change is required only when Arca intentionally supports a new cross-format semantic mapping.
 
 ## Pure Conversion Interface
 

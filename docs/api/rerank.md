@@ -1,6 +1,6 @@
 # Rerank API
 
-Aether exposes an OpenAI-compatible rerank surface at `POST /v1/rerank` and can route it to providers configured as `openai:rerank` or `jina:rerank`.
+Arca exposes an OpenAI-compatible rerank surface at `POST /v1/rerank` and can route it to providers configured as `openai:rerank` or `jina:rerank`.
 
 ## Request
 
@@ -15,7 +15,7 @@ Content-Type: application/json
   "model": "bge-reranker-base",
   "query": "What document discusses gateway routing?",
   "documents": [
-    "Aether routes public AI requests through the Rust gateway.",
+    "Arca routes public AI requests through the Rust gateway.",
     "This document discusses unrelated content."
   ],
   "top_n": 1,
@@ -27,7 +27,7 @@ Fields:
 
 | Field | Required | Notes |
 | --- | --- | --- |
-| `model` | Yes | Aether global model name. |
+| `model` | Yes | Arca global model name. |
 | `query` | Yes | Non-empty query string. |
 | `documents` | Yes | Non-empty array of strings or provider-native document objects. |
 | `top_n` | No | Positive integer. |
@@ -35,7 +35,7 @@ Fields:
 
 ## Response
 
-Aether forwards the provider JSON response. OpenAI-compatible and Jina-compatible rerank providers commonly return `results[]`:
+Arca forwards the provider JSON response. OpenAI-compatible and Jina-compatible rerank providers commonly return `results[]`:
 
 ```json
 {
@@ -45,7 +45,7 @@ Aether forwards the provider JSON response. OpenAI-compatible and Jina-compatibl
       "index": 0,
       "relevance_score": 0.98,
       "document": {
-        "text": "Aether routes public AI requests through the Rust gateway."
+        "text": "Arca routes public AI requests through the Rust gateway."
       }
     }
   ],

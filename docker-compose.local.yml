@@ -1,4 +1,4 @@
-# Aether 本地构建覆盖配置
+# Arca 本地构建覆盖配置
 # 使用方法:
 #   启动服务: docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
 #   或使用:    ./deploy.sh
@@ -8,4 +8,4 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.app.local
-    image: ${LOCAL_APP_IMAGE:-aether-app:latest}
+    image: ${LOCAL_APP_IMAGE:-arca-app:latest}

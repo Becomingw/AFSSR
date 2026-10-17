@@ -1,4 +1,4 @@
-# Aether 本地在线更新联调环境
+# Arca 本地在线更新联调环境
 # 使用当前源码构建一个 release-layout 测试镜像，专门验证管理后台一键更新。
 #
 # 启动:
@@ -7,13 +7,13 @@
 # 重置（删除测试 PostgreSQL 数据、/opt/aether/current 与历史版本目录）:
 #   docker compose -f docker-compose.release-local.yml down -v
 
-name: aether-release-local
+name: arca-release-local
 
 services:
   postgres:
     # OCI index digest for the official multi-architecture postgres:15.19 image.
     image: postgres:15.19@sha256:5f72c7b5bd616308ccfd2e74d6be16fb06364e5eecbb815fe9dc6ab9761d2111
-    container_name: aether-release-local-postgres
+    container_name: arca-release-local-postgres
     shm_size: ${POSTGRES_SHM_SIZE:-512mb}
     environment:
       POSTGRES_DB: aether
@@ -54,8 +54,8 @@ services:
       args:
         AETHER_BUILD_VERSION: ${AETHER_RELEASE_LOCAL_VERSION:-v0.7.0}
         AETHER_BUILD_TYPE: release
-    image: ${LOCAL_RELEASE_APP_IMAGE:-aether-app:release-local}
-    container_name: aether-release-local-app
+    image: ${LOCAL_RELEASE_APP_IMAGE:-arca-app:release-local}
+    container_name: arca-release-local-app
     env_file:
       - ${AETHER_ENV_FILE:-.env}
     environment:
@@ -83,9 +83,9 @@ services:
     ports:
       - "${AETHER_RELEASE_LOCAL_PORT:-18085}:${AETHER_RELEASE_LOCAL_PORT:-18085}"
     volumes:
-      - aether_release_local_root:/opt/aether
+      - arca_release_local_root:/opt/aether
     restart: unless-stopped
 
 volumes:
   postgres_data:
-  aether_release_local_root:
+  arca_release_local_root:

@@ -1,10 +1,10 @@
 # Embeddings API
 
-Aether supports OpenAI compatible embedding requests through `POST /v1/embeddings`. Embedding requests are separate from chat and responses requests. They use `input`, never `messages`, and they are always non streaming.
+Arca supports OpenAI compatible embedding requests through `POST /v1/embeddings`. Embedding requests are separate from chat and responses requests. They use `input`, never `messages`, and they are always non streaming.
 
 ## Quick Start
 
-Run this against your Aether gateway URL with a user API key that can access the model and the `openai:embedding` API format.
+Run this against your Arca gateway URL with a user API key that can access the model and the `openai:embedding` API format.
 
 ```bash
 curl -sS "http://localhost:8084/v1/embeddings" \
@@ -104,7 +104,7 @@ No schema migration is needed for embedding metadata. Existing model capability,
 
 ## Aliyun Qwen3-VL Examples
 
-Text request through Aether:
+Text request through Arca:
 
 ```bash
 curl -sS "http://localhost:8084/v1/embeddings" \

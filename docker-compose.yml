@@ -1,11 +1,11 @@
-# Aether 部署配置 - 使用预构建镜像
+# Arca 部署配置 - 使用预构建镜像
 # 使用方法: docker compose up -d
 
 services:
   postgres:
     # OCI index digest for the official multi-architecture postgres:15.19 image.
     image: postgres:15.19@sha256:5f72c7b5bd616308ccfd2e74d6be16fb06364e5eecbb815fe9dc6ab9761d2111
-    container_name: aether-postgres
+    container_name: arca-postgres
     shm_size: ${POSTGRES_SHM_SIZE:-512mb}
     environment:
       POSTGRES_DB: aether
@@ -44,7 +44,7 @@ services:
   redis:
     # OCI index digest for the official multi-architecture redis:7.4.11-alpine image.
     image: redis:7.4.11-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
-    container_name: aether-redis
+    container_name: arca-redis
     command: redis-server --dir /tmp --appendonly no --save "" --requirepass ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env} --maxclients ${REDIS_MAXCLIENTS:-10000}
     ports:
       - "127.0.0.1:${REDIS_PORT:-6379}:6379"
@@ -56,8 +56,8 @@ services:
     restart: unless-stopped
 
   app:
-    image: ${APP_IMAGE:-ghcr.io/fawney19/aether:latest}
-    container_name: aether-app
+    image: ${APP_IMAGE:-ghcr.io/becomingw/arca:latest}
+    container_name: arca-app
     user: "0:0"
     read_only: true
     cap_drop:

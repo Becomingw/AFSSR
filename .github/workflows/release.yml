@@ -1,4 +1,4 @@
-name: Release Aether
+name: Release Arca
 
 on:
   push:
@@ -10,12 +10,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-aether-${{ github.ref }}
+  group: release-arca-${{ github.ref }}
   cancel-in-progress: false
 
 env:
   REGISTRY: ghcr.io
-  GHCR_IMAGE: fawney19/aether
+  GHCR_IMAGE: becomingw/arca
   DOCKERHUB_IMAGE: fawney19/aether
 
 jobs:

@@ -7,7 +7,7 @@ the first response ID with `previous_response_id`.
 
 It shares its protocol-driving core with the Codex probe, but it does **not**
 send Codex account headers or require Codex quota events. This makes it the
-compatibility gate for Aether's standard Responses WebSocket adapter, rather
+compatibility gate for Arca's standard Responses WebSocket adapter, rather
 than a replacement for the Codex probe.
 
 ## Prerequisites
@@ -54,8 +54,8 @@ never credentials, response IDs, request bodies, or response bodies.
 
 Success establishes that this key, model, and endpoint support the Responses
 WebSocket handshake plus an in-socket continuation. It does not establish
-support for every model, tool, service tier, proxy path, or Aether provider
+support for every model, tool, service tier, proxy path, or Arca provider
 configuration. Treat a successful direct probe as a prerequisite before
-enabling **Responses WebSocket mode** for the matching Aether provider.
+enabling **Responses WebSocket mode** for the matching Arca provider.
 
 For protocol details, see the official [WebSocket Mode guide](https://developers.openai.com/api/docs/guides/websocket-mode).

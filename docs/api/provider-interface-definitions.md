@@ -2,7 +2,7 @@
 
 生成日期：2026-06-03。
 
-本文档整理 Aether 当前接入和转换矩阵实际涉及的三类 provider 接口面：OpenAI Chat Completions / Responses / Embeddings / Images，Claude Messages，以及 Gemini GenerateContent / Embeddings / Files / PredictLongRunning 相关接口。它不是三家公司所有管理类、训练类、账单类 API 的全集。
+本文档整理 Arca 当前接入和转换矩阵实际涉及的三类 provider 接口面：OpenAI Chat Completions / Responses / Embeddings / Images，Claude Messages，以及 Gemini GenerateContent / Embeddings / Files / PredictLongRunning 相关接口。它不是三家公司所有管理类、训练类、账单类 API 的全集。
 
 这是 schema inventory / audit input，不是运行时代码的字段 allowlist。Provider 官方新增字段时，同格式运行时路径仍按原始 body 透传；canonical same-format roundtrip 通过 provider extension 保留未映射字段；跨格式转换只有在存在显式语义映射时才开放，否则 fail closed。刷新本文档只用于更新审计基线和决定是否新增跨格式映射。
 
@@ -20,11 +20,11 @@
 - Anthropic Messages SDK types: https://github.com/anthropics/anthropic-sdk-typescript/blob/main/src/resources/messages/messages.ts
 - Gemini Discovery JSON: https://generativelanguage.googleapis.com/$discovery/rest?version=v1beta
 
-说明：字段表中的“必填”来自官方 schema 的 `required` 或 TypeScript `?` 标记；很多接口还会受到模型、账号权限、beta header、区域、Aether provider 配置和上游版本的约束。Aether 的 `/v1/rerank` 是 OpenAI/Jina compatible 兼容面，不是 OpenAI 官方 OpenAPI 中的 endpoint；它见 `docs/api/rerank.md`。
+说明：字段表中的“必填”来自官方 schema 的 `required` 或 TypeScript `?` 标记；很多接口还会受到模型、账号权限、beta header、区域、Arca provider 配置和上游版本的约束。Arca 的 `/v1/rerank` 是 OpenAI/Jina compatible 兼容面，不是 OpenAI 官方 OpenAPI 中的 endpoint；它见 `docs/api/rerank.md`。
 
-## Aether API Format 对应关系
+## Arca API Format 对应关系
 
-| Aether format | Provider 原生接口 | 请求根 schema | 响应根 schema |
+| Arca format | Provider 原生接口 | 请求根 schema | 响应根 schema |
 | --- | --- | --- | --- |
 | `openai:chat` | `POST /v1/chat/completions` | `CreateChatCompletionRequest` | `CreateChatCompletionResponse` 或 `CreateChatCompletionStreamResponse` |
 | `openai:responses` | `POST /v1/responses` | `CreateResponse` | `Response` 或 `ResponseStreamEvent` |
@@ -6346,7 +6346,7 @@ Additional properties: `任意 JSON 值`
 
 ## Gemini Endpoints
 
-| Method | Path | Request schema | Response schema | Aether format |
+| Method | Path | Request schema | Response schema | Arca format |
 | --- | --- | --- | --- | --- |
 | POST | `v1beta/{+model}:generateContent` | `GenerateContentRequest` | `GenerateContentResponse` | `gemini:generate_content` |
 | POST | `v1beta/{+model}:streamGenerateContent` | `GenerateContentRequest` | `GenerateContentResponse (SSE)` | `gemini:generate_content` |

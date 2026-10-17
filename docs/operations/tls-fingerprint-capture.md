@@ -1,6 +1,6 @@
 # TLS Fingerprint Capture
 
-Aether stores per-request TLS capture under `usage.request_metadata.tls_fingerprint`.
+Arca stores per-request TLS capture under `usage.request_metadata.tls_fingerprint`.
 
 ```json
 {
@@ -29,13 +29,13 @@ Aether stores per-request TLS capture under `usage.request_metadata.tls_fingerpr
 }
 ```
 
-`incoming` is the client-to-Aether TLS fingerprint. It can be populated by Aether native TLS capture in direct deployments or by trusted reverse-proxy headers when TLS terminates before Aether.
+`incoming` is the client-to-Arca TLS fingerprint. It can be populated by Arca native TLS capture in direct deployments or by trusted reverse-proxy headers when TLS terminates before Arca.
 
-`outgoing` is the Aether-to-provider TLS transport record. The current gateway records the exact transport configuration it controls. It sets `observed: false` because reqwest/rustls does not expose the emitted ClientHello bytes on the direct path. A future connector-level ClientHello capture or probe result can reuse the same object with `observed: true` plus `ja3`, `ja3_hash`, and `ja4`.
+`outgoing` is the Arca-to-provider TLS transport record. The current gateway records the exact transport configuration it controls. It sets `observed: false` because reqwest/rustls does not expose the emitted ClientHello bytes on the direct path. A future connector-level ClientHello capture or probe result can reuse the same object with `observed: true` plus `ja3`, `ja3_hash`, and `ja4`.
 
 ## Nginx TLS Termination
 
-When nginx terminates HTTPS and proxies HTTP to Aether, Aether cannot see the original ClientHello. Configure nginx to forward the TLS fields it can observe:
+When nginx terminates HTTPS and proxies HTTP to Arca, Arca cannot see the original ClientHello. Configure nginx to forward the TLS fields it can observe:
 
 ```nginx
 server {
@@ -74,7 +74,7 @@ Only accept these headers from trusted infrastructure. Do not expose Aether dire
 
 ## Nginx TCP Passthrough
 
-If Aether terminates TLS itself, nginx can pass TCP through without decrypting:
+If Arca terminates TLS itself, nginx can pass TCP through without decrypting:
 
 ```nginx
 stream {
@@ -91,4 +91,4 @@ stream {
 }
 ```
 
-In this mode nginx cannot inject HTTP headers because it never sees HTTP. Aether native TLS capture is responsible for populating `tls_fingerprint.incoming`.
+In this mode nginx cannot inject HTTP headers because it never sees HTTP. Arca native TLS capture is responsible for populating `tls_fingerprint.incoming`.

@@ -1,6 +1,6 @@
-# AFSSR Source Snapshot
+# Arca Source Snapshot
 
-AFSSR is a downstream fork of https://github.com/fawney19/Aether.
+Arca (previously published as AFSSR) is a downstream fork of https://github.com/fawney19/Aether.
 Maintainer of this fork and its modifications: Mengfei Wang (Becomingw).
 Original Aether contributors retain their copyright. The original LICENSE is
 unchanged; this publication does not grant commercial-use permission.
@@ -42,13 +42,13 @@ cargo fmt --all --check
 
 ## Build Your Own Image
 
-AFSSR does not yet publish an image registry or release-update endpoint.
-Do not install an upstream Aether image expecting AFSSR changes.
+Arca does not yet publish an image registry or release-update endpoint.
+Do not install an upstream Aether image expecting Arca changes.
 The inherited local-source Dockerfile builds the frontend and backend:
 
 ```sh
-docker build --build-arg AETHER_BUILD_VERSION=afssr-dev \
-  -f Dockerfile.app.local -t afssr:local .
+docker build --build-arg AETHER_BUILD_VERSION=arca-dev \
+  -f Dockerfile.app.local -t arca:local .
 ```
 
 Choose that image explicitly in your own Compose configuration. Generate new
@@ -57,7 +57,7 @@ replace secrets when upgrading an existing installation. This publication does
 not rebuild or change the running production service.
 
 Upstream publishing workflows must be reviewed and retargeted before use here.
-The initial upload does not configure AFSSR releases or automatic deployment.
+The initial upload does not configure Arca releases or automatic deployment.
 
 ## Compatibility Templates
 

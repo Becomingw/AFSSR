@@ -80,9 +80,9 @@ new WebSocket connections without a gateway restart. It is available to every
 provider type; candidate planning still requires a selected
 `openai:responses` endpoint.
 
-Authenticate the upgrade request with the normal Aether API key. The first
+Authenticate the upgrade request with the normal Arca API key. The first
 client frame must be a text JSON `response.create` containing a non-empty
-`model`. Aether then applies its regular Responses candidate selection, but
+`model`. Arca then applies its regular Responses candidate selection, but
 accepts only an eligible, WebSocket-enabled endpoint using `openai:responses`.
 It opens an upstream WebSocket using the selected provider key.
 
@@ -106,7 +106,7 @@ It keeps the existing upstream when the same target remains eligible, or
 transparently replaces the upstream between responses when the selected target
 changes. Overlapping responses on one client socket remain rejected.
 
-Each `response.create` is tracked as an independent Aether logical request:
+Each `response.create` is tracked as an independent Arca logical request:
 it receives its own request/candidate identity, usage lifecycle, and terminal
 audit record. `response.completed`, `response.failed`,
 `response.incomplete`, `response.cancelled`, client disconnects, and upstream
@@ -139,12 +139,12 @@ ws.send(json.dumps({
 - A connection is closed after 60 minutes; reconnect before then for long runs.
 - Each `response.create` must receive its first upstream event within the
   selected provider's `stream_first_byte_timeout` (30 seconds by default),
-  and finish within its `request_timeout` (20 minutes by default). Aether
+  and finish within its `request_timeout` (20 minutes by default). Arca
   sends `responses_websocket_first_event_timeout` or
   `responses_websocket_turn_timeout` and closes the bound socket when either
   deadline expires.
 - Responses are sequential; no multiplexing is supported on one socket.
-- Each `response.create` consumes the normal Aether user/API-key RPM budget.
+- Each `response.create` consumes the normal Arca user/API-key RPM budget.
 - Continuations with a non-null `previous_response_id` stay on the bound
   provider key. Independent turns are re-authorized and re-planned each time;
   they reuse the socket only when planning selects the same physical target.
