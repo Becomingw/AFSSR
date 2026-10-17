@@ -26,6 +26,7 @@ const run = { id: 'run-id', profile_id: profile.id, config: profile.config, conf
 function snapshot(can_run = true) { return { schema_version: 1, revision: 3, can_run, profiles: [profile], runs: [{ run, stale: true }] } }
 let app: App, root: HTMLDivElement
 async function flush() { for (let i = 0; i < 8; i++) { await Promise.resolve(); await nextTick() } }
+function tab(label: string) { return [...root.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(b => b.textContent?.includes(label))! }
 function button(label: string) { return [...root.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.trim() === label)! }
 beforeEach(async () => {
   vi.clearAllMocks(); api.list.mockResolvedValue(snapshot()); api.run.mockResolvedValue(snapshot()); api.saveProfile.mockResolvedValue(snapshot())
@@ -56,8 +57,9 @@ describe('compatibility workbench', () => {
     expect(root.textContent).toContain('真实客户端：未测试')
   })
   it('never renders unknown status as a pass and displays failure reasons', async () => {
+    tab('合成记录').click(); await flush()
     button('逐项结果').click(); await flush()
-    expect(root.querySelector('section.border-t')?.textContent).toContain('已过期')
+    expect(root.querySelector('[aria-label="逐项结果"]')?.textContent).toContain('已过期')
     expect(root.textContent).toContain('未知（非通过）')
     expect(root.textContent).toContain('Protocol conversion rejected')
     expect(root.textContent).toContain('未测试')
@@ -85,5 +87,38 @@ describe('compatibility workbench', () => {
     expect(api.run).toHaveBeenCalledTimes(1)
     expect(root.querySelector('[role="alert"]')?.textContent).toContain('配置已变动')
     expect(button('新建配置').disabled).toBe(true)
+  })
+  it('summarises configs, opens the latest result from a card and lists every scenario', async () => {
+    expect(root.querySelector('[aria-label="概览"]')?.textContent).toContain('待运行 / 已过期')
+    expect(root.querySelector('[aria-label="配置列表"] article')?.textContent).toContain('fixture-model')
+    button('最近结果').click(); await flush()
+    const detail = root.querySelector('[aria-label="逐项结果"]')!
+    expect(detail.textContent).toContain('基础请求')
+    expect(detail.textContent).toContain('Protocol conversion rejected')
+    root.querySelector<HTMLButtonElement>('button[title="关闭"]')!.click(); await flush()
+    expect(root.querySelector('[aria-label="逐项结果"]')).toBeNull()
+  })
+  it('shows the coverage matrix with one row per config and never marks unknown results as passed', async () => {
+    tab('覆盖矩阵').click(); await flush()
+    const matrix = root.querySelector('[aria-label="覆盖矩阵"]')!
+    expect(matrix.querySelectorAll('tbody tr')).toHaveLength(1)
+    expect(matrix.querySelectorAll('thead th')).toHaveLength(10)
+    expect(matrix.textContent).toContain('fixture-model')
+    expect(matrix.querySelectorAll('button[title*="合成通过"]')).toHaveLength(0)
+  })
+  it('runs every visible config in sequence against the newest revision', async () => {
+    const second = { ...profile, id: 'second-id', config_fingerprint: 'second-fingerprint' }
+    api.list.mockResolvedValue({ ...snapshot(), profiles: [profile, second] }); root.querySelector<HTMLButtonElement>('button[title="刷新"]')!.click(); await flush()
+    api.run.mockResolvedValueOnce({ ...snapshot(), revision: 4, profiles: [profile, second] }).mockResolvedValueOnce({ ...snapshot(), revision: 5, profiles: [profile, second] })
+    button('运行全部').click(); await flush()
+    expect(api.run).toHaveBeenCalledTimes(2)
+    expect(api.run.mock.calls.map(call => [call[0], call[1].id])).toEqual([[3, 'fixture-id'], [4, 'second-id']])
+  })
+  it('duplicates a config as a new one instead of overwriting it', async () => {
+    root.querySelector<HTMLButtonElement>('button[title="复制为新配置"]')!.click(); await flush()
+    expect(root.querySelector('[aria-label="配置表单"]')?.textContent).toContain('新建配置')
+    root.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); await flush()
+    const saved = api.saveProfile.mock.calls[0]![1]
+    expect(saved.id).not.toBe(profile.id)
   })
 })

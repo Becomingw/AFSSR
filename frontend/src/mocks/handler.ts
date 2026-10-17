@@ -1293,6 +1293,62 @@ function createMockCodexPoolKeys() {
   ]
 }
 
+
+// ========== 模型兼容性演示数据 ==========
+type MockCompatibilityProfile = { id: string; config: Record<string, unknown>; config_fingerprint: string }
+const MOCK_COMPAT_CASES = ['basic_request', 'tool_definition', 'tool_return', 'multi_turn_tools', 'long_history', 'image', 'sync_response', 'tool_response', 'stream']
+function mockFingerprint(id: string, config: Record<string, unknown>): string {
+  let hash = 2166136261
+  for (const ch of JSON.stringify([id, config])) hash = Math.imul(hash ^ ch.charCodeAt(0), 16777619) >>> 0
+  return hash.toString(16).padStart(8, '0').repeat(8)
+}
+function mockProfile(id: string, client: string, version: string, protocol: string, model: string, upstream: string, mapped: string): MockCompatibilityProfile {
+  const config = { client, client_version: version, client_protocol: protocol, model, upstream_format: upstream, mapped_model: mapped }
+  return { id, config, config_fingerprint: mockFingerprint(id, config) }
+}
+function mockRun(profile: MockCompatibilityProfile, createdAt: number, outcome: 'passed' | 'failed-stream' | 'unsupported-image') {
+  return {
+    id: crypto.randomUUID(), profile_id: profile.id, config: profile.config, config_fingerprint: profile.config_fingerprint,
+    suite: 'offline-protocol-v1', evidence: 'offline_synthetic', created_at: createdAt,
+    cases: [
+      ...MOCK_COMPAT_CASES.map(name => {
+        if (outcome === 'failed-stream' && name === 'stream') return { case: name, status: 'failed', reason: '流式事件在 response.completed 之前被截断，转换器拒绝了该合成固件' }
+        if (outcome === 'unsupported-image' && name === 'image') return { case: name, status: 'unsupported', reason: '目标协议不支持图片载体' }
+        return { case: name, status: 'passed', reason: '合成固件转换通过' }
+      }),
+      { case: 'cancel', status: 'not_tested', reason: '未执行' }, { case: 'compression', status: 'not_tested', reason: '未执行' },
+      { case: 'real_client', status: 'not_tested', reason: '离线合成不运行真实客户端' }, { case: 'real_model', status: 'not_tested', reason: '离线合成不调用真实模型' },
+    ],
+  }
+}
+const mockCompatibility = (() => {
+  const now = Math.floor(Date.now() / 1000)
+  const profiles = [
+    mockProfile('compat-1', 'codex', '0.58.0', 'openai:responses', 'gpt-5.1', 'claude:messages', 'claude-sonnet-4-5-20250929'),
+    mockProfile('compat-2', 'codex', '0.58.0', 'openai:responses', 'gpt-5.1-codex', 'openai:chat', 'gpt-5.1-codex'),
+    mockProfile('compat-3', 'claude_code', '2.0.31', 'claude:messages', 'claude-opus-4-5', 'openai:responses', 'gpt-5.1'),
+    mockProfile('compat-4', 'open_code', '1.0.0', 'openai:chat', 'gemini-3-pro-preview', 'claude:messages', 'claude-haiku-4-5-20251001'),
+    mockProfile('compat-5', 'generic', 'unspecified', 'openai:chat', 'gpt-5.1-codex-mini', 'openai:responses', 'gpt-5.1-codex-mini'),
+  ]
+  const runs = [
+    mockRun(profiles[0], now - 1800, 'passed'),
+    mockRun(profiles[1], now - 5400, 'failed-stream'),
+    mockRun(profiles[2], now - 86400 * 2, 'passed'),
+    mockRun(profiles[3], now - 3600 * 7, 'unsupported-image'),
+  ]
+  // The third profile was edited after its last run, so its record is stale.
+  runs[2].config_fingerprint = 'outdated0'.repeat(8)
+  return { revision: 12, profiles, runs }
+})()
+function buildMockCompatibilitySnapshot() {
+  return {
+    schema_version: 1, revision: mockCompatibility.revision, can_run: true, suite: 'offline-protocol-v1',
+    fingerprint_scope: 'workbench_config_and_converter_source', real_model_status: 'not_tested', real_client_status: 'not_tested',
+    profiles: mockCompatibility.profiles,
+    runs: mockCompatibility.runs.map(run => ({ run, stale: run.config_fingerprint !== mockCompatibility.profiles.find(p => p.id === run.profile_id)?.config_fingerprint })),
+  }
+}
+
 /**
  * Mock API 路由处理器
  */
@@ -2073,6 +2129,35 @@ const mockHandlers: Record<string, (config: AxiosRequestConfig) => Promise<Axios
   },
 
   // ========== Admin: Modules ==========
+  // ========== 模型兼容性（离线合成）==========
+  'GET /api/admin/compatibility': async () => {
+    await delay()
+    requireAdmin()
+    return createMockResponse(buildMockCompatibilitySnapshot())
+  },
+  'POST /api/admin/compatibility/profiles': async (config) => {
+    await delay()
+    requireAdmin()
+    const body = JSON.parse(config.data || '{}')
+    const profile = body.profile as { id: string; config: Record<string, unknown> }
+    const index = mockCompatibility.profiles.findIndex(item => item.id === profile.id)
+    const saved = { id: profile.id, config: profile.config, config_fingerprint: mockFingerprint(profile.id, profile.config) }
+    if (index >= 0) mockCompatibility.profiles[index] = saved
+    else mockCompatibility.profiles.push(saved)
+    mockCompatibility.revision++
+    return createMockResponse(buildMockCompatibilitySnapshot())
+  },
+  'POST /api/admin/compatibility/runs': async (config) => {
+    await delay(500)
+    requireAdmin()
+    const body = JSON.parse(config.data || '{}')
+    const profile = mockCompatibility.profiles.find(item => item.id === body.profile_id)
+    if (!profile) throw { response: createMockResponse({ detail: '配置不存在' }, 404) }
+    mockCompatibility.runs.unshift(mockRun(profile, Math.floor(Date.now() / 1000), profile.config.model === 'gpt-5.1-codex' ? 'failed-stream' : 'passed'))
+    mockCompatibility.revision++
+    return createMockResponse(buildMockCompatibilitySnapshot())
+  },
+
   'GET /api/admin/modules/status': async () => {
     await delay()
     requireAdmin()
