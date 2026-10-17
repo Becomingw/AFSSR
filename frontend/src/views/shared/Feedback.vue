@@ -278,6 +278,7 @@
             :issue-base="base"
             :mentionable="mentionable"
             :current-user-id="currentUserId"
+            :avatars="detail.avatars"
             :current-username="currentUsername"
             :manager="manager"
             :busy="busy"

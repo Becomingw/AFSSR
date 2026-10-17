@@ -41,14 +41,9 @@
                   class="mt-1"
                 />
               </div>
-              <div>
-                <Label for="avatar">头像 URL</Label>
-                <Input
-                  id="avatar"
-                  v-model="preferencesForm.avatar_url"
-                  type="url"
-                  class="mt-1"
-                />
+              <div class="md:col-span-2">
+                <Label>头像</Label>
+                <AvatarEditor class="mt-2" />
               </div>
             </div>
 
@@ -715,6 +710,7 @@ import {
   validatePasswordByPolicy,
   type PasswordPolicyLevel,
 } from '@/utils/passwordPolicy'
+import AvatarEditor from '@/components/common/AvatarEditor.vue'
 import Card from '@/components/ui/card.vue'
 import Button from '@/components/ui/button.vue'
 import Badge from '@/components/ui/badge.vue'

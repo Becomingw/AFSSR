@@ -1964,6 +1964,7 @@ fn pending_migrations_from_applied_skips_versions_already_applied() {
             20261017000000,
             20261018000000,
             20261019000000,
+            20261020000000,
         ]
     );
 }
@@ -2620,6 +2621,107 @@ async fn feedback_notifications_work_on_postgres() {
         .await
         .unwrap();
     assert_eq!((page.items.len(), page.unread_count), (0, 0));
+}
+
+#[tokio::test]
+async fn user_avatars_work_on_postgres_and_follow_their_user() {
+    use aether_data_contracts::repository::avatars::UserAvatarRepository;
+    use aether_data_postgres::PostgresAvatarRepository;
+
+    let Some(server) = ManagedPostgresServer::try_start()
+        .await
+        .expect("postgres test should start or skip")
+    else {
+        return;
+    };
+    let pool = PgPool::connect(server.database_url())
+        .await
+        .expect("pool should connect");
+    prepare_and_apply_clean_postgres_database(&pool).await;
+    query("INSERT INTO public.users (id, username, email_verified) VALUES ('av-a','av-a',TRUE),('av-b','av-b',TRUE)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let repo = PostgresAvatarRepository::new(pool.clone());
+    assert_eq!(repo.get("av-a").await.unwrap(), None);
+    let first = repo.put("av-a", "image/png", b"one").await.unwrap();
+    let second = repo.put("av-a", "image/webp", b"two").await.unwrap();
+    assert!(second > first, "a replacement is always a newer version");
+    repo.put("av-b", "image/jpeg", b"bee").await.unwrap();
+    let stored = repo.get("av-a").await.unwrap().unwrap();
+    assert_eq!(
+        (
+            stored.content_type.as_str(),
+            stored.data.as_slice(),
+            stored.version
+        ),
+        ("image/webp", &b"two"[..], second)
+    );
+    let versions = repo
+        .versions(&["av-a".into(), "av-b".into(), "nobody".into()])
+        .await
+        .unwrap();
+    assert_eq!(versions.len(), 2);
+    assert!(repo.versions(&[]).await.unwrap().is_empty());
+    // The table itself refuses what the application would never write.
+    assert!(repo.put("av-a", "image/svg+xml", b"<svg/>").await.is_err());
+    assert!(repo
+        .put("av-a", "image/png", &vec![0u8; 262_145])
+        .await
+        .is_err());
+    assert!(repo.put("av-a", "image/png", b"").await.is_err());
+    assert!(
+        repo.put("nobody", "image/png", b"x").await.is_err(),
+        "pictures need a user"
+    );
+    // Removing the picture, then the user, leaves nothing behind.
+    assert!(repo.delete("av-a").await.unwrap());
+    assert!(!repo.delete("av-a").await.unwrap());
+    query("DELETE FROM public.users WHERE id='av-b'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(repo.get("av-b").await.unwrap(), None);
+}
+
+#[tokio::test]
+async fn user_avatars_migration_is_idempotent() {
+    let Some(server) = ManagedPostgresServer::try_start()
+        .await
+        .expect("postgres test should start or skip")
+    else {
+        return;
+    };
+    let pool = PgPool::connect(server.database_url())
+        .await
+        .expect("pool should connect");
+    sqlx::raw_sql("CREATE TABLE users(id VARCHAR(36) PRIMARY KEY, username VARCHAR(200) NOT NULL); INSERT INTO users VALUES ('u1','alice');")
+        .execute(&pool)
+        .await
+        .expect("fixture should be created");
+    let migration = POSTGRES_MIGRATOR
+        .iter()
+        .find(|migration| migration.version == 20261020000000)
+        .expect("user avatars migration should be registered");
+    for _ in 0..2 {
+        sqlx::raw_sql(&migration.sql)
+            .execute(&pool)
+            .await
+            .expect("user avatars migration should apply (and re-apply)");
+    }
+    sqlx::query("INSERT INTO user_avatars(user_id,content_type,data,updated_at) VALUES('u1','image/png','\\x89504e47',1)")
+        .execute(&pool)
+        .await
+        .expect("a picture can be stored");
+    sqlx::query("DELETE FROM users WHERE id='u1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM user_avatars")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(left, 0, "pictures are removed with their user");
 }
 
 #[tokio::test]

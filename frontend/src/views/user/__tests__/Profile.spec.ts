@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, defineComponent, h, nextTick, type App } from 'vue'
 import Profile from '../Profile.vue'
 
-const mocks = vi.hoisted(() => ({ profile: vi.fn(), usage: vi.fn(), models: vi.fn(), quotas: vi.fn() }))
+const mocks = vi.hoisted(() => ({ profile: vi.fn(), usage: vi.fn(), models: vi.fn(), quotas: vi.fn(), auth: { user: { id: 'user-1', username: 'research-user', avatar_version: null as number | null } } }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => mocks.auth }))
 vi.mock('@/api/me', () => ({ meApi: { getProfile: mocks.profile, getUsage: mocks.usage, getAvailableModels: mocks.models } }))
 vi.mock('../profile/TokenActivity.vue', () => ({ default: defineComponent({ setup() { return () => h('section', { 'data-token-activity': '' }, 'Token 活动') } }) }))
 vi.mock('@/api/account', () => ({ accountApi: { entitlements: mocks.quotas } }))
@@ -20,6 +21,7 @@ async function flush() { for (let i = 0; i < 12; i++) { await Promise.resolve();
 function click(label: string) { const button = [...root.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.trim() === label); expect(button).toBeTruthy(); button?.click() }
 beforeEach(async () => {
   vi.clearAllMocks()
+  mocks.auth.user.avatar_version = null
   mocks.profile.mockResolvedValue({ username: 'research-user', email: 'self@example.test', is_active: true, role: 'user', created_at: '2026-10-15T00:00:00Z' })
   mocks.quotas.mockResolvedValue(structuredClone(quota))
   mocks.usage.mockResolvedValue({ total_requests: 42, total_tokens: 125000, total_cost: 3.5, summary_by_model: [{ model: 'fabel', requests: 42, total_tokens: 125000, total_cost_usd: 3.5 }], records: [] })
@@ -29,6 +31,15 @@ beforeEach(async () => {
 afterEach(() => { app.unmount(); root.remove() })
 
 describe('personal profile', () => {
+  it('shows the uploaded picture when there is one and the initial otherwise', async () => {
+    const avatar = () => root.querySelector('.profile-heading .user-avatar')!
+    expect(avatar().querySelector('img')).toBeNull()
+    expect(avatar().textContent?.trim()).toBe('R')
+    app.unmount(); root.remove()
+    mocks.auth.user.avatar_version = 1792300000000
+    root = document.createElement('div'); document.body.append(root); app = createApp(Profile); app.mount(root); await flush()
+    expect(avatar().querySelector('img')?.getAttribute('src')).toBe('/api/avatars/user-1?v=1792300000000')
+  })
   it('keeps family usage out of total windows and groups its shared members once', async () => {
     mocks.quotas.mockResolvedValue({ ...quota, windows: [...quota.windows,
       { ...quota.windows[0], model: null, family: 'f1', family_name: 'Fabel 家族', models: ['fabel', 'fabel-pro'], limit_usd: 2 },

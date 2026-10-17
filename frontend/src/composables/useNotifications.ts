@@ -1,11 +1,12 @@
 import { computed, ref } from 'vue'
-import { listNotifications, markNotificationsRead, type FeedbackNotification } from '@/api/feedback'
+import { listNotifications, markNotificationsRead, type AvatarVersions, type FeedbackNotification } from '@/api/feedback'
 
 const POLL_MS = 60_000
 
 // One shared state for every bell in the layout (desktop and mobile headers).
 const unread = ref(0)
 const items = ref<FeedbackNotification[]>([])
+const avatars = ref<AvatarVersions>({})
 const nextBefore = ref<number | null>(null)
 const loading = ref(false)
 const failed = ref(false)
@@ -31,6 +32,7 @@ async function load(more = false) {
     items.value = more ? [...items.value, ...page.items] : page.items
     nextBefore.value = page.next_before
     unread.value = page.unread_count
+    avatars.value = { ...avatars.value, ...page.avatars }
   } catch {
     if (current === generation) failed.value = true
   } finally {
@@ -76,6 +78,7 @@ export function useNotifications() {
   return {
     unread: computed(() => unread.value),
     items: computed(() => items.value),
+    avatars: computed(() => avatars.value),
     hasMore: computed(() => nextBefore.value !== null),
     loading: computed(() => loading.value),
     failed: computed(() => failed.value),
@@ -91,6 +94,7 @@ export function useNotifications() {
 export function resetNotificationsForTests() {
   unread.value = 0
   items.value = []
+  avatars.value = {}
   nextBefore.value = null
   loading.value = false
   failed.value = false

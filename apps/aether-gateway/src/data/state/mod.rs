@@ -6,6 +6,7 @@ use std::sync::OnceLock;
 use std::sync::RwLock;
 
 use super::auth::GatewayAuthApiKeySnapshot;
+mod avatars;
 mod compatibility;
 mod feedback;
 use super::candidates::{read_request_candidate_trace, RequestCandidateTrace};

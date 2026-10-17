@@ -3,6 +3,7 @@ pub mod announcements;
 pub mod audit;
 pub mod auth;
 pub mod auth_modules;
+pub mod avatars;
 pub mod background_tasks;
 pub mod billing;
 pub mod candidate_selection;

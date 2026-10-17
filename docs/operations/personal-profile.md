@@ -38,6 +38,37 @@ The separate call overview uses `/api/users/me/usage`. Its standard-rate cost is
 not necessarily the actual cost charged to entitlements; the UI labels these
 separately. Interval changes discard stale responses.
 
+## Profile Picture
+
+Every user can upload a picture in **设置 → 基本信息 → 头像** (PNG, JPEG, WebP or GIF). The browser
+crops it to the centre square, scales it to 256x256 and re-encodes it (WebP, PNG where WebP is
+unavailable), which also drops any metadata such as GPS positions; only that small version is sent
+and stored. The previous free-text "头像 URL" field is gone: the stored `avatar_url` preference is
+kept but no longer shown anywhere, because loading arbitrary third-party URLs in every viewer's
+browser leaks who is looking and often fails on hotlink protection.
+
+```text
+PUT    /api/avatars/me        raw PNG/JPEG/WebP bytes, session required, 256 KiB at most
+DELETE /api/avatars/me        removes it
+GET    /api/avatars/{user_id}?v=<version>
+```
+
+- The server checks the image's magic bytes, so SVG (which can carry scripts) and anything else is
+  refused with 415, and oversize bodies with 413. Pictures live in the `user_avatars` table and go
+  away with their user (migration `20261020000000_user_avatars.sql`, additive and idempotent).
+- `GET` needs **no session**: browsers cannot attach the in-memory access token to an `<img>`.
+  The only handle is the unguessable user id, which the API only reveals to logged-in users, and
+  the response is sandboxed (`nosniff`, `Content-Security-Policy: default-src 'none'; sandbox`).
+  Treat avatars as visible to everyone on the deployment.
+- A picture's version (Unix milliseconds of the last change) is part of its URL. Requests naming the
+  current version are cached for a year (`immutable`); an old or missing version is revalidated
+  after five minutes and answers `304` for an unchanged ETag.
+- Responses that mention people carry the versions: `GET /api/users/me` has `avatar_version`, and the
+  discussion list, detail and notification responses have `avatars: {user_id: version}` (people
+  without a picture are absent), so pages never request pictures that do not exist.
+- Shown on the profile page, in discussions, and in the notification bell; elsewhere (for example the
+  administrator user list) users still show an initial.
+
 ## Token Activity
 
 The profile also reads the existing self-scoped

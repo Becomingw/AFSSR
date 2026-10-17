@@ -318,6 +318,10 @@ topics are neither listed nor counted, repeated mentions of one user in one mess
 notification, and each user keeps the newest 200. Migration `20261019000000_feedback_notifications.sql`
 adds the `feedback_notifications` table.
 
+Discussion list, detail and notification responses also carry `avatars: {user_id: version}` for the
+people in them (see [Personal Profile](personal-profile.md#profile-picture)); the console uses it to
+show pictures next to posts and in the bell.
+
 ### Writing a topic
 
 The new-topic form has a **专注模式** button: a full-screen layer with a large title field and

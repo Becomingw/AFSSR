@@ -32,8 +32,10 @@ export interface FeedbackEvent {
   /** 回复被删除的时间（秒），内容已清空 */
   deleted_at?: number | null
 }
-export interface FeedbackPage { items: FeedbackSummary[]; total: number; next_cursor: number | null }
-export interface FeedbackDetail { issue: FeedbackIssue; events: FeedbackEvent[]; next_event_cursor: number | null; has_more: boolean }
+/** user_id -> 头像版本；没有头像的人不在其中 */
+export type AvatarVersions = Record<string, number>
+export interface FeedbackPage { items: FeedbackSummary[]; total: number; next_cursor: number | null; avatars?: AvatarVersions }
+export interface FeedbackDetail { issue: FeedbackIssue; events: FeedbackEvent[]; next_event_cursor: number | null; has_more: boolean; avatars?: AvatarVersions }
 export interface FeedbackCreate { title: string; description: string; category: FeedbackCategory; model?: string; request_id?: string; client_request_id: string; include_diagnostics?: boolean }
 export type FeedbackAction = { action: 'reply'; content: string } | { action: 'set_status'; status: FeedbackStatus; comment?: string } | { action: 'set_pinned'; pinned: boolean }
   | { action: 'edit_issue'; title?: string; description?: string; category?: FeedbackCategory }
@@ -62,9 +64,9 @@ export async function listMentionableAdmins(admin: boolean): Promise<string[]> {
 
 export interface FeedbackNotification {
   id: number; kind: 'mention'; issue_id: string; issue_number: number; issue_title: string
-  event_seq: number; actor_username: string | null; snippet: string; created_at: number; read_at: number | null
+  event_seq: number; actor_id: string | null; actor_username: string | null; snippet: string; created_at: number; read_at: number | null
 }
-export interface NotificationPage { items: FeedbackNotification[]; unread_count: number; next_before: number | null }
+export interface NotificationPage { items: FeedbackNotification[]; unread_count: number; next_before: number | null; avatars?: AvatarVersions }
 /** 站内通知（被 @ 到）；管理员和普通用户都走用户路由，只返回自己的通知 */
 export async function listNotifications(params: { unread?: boolean, before?: number, limit?: number } = {}): Promise<NotificationPage> {
   return (await apiClient.get<NotificationPage>('/api/feedback/notifications', { params: { unread: params.unread ? 1 : undefined, before: params.before, limit: params.limit } })).data

@@ -14,7 +14,7 @@ vi.mock('@/stores/auth', async () => {
 
 const note = (id: number, read = false) => ({
   id, kind: 'mention', issue_id: `issue-${id}`, issue_number: 10 + id, issue_title: `Topic ${id}`, event_seq: id,
-  actor_username: 'alice', snippet: `ping ${id}`, created_at: Math.floor(Date.now() / 1000) - 120, read_at: read ? 1 : null,
+  actor_id: 'actor-1', actor_username: 'alice', snippet: `ping ${id}`, created_at: Math.floor(Date.now() / 1000) - 120, read_at: read ? 1 : null,
 })
 let app: App
 let root: HTMLDivElement
@@ -26,7 +26,7 @@ beforeEach(async () => {
   vi.clearAllMocks()
   resetNotificationsForTests()
   mocks.auth.user = reactive({ id: 'u1', role: 'user' })
-  mocks.list.mockResolvedValue({ items: [note(1), note(2, true)], unread_count: 1, next_before: null })
+  mocks.list.mockResolvedValue({ items: [note(1), note(2, true)], unread_count: 1, next_before: null, avatars: { 'actor-1': 77 } })
   mocks.mark.mockResolvedValue(0)
   root = document.createElement('div')
   document.body.append(root)
@@ -60,6 +60,12 @@ describe('NotificationBell', () => {
     expect(mocks.push).toHaveBeenCalledWith('/dashboard/feedback/11')
     expect(root.querySelector('.bell-panel')).toBeNull()
     expect(root.querySelector('[data-testid="notification-badge"]')).toBeNull()
+  })
+
+  it("shows the mentioning person's picture", async () => {
+    bell().click()
+    await flush()
+    expect(root.querySelector('.bell-item img')!.getAttribute('src')).toBe('/api/avatars/actor-1?v=77')
   })
 
   it('sends administrators to the console copy of the topic', async () => {

@@ -85,7 +85,7 @@ export function useFeedback() {
       const result = await getFeedback(admin.value, id, cursor)
       if (selectedId.value === id && detail.value) {
         const events = new Map([...detail.value.events, ...result.events].map(event => [event.seq, event]))
-        detail.value = { ...result, events: [...events.values()].sort((a, b) => a.seq - b.seq) }
+        detail.value = { ...result, events: [...events.values()].sort((a, b) => a.seq - b.seq), avatars: { ...detail.value.avatars, ...result.avatars } }
       }
     } catch (reason) { error.value = problem(reason) }
     finally { busy.value = false }
@@ -150,6 +150,7 @@ export function useFeedback() {
         if (selectedId.value === id && detail.value) {
           const events = new Map([...detail.value.events, ...latest.events].map(event => [event.seq, event]))
           detail.value.issue = latest.issue
+          detail.value.avatars = { ...detail.value.avatars, ...latest.avatars }
           detail.value.events = [...events.values()].sort((a, b) => a.seq - b.seq)
           if (!detail.value.has_more) { detail.value.has_more = latest.has_more; detail.value.next_event_cursor = latest.next_event_cursor }
         }

@@ -206,7 +206,7 @@ impl FeedbackRepository for PostgresFeedbackRepository {
         limit: usize,
     ) -> Result<NotificationPage, FeedbackError> {
         let limit = limit.clamp(1, 100);
-        let rows = sqlx::query("SELECT n.id,n.kind,n.issue_id,i.number AS issue_number,i.title AS issue_title,n.event_seq,a.username AS actor_username,n.snippet,n.created_at,n.read_at FROM feedback_notifications n JOIN feedback_issues i ON i.id=n.issue_id AND i.deleted_at IS NULL LEFT JOIN users a ON a.id=n.actor_id WHERE n.user_id=$1 AND ($2 IS FALSE OR n.read_at IS NULL) AND ($3::bigint IS NULL OR n.id<$3) ORDER BY n.id DESC LIMIT $4")
+        let rows = sqlx::query("SELECT n.id,n.kind,n.issue_id,i.number AS issue_number,i.title AS issue_title,n.event_seq,n.actor_id,a.username AS actor_username,n.snippet,n.created_at,n.read_at FROM feedback_notifications n JOIN feedback_issues i ON i.id=n.issue_id AND i.deleted_at IS NULL LEFT JOIN users a ON a.id=n.actor_id WHERE n.user_id=$1 AND ($2 IS FALSE OR n.read_at IS NULL) AND ($3::bigint IS NULL OR n.id<$3) ORDER BY n.id DESC LIMIT $4")
             .bind(user_id)
             .bind(unread_only)
             .bind(before)
@@ -226,6 +226,7 @@ impl FeedbackRepository for PostgresFeedbackRepository {
                     issue_number: row.try_get("issue_number").map_err(unavailable)?,
                     issue_title: row.try_get("issue_title").map_err(unavailable)?,
                     event_seq: row.try_get("event_seq").map_err(unavailable)?,
+                    actor_id: row.try_get("actor_id").map_err(unavailable)?,
                     actor_username: row.try_get("actor_username").map_err(unavailable)?,
                     snippet: row.try_get("snippet").map_err(unavailable)?,
                     created_at: row.try_get("created_at").map_err(unavailable)?,

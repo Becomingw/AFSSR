@@ -310,3 +310,33 @@ columns = ["actor_id"]
 references_table = "users"
 references_columns = ["id"]
 on_delete = "set_null"
+
+[table.user_avatars]
+domain = "feedback"
+order = 40
+primary_key = ["user_id"]
+
+[[table.user_avatars.columns]]
+name = "user_id"
+type = "text_id"
+length = 36
+
+[[table.user_avatars.columns]]
+name = "content_type"
+type = "text"
+length = 32
+
+[[table.user_avatars.columns]]
+name = "data"
+type = "bytes"
+
+[[table.user_avatars.columns]]
+name = "updated_at"
+type = "unix_millis"
+
+[[table.user_avatars.foreign_keys]]
+name = "fk_user_avatars_user_id"
+columns = ["user_id"]
+references_table = "users"
+references_columns = ["id"]
+on_delete = "cascade"

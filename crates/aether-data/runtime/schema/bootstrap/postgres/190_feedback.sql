@@ -49,3 +49,9 @@ CREATE TABLE feedback_notifications (
     CONSTRAINT uq_feedback_notification UNIQUE (user_id, issue_id, event_seq, kind)
 );
 CREATE INDEX idx_feedback_notifications_user ON feedback_notifications(user_id, id);
+CREATE TABLE user_avatars (
+    user_id VARCHAR(36) PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    content_type VARCHAR(32) NOT NULL CHECK (content_type IN ('image/png','image/jpeg','image/webp')),
+    data BYTEA NOT NULL CHECK (octet_length(data) BETWEEN 1 AND 262144),
+    updated_at BIGINT NOT NULL
+);

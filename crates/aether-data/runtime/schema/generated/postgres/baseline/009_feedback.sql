@@ -74,3 +74,13 @@ CREATE INDEX IF NOT EXISTS idx_feedback_notifications_user ON public.feedback_no
 ALTER TABLE ONLY public.feedback_notifications ADD CONSTRAINT fk_feedback_notifications_user_id FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.feedback_notifications ADD CONSTRAINT fk_feedback_notifications_issue_id FOREIGN KEY (issue_id) REFERENCES public.feedback_issues(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.feedback_notifications ADD CONSTRAINT fk_feedback_notifications_actor_id FOREIGN KEY (actor_id) REFERENCES public.users(id) ON DELETE SET NULL;
+
+CREATE TABLE IF NOT EXISTS public.user_avatars (
+    user_id character varying(36) NOT NULL,
+    content_type character varying(32) NOT NULL,
+    data bytea NOT NULL,
+    updated_at bigint NOT NULL
+);
+
+ALTER TABLE ONLY public.user_avatars ADD CONSTRAINT user_avatars_pkey PRIMARY KEY (user_id);
+ALTER TABLE ONLY public.user_avatars ADD CONSTRAINT fk_user_avatars_user_id FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;

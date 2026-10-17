@@ -1,12 +1,12 @@
 <template>
   <div class="profile-page">
     <header class="profile-heading">
-      <div
-        class="profile-avatar"
-        aria-hidden="true"
-      >
-        {{ profile?.username?.slice(0, 2).toUpperCase() || 'ME' }}
-      </div>
+      <UserAvatar
+        :user-id="auth.user?.id"
+        :version="auth.user?.avatar_version"
+        :name="profile?.username || auth.user?.username"
+        :size="48"
+      />
       <div class="min-w-0 flex-1">
         <h1 class="text-xl font-semibold">
           个人资料
@@ -345,6 +345,8 @@ import { RouterLink } from 'vue-router'
 import { ArrowUpRight, ChartNoAxesCombined, KeyRound, RefreshCw, Settings2, ShieldCheck, UserRound } from 'lucide-vue-next'
 import { accountApi, type AccountEntitlements } from '@/api/account'
 import { meApi, type Profile, type UsageResponse } from '@/api/me'
+import UserAvatar from '@/components/common/UserAvatar.vue'
+import { useAuthStore } from '@/stores/auth'
 import Settings from './Settings.vue'
 import QuotaWindow from './profile/QuotaWindow.vue'
 import TokenActivity from './profile/TokenActivity.vue'
@@ -352,6 +354,7 @@ import TokenActivity from './profile/TokenActivity.vue'
 type Section = 'usage' | 'account' | 'security' | 'preferences'
 const sections = [{ id: 'usage' as const, label: '用量与权益', icon: ChartNoAxesCombined }, { id: 'account' as const, label: '个人信息', icon: UserRound }, { id: 'security' as const, label: '安全', icon: ShieldCheck }, { id: 'preferences' as const, label: '偏好设置', icon: Settings2 }]
 const section = ref<Section>('usage')
+const auth = useAuthStore()
 const profile = ref<Profile>(), entitlements = ref<AccountEntitlements>(), usage = ref<UsageResponse>(), models = ref<Awaited<ReturnType<typeof meApi.getAvailableModels>>>()
 const profileError = ref(false), quotaError = ref(false), usageError = ref(false), modelsError = ref(false)
 const quotaLoading = ref(false), usageLoading = ref(false), preset = ref('this_month')

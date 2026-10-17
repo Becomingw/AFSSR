@@ -323,6 +323,21 @@ describe('feedback workflows', () => {
     textarea.value = '@al'; textarea.setSelectionRange(3, 3); textarea.dispatchEvent(new Event('input', { bubbles: true })); await flush()
     expect([...root.querySelectorAll('.mention-list button')].map(o => o.textContent?.trim())).toEqual(['@Alice'])
   })
+  it('shows pictures for the people who have one and initials for the rest', async () => {
+    mocks.detail.mockResolvedValue({
+      issue,
+      events: [
+        { seq: 8, kind: 'reply', actor_id: 'user-2', actor_username: 'Participant', actor_role: 'user', visibility: 'public', content: 'hello', created_at: 1700000100 },
+        { seq: 9, kind: 'reply', actor_id: 'user-3', actor_username: 'Quiet', actor_role: 'user', visibility: 'public', content: 'hi', created_at: 1700000200 },
+      ],
+      avatars: { 'user-1': 111, 'user-2': 222 },
+      has_more: false,
+      next_event_cursor: 9,
+    })
+    root.querySelector<HTMLButtonElement>('button[title="刷新"]')!.click(); await flush()
+    const pictures = [...root.querySelectorAll('.timeline-entry .user-avatar')].map(node => node.querySelector('img')?.getAttribute('src') ?? node.textContent?.trim())
+    expect(pictures).toEqual(['/api/avatars/user-1?v=111', '/api/avatars/user-2?v=222', 'Q'])
+  })
   it('previews markdown with images, issue references and mentions', async () => {
     const textarea = root.querySelector<HTMLTextAreaElement>('#feedback-reply')!
     fill(textarea, '**bold** #7 @root ![shot](https://example.com/a.png)'); await flush()

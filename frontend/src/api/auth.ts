@@ -138,6 +138,8 @@ export interface User {
   allowed_models?: string[] | null  // 允许使用的模型名称列表
   created_at: string
   last_login_at?: string
+  /** 头像版本（毫秒时间戳），没有头像时为空；它同时是头像地址的一部分 */
+  avatar_version?: number | null
   preferences?: UserPreferences
   stats?: UserStats
 }

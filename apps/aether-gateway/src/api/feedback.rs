@@ -306,7 +306,10 @@ async fn dispatch(
             .list_notifications(user, unread_only, before, limit)
             .await
         {
-            Ok(page) => response(StatusCode::OK, serde_json::to_value(page).unwrap()),
+            Ok(page) => {
+                let ids = page.items.iter().filter_map(|n| n.actor_id.clone());
+                with_avatars(state, serde_json::to_value(&page).unwrap(), ids).await
+            }
             Err(e) => store_error(e),
         };
     }
@@ -381,7 +384,10 @@ async fn dispatch(
             limit,
         };
         return match repository.list(&q).await {
-            Ok(page) => response(StatusCode::OK, serde_json::to_value(page).unwrap()),
+            Ok(page) => {
+                let ids = page.items.iter().filter_map(|i| i.owner_id.clone());
+                with_avatars(state, serde_json::to_value(&page).unwrap(), ids).await
+            }
             Err(e) => store_error(e),
         };
     }
@@ -391,7 +397,16 @@ async fn dispatch(
             _ => return error(StatusCode::BAD_REQUEST, "Invalid event cursor"),
         };
         return match repository.detail(&issue_id, viewer, after, limit).await {
-            Ok(detail) => response(StatusCode::OK, serde_json::to_value(detail).unwrap()),
+            Ok(detail) => {
+                let ids = detail
+                    .issue
+                    .summary
+                    .owner_id
+                    .clone()
+                    .into_iter()
+                    .chain(detail.events.iter().filter_map(|e| e.actor_id.clone()));
+                with_avatars(state, serde_json::to_value(&detail).unwrap(), ids).await
+            }
             Err(e) => store_error(e),
         };
     }
@@ -571,6 +586,20 @@ async fn dispatch(
 
 /// Administrator usernames that can be `@`-mentioned: active administrators only, sorted,
 /// case-insensitively de-duplicated. Only usernames are exposed, never e-mail addresses or ids.
+/// Adds `avatars: {user_id: version}` for the people appearing in a response, so the console can
+/// show their pictures without asking per person. People without a picture are simply absent.
+async fn with_avatars(
+    state: &AppState,
+    mut value: serde_json::Value,
+    user_ids: impl IntoIterator<Item = String>,
+) -> Response {
+    let versions = crate::api::avatar::versions_for(state, user_ids).await;
+    if let Some(object) = value.as_object_mut() {
+        object.insert("avatars".to_string(), json!(versions));
+    }
+    response(StatusCode::OK, value)
+}
+
 /// Anybody can be mentioned, so the list is every active user (usernames only, never e-mails).
 const MAX_MENTIONABLE: usize = 500;
 fn mentionable_names<'a>(users: impl IntoIterator<Item = (&'a str, bool)>) -> Vec<String> {

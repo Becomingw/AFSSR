@@ -71,6 +71,12 @@
               class="dot"
               :aria-label="item.read_at ? '已读' : '未读'"
             />
+            <UserAvatar
+              :user-id="item.actor_id"
+              :version="item.actor_id ? avatars[item.actor_id] : null"
+              :name="item.actor_username"
+              :size="30"
+            />
             <span class="body">
               <span class="line"><strong>{{ item.actor_username || '某位用户' }}</strong> 在 <span class="ref">#{{ item.issue_number }} {{ item.issue_title }}</span> 中提到了你</span>
               <span class="snippet">{{ item.snippet }}</span>
@@ -100,11 +106,12 @@ import { Bell } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import { canAccessAdminRole } from '@/config/adminRoles'
 import { useNotifications } from '@/composables/useNotifications'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import type { FeedbackNotification } from '@/api/feedback'
 
 const router = useRouter()
 const auth = useAuthStore()
-const { unread, items, hasMore, loading, failed, attach, load, markRead, markAllRead } = useNotifications()
+const { unread, items, avatars, hasMore, loading, failed, attach, load, markRead, markAllRead } = useNotifications()
 const open = ref(false)
 const root = ref<HTMLElement | null>(null)
 
@@ -164,7 +171,7 @@ onBeforeUnmount(() => {
 .link{font-size:12px;color:var(--primary)}
 .link:disabled{color:var(--muted-foreground);cursor:default}
 .bell-empty{padding:28px 18px;text-align:center;font-size:13px;color:var(--muted-foreground);line-height:1.7}
-.bell-item{display:grid;grid-template-columns:10px minmax(0,1fr);gap:10px;width:100%;padding:12px 14px;text-align:left}
+.bell-item{display:grid;grid-template-columns:10px 30px minmax(0,1fr);align-items:start;gap:10px;width:100%;padding:12px 14px;text-align:left}
 .bell-item:hover{background:var(--muted)}
 .bell-item:focus-visible{outline:2px solid var(--ring);outline-offset:-2px}
 .dot{width:8px;height:8px;margin-top:6px;border-radius:50%;background:transparent}

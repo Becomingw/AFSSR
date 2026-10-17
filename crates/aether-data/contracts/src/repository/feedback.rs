@@ -96,6 +96,7 @@ pub struct FeedbackNotification {
     pub issue_title: String,
     /// Event that carries the mention (`activity_seq` of the issue when it was written).
     pub event_seq: i64,
+    pub actor_id: Option<String>,
     pub actor_username: Option<String>,
     pub snippet: String,
     pub created_at: i64,

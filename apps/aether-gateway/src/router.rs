@@ -137,6 +137,7 @@ pub fn build_router_with_state(state: AppState) -> Router {
     router = api::mount_admin_routes(router);
     router = api::mount_mcp_routes(router, state.clone());
     router = api::mount_feedback_routes(router);
+    router = api::mount_avatar_routes(router);
     router = api::diagnostics::mount_diagnostic_routes(router);
     router = api::mount_leaderboard_routes(router);
     router = api::mount_account_routes(router);

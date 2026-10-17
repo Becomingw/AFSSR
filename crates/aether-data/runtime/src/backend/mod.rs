@@ -50,6 +50,7 @@ pub struct DataBackends {
     account_usage:
         Option<std::sync::Arc<dyn crate::repository::account_usage::AccountUsageRepository>>,
     feedback: Option<std::sync::Arc<dyn crate::repository::feedback::FeedbackRepository>>,
+    avatars: Option<std::sync::Arc<dyn crate::repository::avatars::UserAvatarRepository>>,
     config: DataLayerConfig,
     #[cfg(feature = "postgres")]
     postgres: Option<PostgresBackend>,
@@ -150,6 +151,23 @@ impl DataBackends {
                     None
                 }
             },
+            avatars: {
+                #[cfg(feature = "postgres")]
+                {
+                    postgres.as_ref().map(|backend| {
+                        std::sync::Arc::new(
+                            crate::repository::avatars::PostgresAvatarRepository::new(
+                                backend.pool_clone(),
+                            ),
+                        )
+                            as std::sync::Arc<dyn crate::repository::avatars::UserAvatarRepository>
+                    })
+                }
+                #[cfg(not(feature = "postgres"))]
+                {
+                    None
+                }
+            },
             feedback: {
                 #[cfg(feature = "postgres")]
                 {
@@ -185,6 +203,20 @@ impl DataBackends {
         &self,
     ) -> Option<std::sync::Arc<dyn crate::repository::feedback::FeedbackRepository>> {
         self.feedback.clone()
+    }
+
+    pub fn avatars(
+        &self,
+    ) -> Option<std::sync::Arc<dyn crate::repository::avatars::UserAvatarRepository>> {
+        self.avatars.clone()
+    }
+
+    pub fn with_avatar_repository(
+        mut self,
+        repository: std::sync::Arc<dyn crate::repository::avatars::UserAvatarRepository>,
+    ) -> Self {
+        self.avatars = Some(repository);
+        self
     }
 
     pub fn account_usage(

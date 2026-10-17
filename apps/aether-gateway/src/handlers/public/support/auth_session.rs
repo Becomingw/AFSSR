@@ -255,9 +255,16 @@ pub(crate) async fn handle_auth_me(
             )
         }
     };
+    let mut payload = build_auth_me_payload(&auth.user, wallet.as_ref(), feature_settings);
+    // The version of the user's picture, absent without one; it is part of the picture's URL.
+    let avatar_version = crate::api::avatar::versions_for(state, [auth.user.id.clone()])
+        .await
+        .get(&auth.user.id)
+        .copied();
+    payload["avatar_version"] = json!(avatar_version);
     mark_sensitive_response_no_store(build_auth_json_response(
         http::StatusCode::OK,
-        build_auth_me_payload(&auth.user, wallet.as_ref(), feature_settings),
+        payload,
         None,
     ))
 }
