@@ -388,6 +388,9 @@ mod system_config_value_cache_tests {
     }
 }
 
+/// Reserved prefix for gateway-managed system config keys that must stay out of admin listings.
+pub(crate) const INTERNAL_SYSTEM_CONFIG_KEY_PREFIX: &str = "internal.";
+
 impl GatewayDataState {
     pub(crate) fn disabled() -> Self {
         Self::default()
@@ -945,21 +948,27 @@ impl GatewayDataState {
             .value)
     }
 
+    /// Lists the user-visible system configuration. Keys under the reserved `internal.` prefix
+    /// hold gateway-managed state (for example the external models catalog snapshot) and are
+    /// never listed, exported or imported.
     pub(crate) async fn list_system_config_entries(
         &self,
     ) -> Result<Vec<StoredSystemConfigEntry>, DataLayerError> {
-        if let Some(values) = &self.system_config_values {
-            return Ok(values
+        let mut entries = if let Some(values) = &self.system_config_values {
+            values
                 .read()
                 .expect("system config values lock")
                 .values()
                 .cloned()
-                .collect());
-        }
-        let Some(backends) = self.backends.as_ref() else {
-            return Ok(Vec::new());
+                .collect()
+        } else {
+            let Some(backends) = self.backends.as_ref() else {
+                return Ok(Vec::new());
+            };
+            backends.list_system_config_entries().await?
         };
-        backends.list_system_config_entries().await
+        entries.retain(|entry| !entry.key.starts_with(INTERNAL_SYSTEM_CONFIG_KEY_PREFIX));
+        Ok(entries)
     }
 
     pub(crate) async fn upsert_system_config_entry(

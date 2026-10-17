@@ -2,12 +2,14 @@
 
 The external model catalog is a shared models.dev snapshot. It is created and
 replaced **only by an explicit refresh**; no read ever fetches it. Until the first
-refresh (or after the snapshot has been cleared, or lost because the runtime
-backend is in-memory and the gateway restarted) `GET /api/admin/models/external`
-returns 503 with a hint to refresh, and imports simply find no catalog match. The
-snapshot has no time-based expiry. Redis persistence and eviction policies still
-apply, so use a persistent runtime backend if the snapshot must survive restarts.
-Browsers reuse their memory/localStorage snapshot. Opening the model dialog does
+refresh (or after the cache was cleared) `GET /api/admin/models/external` returns
+503 with a hint to refresh, and imports simply find no catalog match. The snapshot
+has no time-based expiry. A refresh writes it to the database (system config key
+`internal.external_models_catalog_snapshot`, hidden from config listings, exports
+and imports) and to the runtime cache; reads use the runtime cache and fall back to
+the database copy, restoring the cache, so the snapshot survives restarts and
+cache eviction even with an in-memory runtime backend. Clearing the cache removes
+both copies. Browsers reuse their memory/localStorage snapshot. Opening the model dialog does
 not refresh the upstream catalog.
 
 The refresh button in the global-model dialog calls

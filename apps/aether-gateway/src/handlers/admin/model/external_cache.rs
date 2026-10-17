@@ -17,6 +17,11 @@ use tracing::warn;
 const ADMIN_EXTERNAL_MODELS_LEGACY_CACHE_KEY: &str = "aether:external:models_dev";
 const ADMIN_EXTERNAL_MODELS_CACHE_KEY: &str = "aether:external:models_dev:v3";
 const ADMIN_EXTERNAL_MODELS_CACHE_VERSION: u8 = 3;
+/// Durable copy of the snapshot. The runtime KV may be in-memory (lost on restart) or evicted,
+/// so the system-config table is the source of truth. The `internal.` prefix keeps it out of
+/// config listings, exports and imports (see `GatewayDataState::list_system_config_entries`).
+pub(crate) const ADMIN_EXTERNAL_MODELS_SNAPSHOT_CONFIG_KEY: &str =
+    "internal.external_models_catalog_snapshot";
 const ADMIN_EXTERNAL_MODELS_SOURCE_URL_ENV: &str = "AETHER_GATEWAY_EXTERNAL_MODELS_URL";
 const ADMIN_EXTERNAL_MODELS_SOURCE_URL_DEFAULT: &str = "https://models.dev/api.json";
 const ADMIN_EXTERNAL_MODELS_OFFICIAL_HOST: &str = "models.dev";
@@ -265,6 +270,24 @@ async fn store_admin_external_models_cache(
             "external models cache envelope exceeds the allowed size".to_string(),
         ));
     }
+    // Durable copy first, so a restart with an in-memory runtime backend keeps the snapshot.
+    // A database failure must not break a refresh that already succeeded upstream.
+    match serde_json::to_value(&envelope) {
+        Ok(value) => {
+            if state
+                .upsert_system_config_json_value(
+                    ADMIN_EXTERNAL_MODELS_SNAPSHOT_CONFIG_KEY,
+                    &value,
+                    Some("External models catalog snapshot (managed by the gateway)"),
+                )
+                .await
+                .is_err()
+            {
+                warn!("failed to persist the external models catalog snapshot to the database");
+            }
+        }
+        Err(_) => warn!("failed to encode the external models catalog snapshot"),
+    }
     state
         .app()
         .runtime_state()
@@ -364,7 +387,11 @@ async fn clear_admin_external_models_cache_entries(
         .as_ref()
         .runtime_kv_del(ADMIN_EXTERNAL_MODELS_LEGACY_CACHE_KEY)
         .await?;
-    Ok(cleared_current || cleared_legacy)
+    let cleared_persisted = state
+        .delete_system_config_value(ADMIN_EXTERNAL_MODELS_SNAPSHOT_CONFIG_KEY)
+        .await
+        .unwrap_or(false);
+    Ok(cleared_current || cleared_legacy || cleared_persisted)
 }
 
 pub(crate) async fn acquire_admin_external_models_config_mutation_lock(
@@ -671,30 +698,60 @@ async fn fetch_admin_external_models_from_source(
     Ok(normalize_admin_external_models_payload(payload))
 }
 
-/// Reads the stored catalog snapshot. This never touches the network: the snapshot is only
-/// created or replaced by an explicit refresh (`refresh_admin_external_models_catalog`).
-/// `None` means no usable snapshot exists yet (never refreshed, cleared, or an outdated format).
+/// Reads the stored catalog snapshot (runtime KV first, then the durable database copy). This
+/// never touches the network: the snapshot is only created or replaced by an explicit refresh
+/// (`refresh_admin_external_models_catalog`). `None` means no usable snapshot exists yet (never
+/// refreshed, cleared, or an outdated format).
 pub(crate) async fn read_admin_external_models_cache(
     state: &AdminAppState<'_>,
     _request_id: &str,
 ) -> Result<Option<serde_json::Value>, GatewayError> {
-    let Some(raw) = state
+    if let Some(raw) = state
         .as_ref()
         .runtime_kv_get(ADMIN_EXTERNAL_MODELS_CACHE_KEY)
+        .await?
+    {
+        match parse_admin_external_models_cache(&raw) {
+            Some(envelope) if envelope.schema_version == ADMIN_EXTERNAL_MODELS_CACHE_VERSION => {
+                return Ok(Some(normalize_admin_external_models_payload(
+                    envelope.payload,
+                )));
+            }
+            Some(_) => {}
+            None => warn!("failed to parse cached external models payload"),
+        }
+    }
+
+    // The runtime KV has nothing usable (restart with an in-memory backend, eviction, ...):
+    // fall back to the durable copy and warm the KV again.
+    let Some(stored) = state
+        .read_system_config_json_value_strong(ADMIN_EXTERNAL_MODELS_SNAPSHOT_CONFIG_KEY)
         .await?
     else {
         return Ok(None);
     };
-    match parse_admin_external_models_cache(&raw) {
-        Some(envelope) if envelope.schema_version == ADMIN_EXTERNAL_MODELS_CACHE_VERSION => Ok(
-            Some(normalize_admin_external_models_payload(envelope.payload)),
-        ),
-        Some(_) => Ok(None),
-        None => {
-            warn!("failed to parse cached external models payload");
-            Ok(None)
+    let Ok(envelope) = serde_json::from_value::<AdminExternalModelsCacheEnvelope>(stored) else {
+        warn!("failed to parse the persisted external models snapshot");
+        return Ok(None);
+    };
+    if envelope.schema_version != ADMIN_EXTERNAL_MODELS_CACHE_VERSION {
+        return Ok(None);
+    }
+    if let Ok(serialized) = serde_json::to_string(&envelope) {
+        if serialized.len() <= ADMIN_EXTERNAL_MODELS_CACHE_MAX_BYTES
+            && state
+                .app()
+                .runtime_state()
+                .kv_set(ADMIN_EXTERNAL_MODELS_CACHE_KEY, serialized, None)
+                .await
+                .is_err()
+        {
+            warn!("failed to restore the external models snapshot into the runtime cache");
         }
     }
+    Ok(Some(normalize_admin_external_models_payload(
+        envelope.payload,
+    )))
 }
 
 async fn fetch_and_store_admin_external_models(
@@ -1018,6 +1075,72 @@ mod tests {
         assert_eq!(payload["openai"]["official"], json!(true));
         assert_eq!(payload["openai"]["models"]["gpt-5"]["name"], json!("GPT-5"));
 
+        upstream_handle.abort();
+    }
+
+    #[tokio::test]
+    async fn refreshed_snapshot_is_persisted_and_survives_runtime_cache_loss() {
+        let upstream = Router::new().route(
+            "/api.json",
+            get(|| async {
+                Json(json!({
+                    "openai": {"name": "OpenAI", "models": {"gpt-5": {"name": "GPT-5"}}}
+                }))
+            }),
+        );
+        let (upstream_url, upstream_handle) = start_server(upstream).await;
+        let _guard =
+            set_admin_external_models_source_url_for_tests(&format!("{upstream_url}/api.json"));
+
+        let data = crate::data::GatewayDataState::disabled()
+            .with_system_config_values_for_tests(Vec::<(String, serde_json::Value)>::new());
+        let state = AppState::new()
+            .expect("gateway should build")
+            .with_data_state_for_tests(data);
+        let admin = AdminAppState::new(&state);
+
+        refresh_admin_external_models_catalog(&admin, "persist-test")
+            .await
+            .expect("refresh should not error")
+            .expect("explicit refresh should fetch the catalog");
+        // The durable copy exists, but is invisible in the user-facing configuration list.
+        assert!(admin
+            .read_system_config_json_value_strong(super::ADMIN_EXTERNAL_MODELS_SNAPSHOT_CONFIG_KEY)
+            .await
+            .expect("config read should succeed")
+            .is_some());
+        assert!(admin
+            .list_system_config_entries()
+            .await
+            .expect("config list should succeed")
+            .iter()
+            .all(|entry| !entry.key.starts_with("internal.")));
+
+        // Simulate an in-memory runtime backend after a restart: the KV copy is gone.
+        state
+            .runtime_kv_del(super::ADMIN_EXTERNAL_MODELS_CACHE_KEY)
+            .await
+            .expect("kv delete should succeed");
+        let payload = read_admin_external_models_cache(&admin, "persist-test")
+            .await
+            .expect("read should succeed")
+            .expect("the persisted snapshot should be served");
+        assert_eq!(payload["openai"]["models"]["gpt-5"]["name"], json!("GPT-5"));
+        // ... and it is restored into the runtime cache.
+        assert!(state
+            .runtime_kv_get(super::ADMIN_EXTERNAL_MODELS_CACHE_KEY)
+            .await
+            .expect("kv read should succeed")
+            .is_some());
+
+        // Clearing the cache removes the durable copy as well.
+        super::clear_admin_external_models_cache(&admin)
+            .await
+            .expect("clear should succeed");
+        assert!(read_admin_external_models_cache(&admin, "persist-test")
+            .await
+            .expect("read should succeed")
+            .is_none());
         upstream_handle.abort();
     }
 
