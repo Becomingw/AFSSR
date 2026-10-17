@@ -34,6 +34,8 @@ pub(crate) const TASK_KEY_DB_MAINTENANCE: &str = "maintenance.database";
 pub(crate) const TASK_KEY_PENDING_CLEANUP: &str = "maintenance.pending.cleanup";
 pub(crate) const TASK_KEY_REQUEST_CANDIDATE_CLEANUP: &str = "maintenance.request.candidate.cleanup";
 pub(crate) const TASK_KEY_GEMINI_FILES_CLEANUP: &str = "maintenance.gemini.files.cleanup";
+pub(crate) const TASK_KEY_GLOBAL_MODEL_ORPHAN_CLEANUP: &str =
+    "maintenance.global_model.orphan.cleanup";
 pub(crate) const TASK_KEY_FIXED_PROVIDER_RECONCILIATION: &str =
     "maintenance.provider.fixed_template.reconcile";
 pub(crate) const TASK_KEY_OAUTH_TOKEN_REFRESH: &str = "maintenance.oauth.token.refresh";
@@ -276,6 +278,14 @@ const TASK_DEFINITIONS: &[TaskDefinition] = &[
     ),
     TaskDefinition::new(
         TASK_KEY_GEMINI_FILES_CLEANUP,
+        TaskKind::Scheduled,
+        "interval",
+        true,
+        true,
+        RETRY_ONCE,
+    ),
+    TaskDefinition::new(
+        TASK_KEY_GLOBAL_MODEL_ORPHAN_CLEANUP,
         TaskKind::Scheduled,
         "interval",
         true,

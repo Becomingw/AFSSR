@@ -18,6 +18,8 @@ mod config;
 mod db_maintenance;
 #[path = "runtime/fixed_provider_reconciliation.rs"]
 mod fixed_provider_reconciliation;
+#[path = "runtime/global_model_orphan_cleanup.rs"]
+mod global_model_orphan_cleanup;
 #[path = "runtime/oauth_token_refresh.rs"]
 mod oauth_token_refresh;
 #[path = "runtime/pending_cleanup.rs"]
@@ -76,6 +78,7 @@ use db_maintenance::*;
 pub(crate) use fixed_provider_reconciliation::{
     perform_fixed_provider_reconciliation_once, spawn_fixed_provider_reconciliation_task,
 };
+use global_model_orphan_cleanup::*;
 pub(crate) use oauth_token_refresh::{
     perform_oauth_token_refresh_once, OAuthTokenRefreshRunSummary,
 };
@@ -136,6 +139,7 @@ pub(super) fn postgres_error(
 
 const AUDIT_LOG_CLEANUP_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 const GEMINI_FILE_MAPPING_CLEANUP_INTERVAL: Duration = Duration::from_secs(60 * 60);
+const GLOBAL_MODEL_ORPHAN_CLEANUP_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 const PENDING_CLEANUP_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const PROXY_NODE_STALE_SWEEP_INTERVAL: Duration = Duration::from_secs(5);
 const PROXY_NODE_METRICS_CLEANUP_HOUR: u32 = 2;

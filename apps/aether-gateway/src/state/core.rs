@@ -57,6 +57,7 @@ use crate::maintenance::spawn_audit_cleanup_worker;
 use crate::maintenance::spawn_db_maintenance_worker;
 use crate::maintenance::spawn_fixed_provider_reconciliation_task;
 use crate::maintenance::spawn_gemini_file_mapping_cleanup_worker;
+use crate::maintenance::spawn_global_model_orphan_cleanup_worker;
 use crate::maintenance::spawn_oauth_token_refresh_worker;
 use crate::maintenance::spawn_pending_cleanup_worker;
 use crate::maintenance::spawn_pool_monitor_worker;
@@ -2242,6 +2243,10 @@ impl AppState {
         supervise_worker(
             crate::task_runtime::TASK_KEY_REQUEST_CANDIDATE_CLEANUP,
             spawn_request_candidate_cleanup_worker(background_state.clone()),
+        );
+        supervise_worker(
+            crate::task_runtime::TASK_KEY_GLOBAL_MODEL_ORPHAN_CLEANUP,
+            spawn_global_model_orphan_cleanup_worker(background_state.clone()),
         );
         supervise_worker(
             crate::task_runtime::TASK_KEY_GEMINI_FILES_CLEANUP,

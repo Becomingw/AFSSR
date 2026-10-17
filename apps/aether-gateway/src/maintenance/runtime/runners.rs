@@ -10,11 +10,11 @@ use crate::{AppState, GatewayError};
 use super::cleanup_runs::cleanup_data_layer_error_category;
 use super::{
     advance_proxy_upgrade_rollout_once, cleanup_audit_logs_once,
-    cleanup_expired_gemini_file_mappings_once, cleanup_proxy_node_metrics_once,
-    cleanup_request_candidates_once, cleanup_stale_pending_requests_once,
-    cleanup_stale_proxy_nodes_once, collect_proxy_upgrade_rollout_probes, now_unix_secs,
-    perform_automatic_usage_cleanup_once, perform_db_maintenance_once,
-    perform_manual_usage_cleanup_once, perform_provider_checkin_once,
+    cleanup_expired_gemini_file_mappings_once, cleanup_orphaned_global_models_once,
+    cleanup_proxy_node_metrics_once, cleanup_request_candidates_once,
+    cleanup_stale_pending_requests_once, cleanup_stale_proxy_nodes_once,
+    collect_proxy_upgrade_rollout_probes, now_unix_secs, perform_automatic_usage_cleanup_once,
+    perform_db_maintenance_once, perform_manual_usage_cleanup_once, perform_provider_checkin_once,
     perform_stats_aggregation_once, perform_stats_hourly_aggregation_once,
     perform_wallet_daily_usage_aggregation_once, record_admin_cleanup_run,
     record_completed_cleanup_run, record_failed_cleanup_run,
@@ -73,6 +73,24 @@ pub(super) async fn run_gemini_file_mapping_cleanup_once(
             worker = "gemini_file_mapping_cleanup",
             deleted,
             "gateway deleted expired gemini file mappings"
+        );
+    }
+    Ok(())
+}
+
+pub(super) async fn run_global_model_orphan_cleanup_once(
+    app: &AppState,
+) -> Result<(), DataLayerError> {
+    let summary = cleanup_orphaned_global_models_once(app).await?;
+    if summary.marked > 0 || summary.cleared > 0 || summary.deleted > 0 {
+        info!(
+            event_name = "global_model_orphan_cleanup_completed",
+            log_type = "ops",
+            worker = "global_model_orphan_cleanup",
+            marked = summary.marked,
+            cleared = summary.cleared,
+            deleted = summary.deleted,
+            "gateway swept global models without provider associations"
         );
     }
     Ok(())
