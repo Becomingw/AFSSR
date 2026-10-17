@@ -20,6 +20,7 @@ export function useFeedback() {
   const draft = reactive({ title: '', description: '', category: 'bug' as FeedbackCategory, model: '', request_id: '' })
   const diagnosticId = ref(''), includeDiagnostics = ref(false), attachReply = ref(false)
   const currentUserId = computed(() => auth.user?.id ?? '')
+  const currentUsername = computed(() => auth.user?.username ?? '')
   const canManageIssue = computed(() => Boolean(detail.value && (manager.value || (auth.user?.id && detail.value.issue.owner_id === auth.user.id))))
   // Only topics from before private ones were removed can still be private.
   const legacyPrivate = computed(() => detail.value?.issue.visibility === 'private')
@@ -176,5 +177,5 @@ export function useFeedback() {
   watch(() => [selectedId.value, admin.value], () => { void loadDetail() })
   watch(admin, () => { items.value = []; total.value = 0; page.value = 0; void loadList(); void loadMentionable() })
   onMounted(() => { void refresh(); void loadMentionable() })
-  return { admin, manager, canCreate, selectedId, status, category, search, page, total, items, detail, loading, detailLoading, busy, creating, closing, error, notice, draftError, replyText, replyingTo, replyInput, mentionable, base, togglePin, draft, diagnosticId, includeDiagnostics, attachReply, canManageIssue, currentUserId, editIssue, deleteIssue, editReply, deleteReply, legacyPrivate, createFromDiagnostic, loadList, refresh, filterChanged, openIssue, showList, replyTo, moreEvents, submit, reply, resolve, reopen, closeIssue }
+  return { admin, manager, canCreate, selectedId, status, category, search, page, total, items, detail, loading, detailLoading, busy, creating, closing, error, notice, draftError, replyText, replyingTo, replyInput, mentionable, base, togglePin, draft, diagnosticId, includeDiagnostics, attachReply, canManageIssue, currentUserId, currentUsername, editIssue, deleteIssue, editReply, deleteReply, legacyPrivate, createFromDiagnostic, loadList, refresh, filterChanged, openIssue, showList, replyTo, moreEvents, submit, reply, resolve, reopen, closeIssue }
 }

@@ -3,7 +3,7 @@ import { createApp, defineComponent, h, nextTick, type App } from 'vue'
 import Feedback from '../Feedback.vue'
 import { canAccessAdminPage } from '@/config/adminRoles'
 
-const mocks = vi.hoisted(() => ({ auth: { user: { id: 'user-1', role: 'user' } }, list: vi.fn(), detail: vi.fn(), create: vi.fn(), command: vi.fn(), mentionable: vi.fn(), push: vi.fn(), route: { path: '/dashboard/feedback', params: {} as Record<string, string>, query: {} as Record<string, string> } }))
+const mocks = vi.hoisted(() => ({ auth: { user: { id: 'user-1', role: 'user', username: undefined as string | undefined } as { id: string, role: string, username?: string } }, list: vi.fn(), detail: vi.fn(), create: vi.fn(), command: vi.fn(), mentionable: vi.fn(), push: vi.fn(), route: { path: '/dashboard/feedback', params: {} as Record<string, string>, query: {} as Record<string, string> } }))
 vi.mock('@/stores/auth', async () => {
   const { reactive } = await import('vue')
   mocks.auth = reactive(mocks.auth)
@@ -27,7 +27,7 @@ async function flush() { for (let i = 0; i < 12; i++) { await Promise.resolve();
 function click(label: string) { const button = [...root.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.trim() === label); expect(button).toBeTruthy(); button!.click() }
 function fill(element: HTMLInputElement | HTMLTextAreaElement, value: string) { element.value = value; element.dispatchEvent(new Event('input', { bubbles: true })) }
 beforeEach(async () => {
-  vi.clearAllMocks(); mocks.auth.user = { id: 'user-1', role: 'user' }; mocks.route.path = '/dashboard/feedback/issue-id'; mocks.route.params = { issueId: 'issue-id' }; mocks.route.query = {}
+  vi.clearAllMocks(); mocks.auth.user = { id: 'user-1', role: 'user', username: undefined }; mocks.route.path = '/dashboard/feedback/issue-id'; mocks.route.params = { issueId: 'issue-id' }; mocks.route.query = {}
   mocks.list.mockResolvedValue({ items: [issue], total: 1, next_cursor: 7 })
   mocks.detail.mockResolvedValue({ issue, events: [], next_event_cursor: null, has_more: false })
   mocks.mentionable.mockResolvedValue(['root', 'Alice']); mocks.create.mockResolvedValue({ issue, replayed: false }); mocks.command.mockResolvedValue({ issue: { ...issue, version: 4, activity_seq: 8 }, replayed: false })
@@ -309,6 +309,19 @@ describe('feedback workflows', () => {
     const options = [...root.querySelectorAll('.mention-list button')]; expect(options.map(o => o.textContent?.trim())).toEqual(['@Alice'])
     options[0]!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })); await flush()
     expect(textarea.value).toBe('cc @Alice ')
+  })
+  it('never suggests yourself after @, while still offering everybody else', async () => {
+    // The suggestion list of this suite is ['root', 'Alice']; the signed-in user is root.
+    mocks.auth.user = { id: 'user-1', role: 'user', username: 'ROOT' }
+    await flush()
+    const textarea = root.querySelector<HTMLTextAreaElement>('#feedback-reply')!
+    textarea.value = '@'; textarea.setSelectionRange(1, 1); textarea.dispatchEvent(new Event('input', { bubbles: true })); await flush()
+    expect([...root.querySelectorAll('.mention-list button')].map(o => o.textContent?.trim())).toEqual(['@Alice'])
+    textarea.value = '@ro'; textarea.setSelectionRange(3, 3); textarea.dispatchEvent(new Event('input', { bubbles: true })); await flush()
+    expect(root.querySelectorAll('.mention-list button')).toHaveLength(0)
+    // Somebody else's name is still found.
+    textarea.value = '@al'; textarea.setSelectionRange(3, 3); textarea.dispatchEvent(new Event('input', { bubbles: true })); await flush()
+    expect([...root.querySelectorAll('.mention-list button')].map(o => o.textContent?.trim())).toEqual(['@Alice'])
   })
   it('previews markdown with images, issue references and mentions', async () => {
     const textarea = root.querySelector<HTMLTextAreaElement>('#feedback-reply')!

@@ -140,6 +140,7 @@
             :disabled="busy"
             :issue-base="issueBase"
             :mentionable="mentionable"
+            :exclude-user="currentUsername"
           />
           <div class="entry-edit-actions">
             <button
@@ -216,6 +217,7 @@ const props = defineProps<{
   issueBase: string
   mentionable?: readonly string[]
   currentUserId?: string
+  currentUsername?: string
   /** Administrators moderate every reply and issue. */
   manager?: boolean
   busy?: boolean

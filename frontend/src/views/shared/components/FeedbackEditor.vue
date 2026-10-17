@@ -94,7 +94,9 @@ const props = withDefaults(defineProps<{
   required?: boolean
   issueBase: string
   mentionable?: readonly string[]
-}>(), { id: undefined, ariaLabel: undefined, placeholder: '', maxlength: 20000, mentionable: () => [] })
+  /** Mentioning yourself does nothing, so your own name is not offered as a suggestion. */
+  excludeUser?: string
+}>(), { id: undefined, excludeUser: undefined, ariaLabel: undefined, placeholder: '', maxlength: 20000, mentionable: () => [] })
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 
 const textarea = ref<HTMLTextAreaElement | null>(null)
@@ -107,8 +109,9 @@ const MENTION_BEFORE_CARET = /(?:^|[^\p{L}\p{N}_])@([\p{L}\p{N}_.-]{0,32})$/u
 const suggestions = computed(() => {
   if (query.value === null) return []
   const needle = query.value.toLowerCase()
+  const self = props.excludeUser?.toLowerCase()
   return props.mentionable
-    .filter(name => name.toLowerCase().includes(needle))
+    .filter(name => name.toLowerCase() !== self && name.toLowerCase().includes(needle))
     .sort((a, b) => Number(b.toLowerCase().startsWith(needle)) - Number(a.toLowerCase().startsWith(needle)))
     .slice(0, 6)
 })

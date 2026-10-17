@@ -278,6 +278,7 @@
             :issue-base="base"
             :mentionable="mentionable"
             :current-user-id="currentUserId"
+            :current-username="currentUsername"
             :manager="manager"
             :busy="busy"
             :actions="{ editIssue, editReply, deleteReply }"
@@ -315,6 +316,7 @@
               :disabled="busy"
               :issue-base="base"
               :mentionable="mentionable"
+              :exclude-user="currentUsername"
             />
             <label
               v-if="diagnosticId.trim()"
@@ -459,6 +461,7 @@
             required
             :issue-base="base"
             :mentionable="mentionable"
+            :exclude-user="currentUsername"
           />
         </div>
         <label
@@ -505,6 +508,7 @@
       :categories="categories"
       :issue-base="base"
       :mentionable="mentionable"
+      :exclude-user="currentUsername"
       :error="draftError"
       @close="focusing = false"
       @submit="submitFromFocus"
@@ -548,7 +552,7 @@ import FeedbackEditor from './components/FeedbackEditor.vue'
 import FocusComposer from './components/FocusComposer.vue'
 import { useFeedback } from './useFeedback'
 import { feedbackStatuses as statuses, feedbackCategories as categories, feedbackDate, feedbackRef, feedbackStatusLabel, feedbackCategoryLabel } from './feedback-view'
-const { admin, manager, canCreate, selectedId, status, category, search, page, total, items, detail, loading, detailLoading, busy, creating, closing, error, notice, draftError, replyText, replyingTo, replyInput, mentionable, base, togglePin, draft, diagnosticId, includeDiagnostics, attachReply, canManageIssue, currentUserId, editIssue, deleteIssue, editReply, deleteReply, legacyPrivate, createFromDiagnostic, loadList, refresh, filterChanged, openIssue, showList, replyTo, moreEvents, submit, reply, resolve, reopen, closeIssue } = useFeedback()
+const { admin, manager, canCreate, selectedId, status, category, search, page, total, items, detail, loading, detailLoading, busy, creating, closing, error, notice, draftError, replyText, replyingTo, replyInput, mentionable, base, togglePin, draft, diagnosticId, includeDiagnostics, attachReply, canManageIssue, currentUserId, currentUsername, editIssue, deleteIssue, editReply, deleteReply, legacyPrivate, createFromDiagnostic, loadList, refresh, filterChanged, openIssue, showList, replyTo, moreEvents, submit, reply, resolve, reopen, closeIssue } = useFeedback()
 const confirmingDelete = ref(false)
 const focusing = ref(false)
 // Submitting from focus mode leaves it once the topic was created (the dialog closes with it).

@@ -40,6 +40,7 @@
           :disabled="busy"
           :issue-base="issueBase"
           :mentionable="mentionable"
+          :exclude-user="excludeUser"
           @update:model-value="emit('update:description', $event)"
         />
       </main>
@@ -98,6 +99,7 @@ const props = defineProps<{
   categories: ReadonlyArray<{ value: string, label: string }>
   issueBase: string
   mentionable?: readonly string[]
+  excludeUser?: string
   error?: string
 }>()
 const emit = defineEmits<{
