@@ -5,7 +5,7 @@ fn admin_system_build_version_contract_uses_explicit_local_build_arg() {
     let build_rs = read_workspace_file("apps/aether-gateway/build.rs");
     for pattern in [
         "cargo:rerun-if-env-changed=AETHER_BUILD_VERSION",
-        "env::var(\"AETHER_BUILD_VERSION\")",
+        "build_env(\"BUILD_VERSION\")",
     ] {
         assert!(
             build_rs.contains(pattern),
