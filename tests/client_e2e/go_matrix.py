@@ -35,9 +35,10 @@ GO_SCENARIOS = ['text_only', 'write_file', 'multi_tool']
 class GoStack(run.Stack):
     """The standard stack, but with one `opencode_go` provider instead of three custom ones."""
 
-    def __init__(self, gateway_bin, keep, allow_training=True, cost_limit=None):
+    def __init__(self, gateway_bin, keep, allow_training=True, cost_limit=None, directives=False):
         super().__init__(gateway_bin, keep)
         self.cost_limit = cost_limit
+        self.directives = directives
         self.mock_extra = ['go']
         self.mock_env = {'GO_ALLOW_TRAINING': '1' if allow_training else '0'}
 
@@ -57,6 +58,9 @@ class GoStack(run.Stack):
         admin = self.admin
         if self.cost_limit:
             self.apply_cost_limit()
+        if self.directives:
+            # Production runs with this on: a model name ending like a directive (qwen3.8-max) must still be that model.
+            admin.request('PUT', '/api/admin/system/configs/enable_model_directives', {'value': True}, statuses=(200, 201))
         provider = admin.request('POST', '/api/admin/providers/', {'name': 'OpenCode Go (mock)', 'provider_type': 'opencode_go', 'billing_type': 'pay_as_you_go', 'is_active': True, 'max_retries': 0}, statuses=(200, 201))
         pid = provider['id']
         self.provider_id = pid
@@ -129,6 +133,7 @@ def main():
     parser.add_argument('--scenarios', default=','.join(GO_SCENARIOS))
     parser.add_argument('--gateway-bin', default=str(run.ROOT / 'target/debug/aether-gateway'))
     parser.add_argument('--timeout', type=int, default=120)
+    parser.add_argument('--directives', action='store_true', help='enable model directives like production does')
     parser.add_argument('--cost-limit', type=float, help='give the test user a finite budget (hard cost limit active), USD')
     parser.add_argument('--keep', action='store_true')
     parser.add_argument('--json', type=pathlib.Path, help='write all results here')
@@ -141,7 +146,7 @@ def main():
     if unknown:
         raise SystemExit(f'unknown Go model(s): {unknown}')
 
-    stack = GoStack(args.gateway_bin, args.keep, cost_limit=args.cost_limit)
+    stack = GoStack(args.gateway_bin, args.keep, cost_limit=args.cost_limit, directives=args.directives)
     results = []
     try:
         stack.start()

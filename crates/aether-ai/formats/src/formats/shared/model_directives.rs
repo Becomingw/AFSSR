@@ -179,6 +179,11 @@ pub fn parse_model_directive_with_suffixes<'a>(
     model: &str,
     suffixes: impl IntoIterator<Item = &'a str>,
 ) -> Option<ModelDirectiveSuffixResolution> {
+    // A real OpenCode Go model whose name happens to end like a directive (`qwen3.8-max`) is that
+    // model, not `qwen3.8` with a "max" reasoning effort.
+    if crate::provider_compat::opencode_go::model_api_format(model.trim()).is_some() {
+        return None;
+    }
     let mut configured_suffixes = Vec::<String>::new();
     for suffix in suffixes {
         let suffix = suffix.trim();
@@ -824,6 +829,19 @@ pub fn extract_gemini_model_from_path(path: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn real_go_models_that_end_like_a_directive_are_not_directives() {
+        for model in ["qwen3.8-max", "qwen3.7-max"] {
+            assert!(super::parse_model_directive(model).is_none(), "{model}");
+            assert!(
+                super::model_directive_base_model(model).is_none(),
+                "{model}"
+            );
+        }
+        // Ordinary directive names keep working.
+        assert!(super::parse_model_directive("gpt-5.6-max").is_some());
+    }
+
     use serde_json::json;
 
     use super::{
