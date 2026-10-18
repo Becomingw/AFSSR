@@ -1077,7 +1077,10 @@ impl ClaudeResponsesTools {
         // Native Go probes verified these endpoints accept the original unions;
         // Claude's required object wrapper instead confuses their arguments.
         let wrap_schema = !matches!(model, Some("qwen3.7-max" | "minimax-m2.5"));
-        Self::normalize_with_tools(body, Self::from_go_body(body, wrap_schema)?)
+        // The Go Messages backends only accept client (`custom`) tools: Anthropic's hosted
+        // web-search tool is refused as an unknown tag, so it is not forwarded.
+        let body = Self::without_hosted_web_search(body);
+        Self::normalize_with_tools(&body, Self::from_go_body(&body, wrap_schema)?)
     }
 
     fn normalize_with_tools(body: &Value, tools: Self) -> Result<Value, FormatError> {
@@ -1226,15 +1229,10 @@ impl ClaudeResponsesTools {
         let wrap_schema = crate::provider_compat::opencode_go::chat_requires_root_schema_wrapper(
             model.unwrap_or_default(),
         );
+        // Chat has no server-side web-search protocol. The hosted tool is not forwarded
+        // (a coding client still has all of its own tools) rather than refusing the request.
+        let body = &Self::without_hosted_web_search(body);
         let tools = Self::from_go_body(body, wrap_schema)?;
-        // Chat has no server-side web-search protocol. Do not silently lose it
-        // when reusing the bidirectional client-tool bridge.
-        if !tools.web_tools.is_empty() {
-            return Err(invalid(
-                "tools[]",
-                "this Go Chat endpoint cannot execute native web search",
-            ));
-        }
         // Most Go Chat models accept native unions. DeepSeek's verified native
         // schema validator requires an object root; retain its unions inside
         // the reversible carrier rather than flattening their constraints.
@@ -1242,6 +1240,18 @@ impl ClaudeResponsesTools {
     }
 
     pub(crate) fn normalize_go_gemini(body: &Value) -> Result<Value, FormatError> {
+        // Gemini 4 cannot mix a hosted tool with function declarations, and a coding client
+        // always has function tools: keep the client tools, not the hosted search.
+        if collected_tools(body)?
+            .iter()
+            .any(|tool| !is_native_web_tool(tool))
+        {
+            return Self::normalize_go_gemini_with_web(&Self::without_hosted_web_search(body));
+        }
+        Self::normalize_go_gemini_with_web(body)
+    }
+
+    fn normalize_go_gemini_with_web(body: &Value) -> Result<Value, FormatError> {
         if body.get("tool_choice").is_some_and(is_native_web_tool) {
             return Err(invalid(
                 "tool_choice",
@@ -1361,6 +1371,15 @@ impl ClaudeResponsesTools {
         body: &Value,
         model: &str,
     ) -> Result<Value, FormatError> {
+        // Only xAI documents a hosted web search on its Responses endpoint; Muse is
+        // function-only, so the declaration is not forwarded to it.
+        let stripped;
+        let body = if model.starts_with("muse-spark") {
+            stripped = Self::without_hosted_web_search(body);
+            &stripped
+        } else {
+            body
+        };
         let mut web_tools = collected_tools(body)?
             .into_iter()
             .filter(is_native_web_tool)
@@ -1404,6 +1423,20 @@ impl ClaudeResponsesTools {
             normalized["tool_choice"] = choice;
         }
         Ok(normalized)
+    }
+
+    /// Go endpoints that cannot run a hosted web search: the declaration, a forced web
+    /// `tool_choice` and the replayed `web_search_call` items all go, so the client's own
+    /// tools keep working instead of the whole request being refused.
+    fn without_hosted_web_search(body: &Value) -> Value {
+        let mut body = Self::without_native_web_tools(body);
+        if body.get("tool_choice").is_some_and(is_native_web_tool) {
+            body.as_object_mut().unwrap().remove("tool_choice");
+        }
+        if let Some(input) = body.get_mut("input").and_then(Value::as_array_mut) {
+            input.retain(|item| item["type"] != "web_search_call");
+        }
+        body
     }
 
     fn without_native_web_tools(body: &Value) -> Value {

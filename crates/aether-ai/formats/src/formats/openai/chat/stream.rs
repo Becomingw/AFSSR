@@ -99,6 +99,10 @@ pub struct OpenAIResponsesProviderState {
     tool_index_by_key: BTreeMap<String, usize>,
     image_item_keys: BTreeSet<String>,
     opaque_completed_item_keys: BTreeSet<String>,
+    /// Reasoning items already rendered; `response.completed` repeats every output item.
+    reasoning_item_keys: BTreeSet<String>,
+    /// Reasoning text streamed since the last reasoning item finished.
+    reasoning_streamed: bool,
     last_tool_index: Option<usize>,
 }
 
@@ -1137,6 +1141,17 @@ impl OpenAIResponsesProviderState {
         if item.get("type").and_then(Value::as_str) != Some("reasoning") {
             return;
         }
+        // The same item arrives again inside `response.completed`, and a provider may describe
+        // it differently (summary) than it streamed it (reasoning_text): what was streamed wins,
+        // and nothing may be added after the answer has started.
+        let streamed = std::mem::take(&mut self.reasoning_streamed);
+        let first_time = match item.get("id").and_then(Value::as_str) {
+            Some(id) => self.reasoning_item_keys.insert(id.to_string()),
+            None => true,
+        };
+        if streamed || !first_time {
+            return;
+        }
         let mut completed_reasoning = String::new();
         for raw_summary in item
             .get("summary")
@@ -1578,6 +1593,7 @@ impl OpenAIResponsesProviderState {
                         .map(|value| value as usize)
                         .unwrap_or(0);
                     self.ensure_started(report_context, &mut out);
+                    self.reasoning_streamed = true;
                     self.reasoning.push_str(piece);
                     self.reasoning_parts
                         .entry(summary_index)

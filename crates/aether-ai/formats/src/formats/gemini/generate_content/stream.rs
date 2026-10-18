@@ -266,6 +266,10 @@ impl GeminiProviderState {
                     .and_then(Value::as_str)
                     .unwrap_or(tool_state.call_id.as_str())
                     .to_string();
+                if tool_state.call_id.is_empty() {
+                    // Gemini does not name its function calls; see `from_raw`.
+                    tool_state.call_id = super::response::unique_generated_tool_call_id();
+                }
                 tool_state.name = function_call
                     .get("name")
                     .and_then(Value::as_str)

@@ -37,11 +37,20 @@ pub fn from_raw(body_json: &Value) -> Option<CanonicalResponse> {
             .and_then(Value::as_array)
             .map(Vec::as_slice)
             .unwrap_or(&[]);
-        let content = parts
+        let mut content = parts
             .iter()
             .enumerate()
             .filter_map(|(index, part)| gemini_part_to_canonical_block(part, index))
             .collect::<Vec<_>>();
+        // Gemini does not name its function calls. A positional id would repeat on every turn
+        // (`call_auto_0` again) and make the client mistake a new call for one already answered.
+        for block in &mut content {
+            if let CanonicalContentBlock::ToolUse { id, .. } = block {
+                if id.starts_with("call_auto_") {
+                    *id = unique_generated_tool_call_id();
+                }
+            }
+        }
         let mut stop_reason = candidate_object
             .get("finishReason")
             .or_else(|| candidate_object.get("finish_reason"))
@@ -581,4 +590,9 @@ mod tests {
             Some(CanonicalContentBlock::ToolUse { name, .. }) if name == "lookup"
         ));
     }
+}
+
+/// A fresh id for a tool call the provider did not name.
+pub(crate) fn unique_generated_tool_call_id() -> String {
+    format!("call_{}", uuid::Uuid::new_v4().simple())
 }

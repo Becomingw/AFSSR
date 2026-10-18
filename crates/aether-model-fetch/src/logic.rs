@@ -1210,7 +1210,8 @@ mod tests {
             json!(["claude:messages"])
         );
         assert_eq!(page.cached_models[2]["api_formats"], json!(["openai:chat"]));
-        assert_eq!(page.cached_models[3]["api_formats"], json!([]));
+        // Listed but not in the table: the family rule picks the protocol, no manual mapping.
+        assert_eq!(page.cached_models[3]["api_formats"], json!(["openai:chat"]));
         assert_eq!(aggregate_models_for_cache(&page.cached_models).len(), 4);
     }
 

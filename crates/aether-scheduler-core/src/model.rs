@@ -665,10 +665,12 @@ mod tests {
     }
 
     #[test]
-    fn opencode_go_future_model_requires_explicit_protocol_mapping() {
+    fn opencode_go_future_model_follows_family_rule_and_honours_explicit_scope() {
         let mut row = sample_row("alias", "future-model");
         row.provider_type = "opencode_go".to_string();
-        assert!(resolve_provider_model_name(&row, "alias", "openai:chat").is_none());
+        // Not in the table: Go serves it on Chat unless its name is a vendor-native family.
+        assert!(resolve_provider_model_name(&row, "alias", "openai:chat").is_some());
+        assert!(resolve_provider_model_name(&row, "alias", "claude:messages").is_none());
         row.model_provider_model_mappings = Some(vec![StoredProviderModelMapping {
             name: "future-model".into(),
             priority: 1,

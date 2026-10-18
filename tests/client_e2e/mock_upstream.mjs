@@ -9,9 +9,15 @@
 import fs from 'node:fs';
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
+import * as go from './go_mode.mjs';
 
 const port = Number(process.argv[2] ?? 18091);
 const logPath = process.argv[3] ?? 'mock-upstream.jsonl';
+// `go` makes this upstream behave like OpenCode Go (one native protocol per model, strict validators,
+// reasoning in every reply). GO_ALLOW_TRAINING=0 simulates the account setting that blocks
+// "contributor" models.
+const GO = process.argv[4] === 'go';
+const GO_ALLOW_TRAINING = process.env.GO_ALLOW_TRAINING !== '0';
 const log = (entry) => fs.appendFileSync(logPath, JSON.stringify({ ts: Date.now(), ...entry }) + '\n');
 const id = (prefix) => prefix + randomUUID().replaceAll('-', '').slice(0, 24);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -94,6 +100,14 @@ function inspect(format, body) {
       if (/_output$/.test(item.type ?? '')) results += 1;
     }
     tools = (body.tools ?? []).filter((t) => t.type === 'function').map((t) => ({ name: t.name, schema: t.parameters }));
+  } else if (format === 'gemini') {
+    for (const content of body.contents ?? []) {
+      if (content.role !== 'user') continue;
+      const parts = content.parts ?? [];
+      userTexts.push(parts.filter((p) => typeof p.text === 'string').map((p) => p.text).join('\n'));
+      results += parts.filter((p) => p.functionResponse).length;
+    }
+    tools = (body.tools ?? []).flatMap((t) => t.functionDeclarations ?? []).map((d) => ({ name: d.name, schema: d.parametersJsonSchema ?? d.parameters }));
   } else {
     for (const m of body.messages ?? []) {
       if (m.role !== 'user') continue;
@@ -108,7 +122,12 @@ function inspect(format, body) {
 }
 
 // ---- reply planning ------------------------------------------------------------------------
+const REASONING = 'Considering the request before answering.';
 function plan(info) {
+  const reply = planReply(info);
+  return GO && (reply.type === 'tool' || reply.type === 'text') ? { ...reply, reasoning: REASONING } : reply;
+}
+function planReply(info) {
   const script = info.scenario ? steps(info.scenario) : [];
   if (info.toolNames.length && info.results < script.length) {
     const call = toolCall(script[info.results], info.tools);
@@ -131,12 +150,13 @@ function chat(body, reply, res) {
   const usage = { prompt_tokens: USAGE.input, completion_tokens: USAGE.output, total_tokens: USAGE.input + USAGE.output };
   if (!body.stream) {
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ ...base, object: 'chat.completion', choices: [{ index: 0, message: { role: 'assistant', content: toolCalls ? null : reply.text, tool_calls: toolCalls }, finish_reason: finish }], usage }));
+    res.end(JSON.stringify({ ...base, object: 'chat.completion', choices: [{ index: 0, message: { role: 'assistant', content: toolCalls ? null : reply.text, tool_calls: toolCalls, ...(reply.reasoning ? { reasoning_content: reply.reasoning } : {}) }, finish_reason: finish }], usage }));
     return;
   }
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
   const send = (data) => res.write(`data: ${JSON.stringify({ ...base, object: 'chat.completion.chunk', ...data })}\n\n`);
   send({ choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }] });
+  if (reply.reasoning) send({ choices: [{ index: 0, delta: { reasoning_content: reply.reasoning }, finish_reason: null }] });
   if (toolCalls) {
     const args = toolCalls[0].function.arguments;
     send({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: reply.callId, type: 'function', function: { name: reply.name, arguments: '' } }] }, finish_reason: null }] });
@@ -159,7 +179,13 @@ function responses(body, reply, res) {
     ? { type: 'function_call', id: id('fc_'), call_id: reply.callId, name: reply.name, arguments: JSON.stringify(reply.args), status: 'completed' }
     : { type: 'message', id: id('msg_'), role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: reply.text, annotations: [] }] };
   const usage = { input_tokens: USAGE.input, output_tokens: USAGE.output, total_tokens: USAGE.input + USAGE.output, input_tokens_details: { cached_tokens: 0 }, output_tokens_details: { reasoning_tokens: 0 } };
-  const finalResponse = { id: respId, object: 'response', created_at: 1_790_000_000, model: body.model, status: 'completed', output: [item], usage };
+  // Models that reason return a reasoning item first; Codex replays it in the next request.
+  const reasoningId = id('rs_');
+  const reasoningItem = reply.reasoning
+    ? { type: 'reasoning', id: reasoningId, summary: [{ type: 'summary_text', text: 'Plan' }], content: [{ type: 'reasoning_text', text: reply.reasoning }], encrypted_content: 'enc-' + reasoningId, status: 'completed' }
+    : null;
+  const o = reasoningItem ? 1 : 0; // output index of the main item
+  const finalResponse = { id: respId, object: 'response', created_at: 1_790_000_000, model: body.model, status: 'completed', output: reasoningItem ? [reasoningItem, item] : [item], usage };
   if (!body.stream) {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify(finalResponse));
@@ -169,21 +195,31 @@ function responses(body, reply, res) {
   let seq = 0;
   const send = (type, data) => res.write(`event: ${type}\ndata: ${JSON.stringify({ type, sequence_number: seq++, ...data })}\n\n`);
   send('response.created', { response: { ...finalResponse, status: 'in_progress', output: [], usage: null } });
+  if (reasoningItem) {
+    send('response.output_item.added', { output_index: 0, item: { ...reasoningItem, summary: [], content: [], status: 'in_progress' } });
+    send('response.reasoning_text.delta', { output_index: 0, content_index: 0, item_id: reasoningId, delta: reply.reasoning });
+    send('response.reasoning_text.done', { output_index: 0, content_index: 0, item_id: reasoningId, text: reply.reasoning });
+    send('response.reasoning_summary_part.added', { output_index: 0, summary_index: 0, item_id: reasoningId, part: { type: 'summary_text', text: '' } });
+    send('response.reasoning_summary_text.delta', { output_index: 0, summary_index: 0, item_id: reasoningId, delta: 'Plan' });
+    send('response.reasoning_summary_text.done', { output_index: 0, summary_index: 0, item_id: reasoningId, text: 'Plan' });
+    send('response.reasoning_summary_part.done', { output_index: 0, summary_index: 0, item_id: reasoningId, part: { type: 'summary_text', text: 'Plan' } });
+    send('response.output_item.done', { output_index: 0, item: reasoningItem });
+  }
   if (item.type === 'function_call') {
-    send('response.output_item.added', { output_index: 0, item: { ...item, arguments: '', status: 'in_progress' } });
+    send('response.output_item.added', { output_index: o, item: { ...item, arguments: '', status: 'in_progress' } });
     const mid = Math.floor(item.arguments.length / 2);
     for (const delta of [item.arguments.slice(0, mid), item.arguments.slice(mid)]) {
-      send('response.function_call_arguments.delta', { output_index: 0, item_id: item.id, delta });
+      send('response.function_call_arguments.delta', { output_index: o, item_id: item.id, delta });
     }
-    send('response.function_call_arguments.done', { output_index: 0, item_id: item.id, arguments: item.arguments });
-    send('response.output_item.done', { output_index: 0, item });
+    send('response.function_call_arguments.done', { output_index: o, item_id: item.id, arguments: item.arguments });
+    send('response.output_item.done', { output_index: o, item });
   } else {
-    send('response.output_item.added', { output_index: 0, item: { ...item, content: [], status: 'in_progress' } });
-    send('response.content_part.added', { output_index: 0, content_index: 0, item_id: item.id, part: { type: 'output_text', text: '', annotations: [] } });
-    send('response.output_text.delta', { output_index: 0, content_index: 0, item_id: item.id, delta: reply.text });
-    send('response.output_text.done', { output_index: 0, content_index: 0, item_id: item.id, text: reply.text });
-    send('response.content_part.done', { output_index: 0, content_index: 0, item_id: item.id, part: item.content[0] });
-    send('response.output_item.done', { output_index: 0, item });
+    send('response.output_item.added', { output_index: o, item: { ...item, content: [], status: 'in_progress' } });
+    send('response.content_part.added', { output_index: o, content_index: 0, item_id: item.id, part: { type: 'output_text', text: '', annotations: [] } });
+    send('response.output_text.delta', { output_index: o, content_index: 0, item_id: item.id, delta: reply.text });
+    send('response.output_text.done', { output_index: o, content_index: 0, item_id: item.id, text: reply.text });
+    send('response.content_part.done', { output_index: o, content_index: 0, item_id: item.id, part: item.content[0] });
+    send('response.output_item.done', { output_index: o, item });
   }
   send('response.completed', { response: finalResponse });
   res.end();
@@ -192,9 +228,11 @@ function responses(body, reply, res) {
 // ---- messages ------------------------------------------------------------------------------
 function messages(body, reply, res) {
   const msgId = id('msg_');
-  const content = reply.type === 'tool'
-    ? [{ type: 'tool_use', id: reply.callId.replace('call_', 'toolu_'), name: reply.name, input: reply.args }]
-    : [{ type: 'text', text: reply.text }];
+  const main = reply.type === 'tool'
+    ? { type: 'tool_use', id: reply.callId.replace('call_', 'toolu_'), name: reply.name, input: reply.args }
+    : { type: 'text', text: reply.text };
+  const thinking = reply.reasoning ? { type: 'thinking', thinking: reply.reasoning, signature: 'sig-' + id('') } : null;
+  const content = thinking ? [thinking, main] : [main];
   const stop = reply.type === 'tool' ? 'tool_use' : 'end_turn';
   const message = { id: msgId, type: 'message', role: 'assistant', model: body.model, content, stop_reason: stop, stop_sequence: null, usage: { input_tokens: USAGE.input, output_tokens: USAGE.output } };
   if (!body.stream) {
@@ -206,21 +244,43 @@ function messages(body, reply, res) {
   const send = (type, data) => res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`);
   send('message_start', { message: { ...message, content: [], stop_reason: null, usage: { input_tokens: USAGE.input, output_tokens: 0 } } });
   send('ping', {});
-  if (content[0].type === 'tool_use') {
-    send('content_block_start', { index: 0, content_block: { ...content[0], input: {} } });
-    const json = JSON.stringify(content[0].input);
+  let at = 0;
+  if (thinking) {
+    send('content_block_start', { index: at, content_block: { type: 'thinking', thinking: '', signature: '' } });
+    send('content_block_delta', { index: at, delta: { type: 'thinking_delta', thinking: thinking.thinking } });
+    send('content_block_delta', { index: at, delta: { type: 'signature_delta', signature: thinking.signature } });
+    send('content_block_stop', { index: at });
+    at += 1;
+  }
+  if (main.type === 'tool_use') {
+    send('content_block_start', { index: at, content_block: { ...main, input: {} } });
+    const json = JSON.stringify(main.input);
     const mid = Math.floor(json.length / 2);
     for (const part of [json.slice(0, mid), json.slice(mid)]) {
-      send('content_block_delta', { index: 0, delta: { type: 'input_json_delta', partial_json: part } });
+      send('content_block_delta', { index: at, delta: { type: 'input_json_delta', partial_json: part } });
     }
   } else {
-    send('content_block_start', { index: 0, content_block: { type: 'text', text: '' } });
-    send('content_block_delta', { index: 0, delta: { type: 'text_delta', text: reply.text } });
+    send('content_block_start', { index: at, content_block: { type: 'text', text: '' } });
+    send('content_block_delta', { index: at, delta: { type: 'text_delta', text: reply.text } });
   }
-  send('content_block_stop', { index: 0 });
+  send('content_block_stop', { index: at });
   send('message_delta', { delta: { stop_reason: stop, stop_sequence: null }, usage: { output_tokens: USAGE.output } });
   send('message_stop', {});
   res.end();
+}
+
+// ---- gemini --------------------------------------------------------------------------------
+function gemini(model, reply, res, streaming) {
+  const parts = [];
+  if (reply.reasoning) parts.push({ text: reply.reasoning, thought: true });
+  parts.push(reply.type === 'tool' ? { functionCall: { name: reply.name, args: reply.args } } : { text: reply.text });
+  const chunk = { candidates: [{ content: { role: 'model', parts }, finishReason: 'STOP', index: 0 }], usageMetadata: { promptTokenCount: USAGE.input, candidatesTokenCount: USAGE.output, totalTokenCount: USAGE.input + USAGE.output }, modelVersion: model };
+  if (!streaming) {
+    res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(chunk));
+    return;
+  }
+  res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+  res.end(`data: ${JSON.stringify(chunk)}\n\n`);
 }
 
 // A long text stream that the harness cancels half-way; reports whether the peer went away.
@@ -305,6 +365,10 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' }).end('{"synthetic":true}');
     return;
   }
+  if (GO && req.method === 'GET' && /\/v1\/models$/.test(path)) {
+    res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(go.modelsListing()));
+    return;
+  }
   const chunks = [];
   let size = 0;
   for await (const chunk of req) {
@@ -319,19 +383,37 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' }).end('{"input_tokens":10}');
     return;
   }
-  const format = formatOf(path);
   const requestId = id('req_');
+  if (process.env.CAPTURE_DIR) fs.writeFileSync(`${process.env.CAPTURE_DIR}/${Date.now()}-${(req.headers['user-agent'] ?? 'ua').split('/')[0].replace(/\W/g, '_')}-${path.split('/').pop()}.json`, JSON.stringify(body, null, 1));
+  let format = formatOf(path);
+  let goRoute = null;
+  if (GO) {
+    goRoute = go.route(path);
+    format = goRoute?.protocol ?? null;
+    if (goRoute?.protocol === 'gemini') body.model = goRoute.model;
+    if (goRoute?.protocol === 'gemini') body.stream = goRoute.stream;
+  }
   const headers = Object.fromEntries(KEPT_HEADERS.filter((h) => req.headers[h] !== undefined).map((h) => [h, /^(authorization|x-api-key)$/.test(h) ? '[redacted]' : req.headers[h]]));
   if (!format || req.method !== 'POST') {
     log({ kind: 'unknown', request_id: requestId, method: req.method, path });
     res.writeHead(404, { 'content-type': 'application/json' }).end('{"error":{"message":"synthetic upstream: unknown path"}}');
     return;
   }
+  if (GO) {
+    const refusal = go.validate(goRoute.protocol, String(body.model ?? ''), body, { allowTraining: GO_ALLOW_TRAINING });
+    if (refusal) {
+      const message = refusal.body?.error?.message ?? '';
+      log({ kind: 'rejected', request_id: requestId, format, path, model: body.model, status: refusal.status, message, headers, body });
+      res.writeHead(refusal.status, { 'content-type': 'application/json' }).end(JSON.stringify(refusal.body));
+      return;
+    }
+  }
   const info = inspect(format, body);
   const reply = plan(info);
   log({ kind: 'request', request_id: requestId, format, path, model: body.model, stream: !!body.stream, scenario: info.scenario?.name ?? null, tools: info.toolNames, tool_results: info.results, reply: reply.type === 'tool' ? { tool: reply.name } : { [reply.type]: true }, headers, body });
   if (reply.type === 'error') { upstreamError(format, body, reply.kind, res); return; }
   if (reply.type === 'slow') { await slowStream(format, body, res, requestId, reply.chunks); return; }
+  if (format === 'gemini') { gemini(body.model, reply, res, !!body.stream); return; }
   ({ chat, responses, messages })[format](body, reply, res);
 });
 server.listen(port, '127.0.0.1', () => log({ kind: 'listening', port }));

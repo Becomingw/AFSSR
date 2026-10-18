@@ -99,7 +99,13 @@
       </div>
 
       <!-- API 格式 & 认证方式 -->
-      <div v-if="visibleApiFormats.length > 0">
+      <p
+        v-if="isGoPreset"
+        class="rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground"
+      >
+        {{ legacyT('OpenCode Go 的协议、端点和格式转换已内置：每个模型自动走它的原生协议，只需填写密钥。') }}
+      </p>
+      <div v-else-if="visibleApiFormats.length > 0">
         <div class="flex items-center gap-1 mb-1.5">
           <Label>{{ legacyT('支持的 API 格式 *') }}</Label>
           <span
@@ -375,6 +381,8 @@ import { useToast } from '@/composables/useToast'
 import { useFormDialog } from '@/composables/useFormDialog'
 import { useI18n } from '@/i18n'
 import { parseApiError } from '@/utils/errorParser'
+import { importModelsFromUpstream } from '@/api/endpoints'
+import { useUpstreamModelsCache } from '../composables/useUpstreamModelsCache'
 import { parseNumberInput, parseNullableNumberInput } from '@/utils/form'
 import JsonImportInput from '@/components/common/JsonImportInput.vue'
 import {
@@ -518,7 +526,33 @@ function sanitizeAllowAuthChannelMismatchFormats(
   return sanitized
 }
 
+const { fetchModels } = useUpstreamModelsCache()
+
+// Key-only setup: right after the key is saved, list what the key can use and register every
+// model (global + provider entry), so the new provider is usable without any further step.
+async function importGoCatalog(keyId: string) {
+  if (!props.providerId) return
+  try {
+    const result = await fetchModels(props.providerId, keyId, true)
+    const ids = [...new Set(result.models.map(model => model.id).filter(Boolean))]
+    if (ids.length === 0) {
+      showError(result.error || legacyT('密钥已保存，但没有取到可用模型，请稍后在“模型”里手动获取'), legacyT('提示'))
+      return
+    }
+    const imported = await importModelsFromUpstream(props.providerId, ids)
+    success(`${legacyT('已导入模型')}: ${imported.success?.length ?? 0}`, legacyT('成功'))
+  } catch (err: unknown) {
+    showError(parseApiError(err, legacyT('密钥已保存，模型导入失败，请稍后在“模型”里手动获取')), legacyT('提示'))
+  }
+}
+
+// OpenCode Go is a fixed preset: the key always serves every endpoint (the server enforces it too).
+const isGoPreset = computed(() => props.providerType === 'opencode_go')
+
 function getDefaultApiFormats(): string[] {
+  if (props.providerType === 'opencode_go') {
+    return sanitizeApiFormats(getSelectableApiFormats())
+  }
   const endpointFormat = props.endpoint?.api_format
   if (endpointFormat) {
     const endpointFormats = sanitizeApiFormats([endpointFormat])
@@ -1027,6 +1061,7 @@ async function handleSave() {
       })
 
       success(legacyT('密钥已添加'), legacyT('成功'))
+      if (isGoPreset.value) await importGoCatalog(createdKey.id)
       // 添加模式：不关闭对话框，只清除名称和密钥以便继续添加
       emit('saved', createdKey)
       clearForNextAdd()

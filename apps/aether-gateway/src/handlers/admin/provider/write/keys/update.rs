@@ -1,10 +1,11 @@
 use crate::handlers::admin::provider::oauth::provisioning::rotate_codex_credential_generation;
 use crate::handlers::admin::provider::shared::payloads::AdminProviderKeyUpdatePatch;
 use crate::handlers::admin::provider::write::normalize::{
-    normalize_allow_auth_channel_mismatch_formats, normalize_api_format_json_object_keys,
-    normalize_api_format_list, normalize_auth_type, normalize_auth_type_by_format,
-    normalize_max_probe_interval_minutes, normalize_rate_multipliers,
-    reconcile_allow_auth_channel_mismatch_formats, validate_vertex_api_formats,
+    managed_provider_key_api_formats, normalize_allow_auth_channel_mismatch_formats,
+    normalize_api_format_json_object_keys, normalize_api_format_list, normalize_auth_type,
+    normalize_auth_type_by_format, normalize_max_probe_interval_minutes,
+    normalize_rate_multipliers, reconcile_allow_auth_channel_mismatch_formats,
+    validate_vertex_api_formats,
 };
 use crate::handlers::admin::request::AdminAppState;
 use crate::handlers::admin::shared::{
@@ -234,7 +235,10 @@ pub(crate) fn build_admin_update_provider_key_record_with_existing_keys(
         _ => {}
     }
 
-    if fields.contains("api_formats") {
+    if let Some(formats) = managed_provider_key_api_formats(&provider.provider_type) {
+        // Fixed preset: whatever the request says, the key keeps serving every protocol.
+        updated.api_formats = Some(json!(formats));
+    } else if fields.contains("api_formats") {
         let api_formats = normalize_api_format_list(
             normalize_string_list(payload.api_formats)
                 .ok_or_else(|| "api_formats 为必填字段".to_string())?,

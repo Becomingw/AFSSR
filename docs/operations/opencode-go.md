@@ -4,17 +4,22 @@ This Arca provider uses API keys, not OpenCode account OAuth. It reuses Arca's
 standard conversion, proxy/tunnel selection, metering, and response-history paths.
 It does not change existing `custom` providers or production database records.
 
-## Setup
+## Setup (key only)
 
-1. Create a provider of type `opencode_go` in the provider form.
-2. Four managed endpoints are created automatically: `openai:responses`,
-   `openai:chat`, `claude:messages`, and `gemini:generate_content`.
-   Format conversion defaults to enabled.
-3. Add the Go API key and enable the formats you intend to use on the key.
-4. Fetch the live model catalog. Map downstream aliases to actual Go model IDs.
-   For example, `gpt-6.1-sol` may map to `claude-haiku-5-5`; the alias is not sent
-   upstream. Known models are restricted to their documented native protocol.
-5. Select the existing proxy/tunnel option if needed. The adapter does not force
+1. Create a provider of type `opencode_go`. Nothing else is configured by hand: the four
+   endpoints (`openai:responses`, `openai:chat`, `claude:messages`,
+   `gemini:generate_content`), the base URL and format conversion are fixed by the
+   preset. The provider drawer shows them read-only, hides the conversion switches and
+   the key form has no API-format picker.
+2. Add the Go API key. The server always gives a Go key every protocol (whatever the
+   request says), and right after the key is saved the console lists the key's models
+   and registers every one of them (global model + provider model), so Codex and
+   Claude Code can use any Go model by its own name.
+3. Each request is sent on the model's native protocol: the gateway picks Responses,
+   Chat, Messages or Google by model, converting whatever the client speaks.
+   Downstream aliases still work through an explicit model mapping; the alias is not
+   sent upstream.
+4. Select the existing proxy/tunnel option if needed. The adapter does not force
    all requests through tunnels or modify the system proxy.
 
 Default base URL: `https://opencode.ai/inference/go/v1`.
@@ -32,11 +37,29 @@ for staging rather than rewriting the production provider in SQL.
 | Google GenerateContent | Gemini 4 Argon Contributor | `/models/{model}:generateContent` (stream: `:streamGenerateContent?alt=sse`) |
 
 The protocol table is a dated snapshot, not an availability guarantee. The catalog
-is fetched live; unknown preview models stay visible with no inferred formats.
-Configure an explicit `api_formats` or `endpoint_ids` model mapping for a new
-model until its native protocol is verified. Do not use the `opencode-go/` client
-prefix as the upstream model ID. Go compact/image/embedding endpoints are not
-automatically added or claimed to work.
+is fetched live. A model that is not in the table follows the same family rule
+OpenCode's own client uses: `gpt-*`, `grok-*`, `muse-*` are Responses, `claude-*`,
+`minimax-*`, `qwen*` are Messages, `gemini-*` is Google, everything else is Chat. A
+wrong guess is a deterministic 400 for that one model ("Model does not support this
+protocol"), never a wrong answer; add the model to the table once its protocol is
+confirmed. An explicit `api_formats` or `endpoint_ids` model mapping still wins. Do
+not use the `opencode-go/` client prefix as the upstream model ID. Go
+compact/image/embedding endpoints are not automatically added or claimed to work.
+
+### What is not forwarded
+
+Go backends validate strictly, so a request is never sent with something the target
+cannot execute. The client's own tools (shell, patch, plan, ...) are always kept.
+
+- **Hosted web search** (Codex `web_search`): kept only for Grok, which documents its
+  own hosted search. For Chat, Messages (Anthropic's `web_search_20250305` is an
+  unknown tag there), Gemini 4 (cannot mix a hosted tool with function declarations) and
+  Muse it is dropped, together with a forced web `tool_choice` and replayed
+  `web_search_call` items, instead of refusing the whole request.
+- **Claude Code extensions on Messages**: `context_management`, `builtin_tools`,
+  `container`, `mcp_servers`, `betas` and any non-`custom` tool type are removed.
+- **Claude Code's `WebSearch`/`WebFetch`** are plain client functions. On Gemini they
+  are not turned into Google's built-in search/URL tools.
 
 ## Headers and Authentication
 
@@ -77,8 +100,8 @@ Dedicated Go Chat endpoints now use the same bidirectional client-tool bridge:
 Lite prefix IDs, namespaces, custom/Lark text payloads, client tool search and
 loaded tools are represented as function calls and restored in sync/SSE results.
 The model must still follow the supplied grammar; functionization is not a grammar
-decoder. Native web search has no Chat equivalent and fails explicitly instead
-of being silently removed. Ordinary non-Go Chat providers are unaffected.
+decoder. Native web search has no Chat equivalent; the hosted declaration is dropped (see
+"What is not forwarded") and the client's own tools stay usable. Ordinary non-Go Chat providers are unaffected.
 Most Go Chat profiles retain root union schemas natively. Native MiMo comparison
 tests show that an unnecessary wrapper produces invalid nested values while the
 original schema works. The verified `deepseek-flash`, `deepseek-v4-flash`,
@@ -125,9 +148,9 @@ developer text are moved to systemInstruction instead of being dropped. Verbosit
 is an instruction preference. Function definitions use parametersJsonSchema to
 preserve full nested schemas, including the required root-union object carrier.
 Opaque Gemini tool thought signatures survive synchronous and SSE round trips.
-Basic native web declarations are retained; unmapped controls or forced native
-web tool choices fail explicitly, not as silently removed tools. Mixed server and
-client tool support requires a separately validated model profile.
+A hosted web declaration alone is retained; unmapped controls or a forced native web
+tool choice without any client tool still fail explicitly. When client tools are
+present the hosted declaration is dropped, because Gemini 4 cannot mix the two.
 
 For the explicitly advertised Codex JavaScript `functions.exec` contract, Go's
 functionized protocols additionally expose JSON `exec_command` and `apply_patch`

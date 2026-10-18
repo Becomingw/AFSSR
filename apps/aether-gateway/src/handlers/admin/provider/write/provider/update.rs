@@ -223,7 +223,9 @@ pub(crate) async fn build_admin_update_provider_record(
         let Some(enable_format_conversion) = payload.enable_format_conversion else {
             return Err("enable_format_conversion 必须是布尔值".to_string());
         };
-        updated.enable_format_conversion = enable_format_conversion;
+        // OpenCode Go depends on conversion (clients speak one protocol, each model another).
+        updated.enable_format_conversion =
+            enable_format_conversion || target_provider_type == "opencode_go";
     }
 
     let mut config_map = updated

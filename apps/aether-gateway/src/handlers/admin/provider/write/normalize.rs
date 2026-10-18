@@ -12,6 +12,24 @@ pub(crate) fn normalize_provider_type_input(value: &str) -> Result<String, Strin
     }
 }
 
+/// Providers whose protocols are decided by the gateway, not by the operator. A key on such a
+/// provider always serves every endpoint of the fixed template (OpenCode Go picks the protocol
+/// per model), so an operator can never leave a Go key on a single format by accident.
+pub(crate) fn managed_provider_key_api_formats(provider_type: &str) -> Option<Vec<String>> {
+    if !provider_type.trim().eq_ignore_ascii_case("opencode_go") {
+        return None;
+    }
+    aether_provider_transport::provider_types::fixed_provider_template("opencode_go").map(
+        |template| {
+            template
+                .endpoints
+                .iter()
+                .map(|endpoint| endpoint.api_format.to_string())
+                .collect()
+        },
+    )
+}
+
 pub(crate) fn normalize_api_format_list(values: Vec<String>) -> Vec<String> {
     let mut seen = BTreeSet::new();
     let mut normalized = Vec::new();
@@ -403,6 +421,22 @@ mod tests {
             normalize_provider_type_input(" Grok ").expect("type should normalize"),
             "grok"
         );
+    }
+
+    #[test]
+    fn opencode_go_keys_always_serve_every_native_protocol() {
+        use super::managed_provider_key_api_formats;
+        let formats = managed_provider_key_api_formats("OpenCode_Go").expect("managed");
+        assert_eq!(
+            formats,
+            vec![
+                "openai:responses",
+                "openai:chat",
+                "claude:messages",
+                "gemini:generate_content"
+            ]
+        );
+        assert!(managed_provider_key_api_formats("custom").is_none());
     }
 
     #[test]

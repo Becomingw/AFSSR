@@ -53,6 +53,26 @@ Every non-cancel case also checks, on the request the gateway forwarded upstream
 - the gateway's usage accounting matches the upstream's numbers exactly (request count, input and
   output tokens).
 
+## OpenCode Go matrix
+
+`go_matrix.py` runs real Codex and Claude Code against an `opencode_go` provider whose upstream
+(`mock_upstream.mjs ... go`, rules in `go_mode.mjs`) behaves like OpenCode Go: every model is served
+on exactly one native protocol, anything else gets "Model does not support this protocol.", the
+backends validate strictly (tool shapes, extra fields, role names, reasoning replay) with the error
+texts seen in production, and every reply carries reasoning. A case passes only when the client
+finished its tool loop and the upstream refused nothing.
+
+    python3 tests/client_e2e/go_matrix.py [--clients codex,claude] [--models glm-5.3] [--scenarios multi_tool]
+
+`go_probe.sh` is the fast, conversion-only version: it converts the captured real Codex / Claude Code
+bodies (`crates/aether-ai/formats/tests/fixtures/real_clients/`) for every Go model and runs them
+through the same validators (`go_validate.mjs`) in seconds. Refresh a fixture by running
+`CAPTURE_DIR=<dir> python3 run.py --upstreams responses,messages --scenarios text_only`.
+
+The rules in `go_mode.mjs` are a model of the service, not the service: where the docs or a probe
+do not settle a point the mock follows the gateway's documented behaviour. The live acceptance on a
+real key is what settles it.
+
 ## Not covered
 
 - Real model behaviour (the mock is scripted) and real provider quirks: auth, rate limits, field

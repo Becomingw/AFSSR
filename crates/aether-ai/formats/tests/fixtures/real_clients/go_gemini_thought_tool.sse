@@ -1,0 +1,2 @@
+data: {"candidates":[{"content":{"role":"model","parts":[{"text":"Considering the request before answering.","thought":true},{"functionCall":{"name":"Write","args":{"file_path":"/tmp/x/e2e_0.txt","content":"E2E_WRITE_0"}}}]},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":12,"candidatesTokenCount":7,"totalTokenCount":19},"modelVersion":"gemini-4-argon-contributor"}
+

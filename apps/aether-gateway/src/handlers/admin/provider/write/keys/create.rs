@@ -1,9 +1,10 @@
 use crate::handlers::admin::provider::oauth::provisioning::rotate_codex_credential_generation;
 use crate::handlers::admin::provider::shared::payloads::AdminProviderKeyCreateRequest;
 use crate::handlers::admin::provider::write::normalize::{
-    normalize_allow_auth_channel_mismatch_formats, normalize_api_format_json_object_keys,
-    normalize_api_format_list, normalize_auth_type, normalize_auth_type_by_format,
-    normalize_max_probe_interval_minutes, normalize_rate_multipliers, validate_vertex_api_formats,
+    managed_provider_key_api_formats, normalize_allow_auth_channel_mismatch_formats,
+    normalize_api_format_json_object_keys, normalize_api_format_list, normalize_auth_type,
+    normalize_auth_type_by_format, normalize_max_probe_interval_minutes,
+    normalize_rate_multipliers, validate_vertex_api_formats,
 };
 use crate::handlers::admin::request::AdminAppState;
 use crate::handlers::admin::shared::{
@@ -29,10 +30,13 @@ pub(crate) async fn build_admin_create_provider_key_record(
         return Err("name 为必填字段".to_string());
     }
 
-    let api_formats = normalize_api_format_list(
-        normalize_string_list(payload.api_formats)
-            .ok_or_else(|| "api_formats 为必填字段".to_string())?,
-    );
+    let api_formats = match managed_provider_key_api_formats(&provider.provider_type) {
+        Some(formats) => formats,
+        None => normalize_api_format_list(
+            normalize_string_list(payload.api_formats)
+                .ok_or_else(|| "api_formats 为必填字段".to_string())?,
+        ),
+    };
     let auth_type = normalize_auth_type(payload.auth_type.as_deref())?;
     validate_vertex_api_formats(&provider.provider_type, &auth_type, &api_formats)?;
     let auth_type_by_format = if matches!(auth_type.as_str(), "api_key" | "bearer") {

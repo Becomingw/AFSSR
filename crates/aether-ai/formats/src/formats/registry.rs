@@ -124,7 +124,10 @@ pub fn convert_request_pure_with_context(
     let target = parse_format(target_format)?;
     let normalized_body = normalize_openai_responses_to_chat_body(source, target, body, ctx)?;
     let mut request = parse_request(source_format, &normalized_body, &pure_ctx)?;
-    if source == FormatId::OpenAiResponses && target == FormatId::ClaudeMessages {
+    if source == FormatId::OpenAiResponses
+        && target == FormatId::ClaudeMessages
+        && ctx.report_context_value()["provider_type"] != "opencode_go"
+    {
         crate::formats::claude::responses_tools::ClaudeResponsesTools::attach_native_web_tools(
             body,
             &mut request,
@@ -231,6 +234,25 @@ pub fn convert_request(
     }
     validate_openai_responses_target_contract(target_format, &normalized_body)?;
     let mut request = parse_request(source_format, &normalized_body, ctx)?;
+    if target == FormatId::GeminiGenerateContent
+        && crate::formats::claude::responses_tools::is_go_gemini_provider(
+            &ctx.report_context_value(),
+        )
+    {
+        for tool in request.tools.iter_mut().filter(|tool| {
+            !tool.extensions.values().any(|ext| {
+                ext["type"]
+                    .as_str()
+                    .is_some_and(|kind| kind.starts_with("web_search"))
+            })
+        }) {
+            tool.extensions.insert(
+                crate::formats::gemini::generate_content::request::CLIENT_FUNCTION_EXTENSION
+                    .to_string(),
+                Value::Bool(true),
+            );
+        }
+    }
     validate_runtime_request_conversion(
         source,
         target,
@@ -245,7 +267,10 @@ pub fn convert_request(
     {
         request.model = mapped_model.to_string();
     }
-    if source == FormatId::OpenAiResponses && target == FormatId::ClaudeMessages {
+    if source == FormatId::OpenAiResponses
+        && target == FormatId::ClaudeMessages
+        && ctx.report_context_value()["provider_type"] != "opencode_go"
+    {
         crate::formats::claude::responses_tools::ClaudeResponsesTools::attach_native_web_tools(
             body,
             &mut request,

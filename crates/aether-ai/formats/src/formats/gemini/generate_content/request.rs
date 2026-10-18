@@ -701,6 +701,8 @@ fn apply_response_format_to_gemini_generation_config(
     }
 }
 
+pub(crate) const CLIENT_FUNCTION_EXTENSION: &str = "aether_client_function";
+
 fn canonical_tools_to_gemini(canonical: &CanonicalRequest) -> Option<Value> {
     let mut declarations = Vec::new();
     let mut tools = Vec::new();
@@ -717,6 +719,12 @@ fn canonical_tools_to_gemini(canonical: &CanonicalRequest) -> Option<Value> {
     let mut url_context = false;
 
     for tool in &canonical.tools {
+        // A client function that merely shares a name with a Gemini built-in (Claude Code's
+        // `WebSearch`/`WebFetch`) stays a function the client executes.
+        if tool.extensions.contains_key(CLIENT_FUNCTION_EXTENSION) {
+            declarations.push(canonical_tool_to_gemini_declaration(tool));
+            continue;
+        }
         match normalize_gemini_builtin_tool_name(&tool.name) {
             Some("googleSearch") => {
                 google_search = true;

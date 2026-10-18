@@ -303,6 +303,21 @@ fn go_gemini_keeps_basic_native_web_tools_and_rejects_unmapped_controls() {
         &ctx
     )
     .is_err());
+    // Gemini 4 cannot mix the hosted tool with function declarations: the client tools win.
+    original["tools"] = json!([{"type":"web_search"}, {"type":"function","name":"read_file","description":"Read","parameters":{"type":"object","properties":{}}}]);
+    let mixed = convert_request(
+        "openai:responses",
+        "gemini:generate_content",
+        &original,
+        &ctx,
+    )
+    .unwrap();
+    assert!(!mixed["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|tool| tool.get("googleSearch").is_some()));
+    assert!(mixed.to_string().contains("read_file"));
 }
 
 #[test]
@@ -1423,7 +1438,7 @@ fn go_chat_custom_tool_stream_restores_all_events() {
 }
 
 #[test]
-fn go_bridge_does_not_silently_discard_web_or_unknown_replay_policy() {
+fn go_chat_drops_hosted_web_search_but_rejects_unknown_replay_policy() {
     let mut body = body();
     body["reasoning"]["context"] = json!("current_turn");
     let error = convert_request(
@@ -1435,14 +1450,19 @@ fn go_bridge_does_not_silently_discard_web_or_unknown_replay_policy() {
     .unwrap_err();
     assert!(error.to_string().contains("context"));
     body["reasoning"]["context"] = json!("all_turns");
-    body["tools"] = json!([{"type":"web_search"}]);
-    assert!(convert_request(
+    // A hosted web search cannot run on Chat; the client's own tools stay usable, so the
+    // declaration is dropped instead of refusing the request.
+    body["tools"] = json!([{"type":"web_search"}, {"type":"function","name":"read_file","description":"Read","parameters":{"type":"object","properties":{}}}]);
+    let converted = convert_request(
         "openai:responses",
         "openai:chat",
         &body,
-        &context(&body, "openai:chat", "space-bunny")
+        &context(&body, "openai:chat", "space-bunny"),
     )
-    .unwrap_err()
-    .to_string()
-    .contains("web search"));
+    .unwrap();
+    let tools = converted["tools"].as_array().unwrap();
+    assert!(tools
+        .iter()
+        .any(|tool| tool["function"]["name"] == "read_file"));
+    assert!(!converted.to_string().contains("web_search"));
 }

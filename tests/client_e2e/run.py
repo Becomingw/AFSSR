@@ -104,11 +104,13 @@ class Stack:
         self.models = {}
         self.token = None
         self.record_level_ready_at = 0.0
+        self.mock_extra = []  # extra arguments for mock_upstream.mjs (e.g. `go`)
+        self.mock_env = {}
 
     def start(self):
         subprocess.run(['createdb', '-h', 'localhost', self.db], check=True)
         db_url = f'postgresql://{getpass.getuser()}@localhost/{self.db}'
-        self.spawn('mock', ['node', str(HERE / 'mock_upstream.mjs'), str(self.mock_port), str(self.mock_log)], {})
+        self.spawn('mock', ['node', str(HERE / 'mock_upstream.mjs'), str(self.mock_port), str(self.mock_log), *self.mock_extra], self.mock_env)
         wait_for(f'http://127.0.0.1:{self.mock_port}/health', 15, 'mock upstream')
         secret = lambda ch: ch * 64  # noqa: E731  (synthetic, per-run throwaway values)
         admin_password = 'e2e-' + uuid.uuid4().hex
@@ -126,14 +128,17 @@ class Stack:
         admin = Api(self.base)
         admin.token = admin.request('POST', '/api/auth/login', {'email': 'e2e-admin@example.invalid', 'password': admin_password, 'auth_type': 'local'})['access_token']
         self.admin = admin
-        for upstream, api_format in UPSTREAM_FORMAT.items():
-            self.provision(upstream, api_format)
+        self.provision_all()
         key = admin.request('POST', '/api/users/me/api-keys', {'name': 'client-e2e'}, statuses=(200, 201))
         self.token = key.get('key') or admin.request('GET', f'/api/users/me/api-keys/{key["id"]}?include_key=true')['key']
         # Keep bodies only for failed requests: this is what the error scenarios assert on, and it
         # shows that successful requests leave no body behind.
         admin.request('PUT', '/api/admin/system/configs/request_record_level', {'value': 'failures'}, statuses=(200, 201))
         self.record_level_ready_at = time.time() + RECORD_LEVEL_CACHE_SECONDS
+
+    def provision_all(self):
+        for upstream, api_format in UPSTREAM_FORMAT.items():
+            self.provision(upstream, api_format)
 
     def provision(self, upstream, api_format):
         model = f'e2e-{upstream}'

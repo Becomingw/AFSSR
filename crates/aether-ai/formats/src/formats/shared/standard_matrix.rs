@@ -128,6 +128,14 @@ pub fn build_standard_request_body_with_model_directives_and_request_headers_and
     if let Some(history_scope) = user_api_key_id {
         format_context = format_context.with_history_scope(history_scope);
     }
+    // OpenCode Go needs its provider rules on every ingress (Claude Code, Chat), not only on
+    // Responses: hosted-tool, system-role and schema handling all key off this context.
+    if provider_type.eq_ignore_ascii_case("opencode_go") {
+        format_context = format_context.with_report_context(serde_json::json!({
+            "provider_type": "opencode_go",
+            "provider_api_format": provider_api_format,
+        }));
+    }
     let source_api_format = compatible_source_format_for_standard_request(
         body_json,
         client_api_format,

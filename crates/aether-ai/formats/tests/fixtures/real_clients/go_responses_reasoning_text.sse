@@ -1,0 +1,36 @@
+event: response.created
+data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_658ba15548bf4760b225e93a","object":"response","created_at":1790000000,"model":"gpt-6-luna","status":"in_progress","output":[],"usage":null}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","sequence_number":1,"output_index":0,"item":{"type":"reasoning","id":"rs_3c6d3fece8914291b2894346","summary":[],"content":[],"encrypted_content":"enc-rs_3c6d3fece8914291b2894346","status":"in_progress"}}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","sequence_number":2,"output_index":0,"content_index":0,"item_id":"rs_3c6d3fece8914291b2894346","delta":"Considering the request before answering."}
+
+event: response.reasoning_text.done
+data: {"type":"response.reasoning_text.done","sequence_number":3,"output_index":0,"content_index":0,"item_id":"rs_3c6d3fece8914291b2894346","text":"Considering the request before answering."}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":4,"output_index":0,"item":{"type":"reasoning","id":"rs_3c6d3fece8914291b2894346","summary":[{"type":"summary_text","text":"Plan"}],"content":[{"type":"reasoning_text","text":"Considering the request before answering."}],"encrypted_content":"enc-rs_3c6d3fece8914291b2894346","status":"completed"}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","sequence_number":5,"output_index":1,"item":{"type":"message","id":"msg_6ee0c1dcb1674e90a416ecbf","role":"assistant","status":"in_progress","content":[]}}
+
+event: response.content_part.added
+data: {"type":"response.content_part.added","sequence_number":6,"output_index":1,"content_index":0,"item_id":"msg_6ee0c1dcb1674e90a416ecbf","part":{"type":"output_text","text":"","annotations":[]}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":7,"output_index":1,"content_index":0,"item_id":"msg_6ee0c1dcb1674e90a416ecbf","delta":"E2E_DONE rounds=0"}
+
+event: response.output_text.done
+data: {"type":"response.output_text.done","sequence_number":8,"output_index":1,"content_index":0,"item_id":"msg_6ee0c1dcb1674e90a416ecbf","text":"E2E_DONE rounds=0"}
+
+event: response.content_part.done
+data: {"type":"response.content_part.done","sequence_number":9,"output_index":1,"content_index":0,"item_id":"msg_6ee0c1dcb1674e90a416ecbf","part":{"type":"output_text","text":"E2E_DONE rounds=0","annotations":[]}}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":10,"output_index":1,"item":{"type":"message","id":"msg_6ee0c1dcb1674e90a416ecbf","role":"assistant","status":"completed","content":[{"type":"output_text","text":"E2E_DONE rounds=0","annotations":[]}]}}
+
+event: response.completed
+data: {"type":"response.completed","sequence_number":11,"response":{"id":"resp_658ba15548bf4760b225e93a","object":"response","created_at":1790000000,"model":"gpt-6-luna","status":"completed","output":[{"type":"reasoning","id":"rs_3c6d3fece8914291b2894346","summary":[{"type":"summary_text","text":"Plan"}],"content":[{"type":"reasoning_text","text":"Considering the request before answering."}],"encrypted_content":"enc-rs_3c6d3fece8914291b2894346","status":"completed"},{"type":"message","id":"msg_6ee0c1dcb1674e90a416ecbf","role":"assistant","status":"completed","content":[{"type":"output_text","text":"E2E_DONE rounds=0","annotations":[]}]}],"usage":{"input_tokens":12,"output_tokens":7,"total_tokens":19,"input_tokens_details":{"cached_tokens":0},"output_tokens_details":{"reasoning_tokens":0}}}}
+

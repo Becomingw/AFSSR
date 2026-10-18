@@ -84,7 +84,95 @@ pub fn adapt_native_responses_request_for_model(
     adapt_native_responses_request(body)
 }
 
+/// Go's Messages backends are Anthropic-compatible, not Anthropic: they validate strictly and
+/// refuse Claude-Code-only extensions (`context_management`, hosted tools, `builtin_tools`).
+/// None of them changes what the model can do for a coding client, so they are removed.
+fn strip_messages_extensions(body: &mut Value) {
+    lift_system_role_messages(body);
+    let Some(object) = body.as_object_mut() else {
+        return;
+    };
+    for key in [
+        "context_management",
+        "builtin_tools",
+        "container",
+        "mcp_servers",
+        "betas",
+        "anthropic_beta",
+    ] {
+        object.remove(key);
+    }
+    let mut dropped_tool = false;
+    if let Some(tools) = object.get_mut("tools").and_then(Value::as_array_mut) {
+        let before = tools.len();
+        tools.retain(|tool| {
+            tool.get("type")
+                .and_then(Value::as_str)
+                .is_none_or(|kind| kind == "custom")
+        });
+        dropped_tool = tools.len() != before;
+        if tools.is_empty() {
+            object.remove("tools");
+        }
+    }
+    if dropped_tool || !object.contains_key("tools") {
+        let hosted_choice = object.get("tool_choice").is_some_and(|choice| {
+            !matches!(
+                choice["type"].as_str(),
+                Some("auto" | "any" | "tool" | "none")
+            ) || !object.contains_key("tools")
+        });
+        if hosted_choice {
+            object.remove("tool_choice");
+        }
+    }
+}
+
+/// Claude Code injects mid-conversation `role: "system"` messages (agent lists, reminders).
+/// Anthropic-compatible backends only know `user` and `assistant`, so their text joins the
+/// top-level `system` prompt instead of being dropped.
+fn lift_system_role_messages(body: &mut Value) {
+    let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) else {
+        return;
+    };
+    if !messages
+        .iter()
+        .any(|m| matches!(m["role"].as_str(), Some("system" | "developer")))
+    {
+        return;
+    }
+    let mut lifted = Vec::new();
+    messages.retain(|message| {
+        if !matches!(message["role"].as_str(), Some("system" | "developer")) {
+            return true;
+        }
+        match &message["content"] {
+            Value::String(text) => lifted.push(json!({"type":"text", "text":text})),
+            Value::Array(blocks) => lifted.extend(
+                blocks
+                    .iter()
+                    .filter(|b| b["type"] == "text" && b["text"].is_string())
+                    .map(|b| json!({"type":"text", "text":b["text"]})),
+            ),
+            _ => {}
+        }
+        false
+    });
+    if lifted.is_empty() {
+        return;
+    }
+    let object = body.as_object_mut().unwrap();
+    let mut system = match object.remove("system") {
+        Some(Value::Array(blocks)) => blocks,
+        Some(Value::String(text)) if !text.is_empty() => vec![json!({"type":"text", "text":text})],
+        _ => Vec::new(),
+    };
+    system.extend(lifted);
+    object.insert("system".to_string(), Value::Array(system));
+}
+
 pub fn adapt_messages_request(body: &mut Value, source: &Value, model: &str) {
+    strip_messages_extensions(body);
     if !matches!(model, "qwen3.8-max" | "qwen3.8-flash") {
         return;
     }
@@ -404,11 +492,44 @@ pub fn model_api_format(model: &str) -> Option<&'static str> {
         | "space-bunny"
         | "longcat-2.0"
         | "longcat-2.5-preview-free"
-        | "step-5-preview-free" => Some("openai:chat"),
-        // A model listing does not establish its native protocol. Do not guess
-        // a family for new preview models; explicit endpoint mappings still work.
-        _ => None,
+        | "step-5-preview"
+        | "step-5-preview-free"
+        | "beam-free"
+        | "cat-jam-free" => Some("openai:chat"),
+        other => inferred_model_api_format(other),
     }
+}
+
+/// Protocol of a model that is not in the table above, so a new Go model works with nothing but
+/// the key. OpenCode itself does the same: every Go model is Chat unless it belongs to one of the
+/// three vendor families that are served natively (OpenAI Responses, Anthropic Messages, Google).
+/// A wrong guess is a deterministic 400 for that one model, never a wrong answer. Only plain
+/// upstream ids are inferred: an alias with a path or a client prefix (`opencode-go/...`) is not.
+fn inferred_model_api_format(model: &str) -> Option<&'static str> {
+    let valid = !model.is_empty()
+        && model.len() <= 80
+        && model.starts_with(|c: char| c.is_ascii_alphanumeric())
+        && model
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'));
+    if !valid {
+        return None;
+    }
+    let model = model.to_ascii_lowercase();
+    Some(
+        if model.starts_with("gpt-") || model.starts_with("grok-") || model.starts_with("muse-") {
+            "openai:responses"
+        } else if model.starts_with("claude-")
+            || model.starts_with("minimax-")
+            || model.starts_with("qwen")
+        {
+            "claude:messages"
+        } else if model.starts_with("gemini-") {
+            "gemini:generate_content"
+        } else {
+            "openai:chat"
+        },
+    )
 }
 
 pub fn adapt_gemini_request(
@@ -467,8 +588,8 @@ mod tests {
             model_api_format("gemini-4-argon-contributor"),
             Some("gemini:generate_content")
         );
-        assert_eq!(model_api_format("gpt-6.1-sol"), None);
         assert_eq!(model_api_format("opencode-go/glm-5.3-flash"), None);
+        assert_eq!(model_api_format("a b"), None);
     }
 
     #[test]
@@ -482,6 +603,14 @@ mod tests {
             "gpt-6-luna",
             "openai:responses:compact"
         ));
-        assert!(model_supports_api_format("future-model", "claude:messages"));
+        // Unlisted models follow OpenCode's own family rule instead of needing a manual mapping.
+        assert_eq!(model_api_format("future-model"), Some("openai:chat"));
+        assert_eq!(model_api_format("qwen4-max"), Some("claude:messages"));
+        assert_eq!(model_api_format("gpt-7-luna"), Some("openai:responses"));
+        assert_eq!(model_api_format("omen-alpha"), Some("openai:chat"));
+        assert!(model_supports_api_format(
+            "opencode-go/x",
+            "claude:messages"
+        ));
     }
 }

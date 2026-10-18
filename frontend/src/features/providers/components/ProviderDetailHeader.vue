@@ -13,7 +13,10 @@
         </Badge>
       </div>
       <div class="flex items-center gap-1 shrink-0">
-        <span :title="formatConversionTitle">
+        <span
+          v-if="!isGoPreset"
+          :title="formatConversionTitle"
+        >
           <Button
             variant="ghost"
             size="icon"
@@ -24,7 +27,10 @@
             <Shuffle class="w-4 h-4" />
           </Button>
         </span>
-        <span :title="keepPriorityTitle">
+        <span
+          v-if="!isGoPreset"
+          :title="keepPriorityTitle"
+        >
           <Button
             variant="ghost"
             size="icon"
@@ -145,14 +151,18 @@
           :key="endpoint.id"
         >
           <span
-            class="text-xs px-2 py-0.5 rounded-md border border-border bg-background hover:bg-accent hover:border-accent-foreground/20 cursor-pointer transition-colors font-medium"
-            :class="{ 'opacity-40': !endpoint.is_active }"
-            :title="legacyT('编辑端点')"
-            @click="$emit('editEndpoint', endpoint)"
+            class="text-xs px-2 py-0.5 rounded-md border border-border bg-background transition-colors font-medium"
+            :class="[{ 'opacity-40': !endpoint.is_active }, isGoPreset ? '' : 'hover:bg-accent hover:border-accent-foreground/20 cursor-pointer']"
+            :title="isGoPreset ? legacyT('固定端点') : legacyT('编辑端点')"
+            @click="!isGoPreset && $emit('editEndpoint', endpoint)"
           >{{ formatApiFormat(endpoint.api_format) }}</span>
         </template>
         <span
-          v-if="endpoints.length > 0"
+          v-if="isGoPreset"
+          class="text-xs text-muted-foreground"
+        >{{ legacyT('预设：端点与协议转换已固定，每个模型自动走原生协议，只需添加密钥') }}</span>
+        <span
+          v-else-if="endpoints.length > 0"
           class="text-xs px-2 py-0.5 rounded-md border border-dashed border-border hover:bg-accent hover:border-accent-foreground/20 cursor-pointer transition-colors text-muted-foreground"
           :title="legacyT('编辑端点')"
           @click="$emit('addEndpoint')"
@@ -210,6 +220,9 @@ defineEmits<{
 }>()
 
 const { legacyT } = useI18n()
+// OpenCode Go is a fixed preset: no endpoint editing and no conversion switches.
+const isGoPreset = computed(() => props.provider.provider_type === 'opencode_go')
+
 const safeProviderWebsite = computed(() => safeExternalWebUrl(props.provider.website))
 
 const formatConversionTitle = computed(() => {
