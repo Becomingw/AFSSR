@@ -109,6 +109,8 @@ function validateResponses(model, body) {
     }
   }
   const functionOnly = FUNCTION_ONLY_RESPONSES.has(model);
+  // Real grok-4.6/4.7 answer a Claude Code request with: "Argument not supported: metadata".
+  if (functionOnly && body.metadata !== undefined) return fail('responses', 400, 'Argument not supported: metadata');
   for (const [i, tool] of (body.tools ?? []).entries()) {
     if (tool.search_content_types !== undefined && tool.type !== 'web_search_preview') {
       return fail('responses', 400, '`tools[].search_content_types` is only supported for web_search_preview tools.');

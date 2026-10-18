@@ -57,6 +57,11 @@ pub fn adapt_native_responses_request_for_model(
     body: &mut Value,
     model: &str,
 ) -> Result<(), OpenAiResponsesRequestContractViolation> {
+    // `metadata` (Claude Code's user id) is a client identity field; xAI rejects it ("Argument not
+    // supported: metadata") and it is of no use upstream, so no Go Responses model gets it.
+    if let Some(object) = body.as_object_mut() {
+        object.remove("metadata");
+    }
     // Transport event preferences cannot affect a complete JSON response.
     // Codex-shaped requests may retain this field when selecting sync mode.
     if body.get("stream").and_then(Value::as_bool) == Some(false) {

@@ -4277,7 +4277,7 @@ async fn execute_execution_runtime_stream_inner(
                 }
                 return Err(err);
             }
-            Err(InProcessStreamExecutionError::Transport(_err)) => {
+            Err(InProcessStreamExecutionError::Transport(transport_error)) => {
                 let transport_error_message = "Execution runtime unavailable".to_string();
                 info!(
                     event_name = "stream_execution_runtime_unavailable",
@@ -4291,6 +4291,7 @@ async fn execute_execution_runtime_stream_inner(
                     model_name,
                     candidate_index = candidate_index.as_str(),
                     error_category = "execution_runtime_unavailable",
+                    error = %transport_error,
                     "gateway in-process stream execution unavailable"
                 );
                 let terminal_unix_secs = current_request_candidate_unix_ms();
@@ -4417,7 +4418,7 @@ async fn execute_execution_runtime_stream_inner(
                     }
                     return Err(err);
                 }
-                Err(InProcessStreamExecutionError::Transport(_err)) => {
+                Err(InProcessStreamExecutionError::Transport(transport_error)) => {
                     let transport_error_message = "Execution runtime unavailable".to_string();
                     info!(
                         event_name = "stream_execution_runtime_unavailable",
@@ -4431,6 +4432,7 @@ async fn execute_execution_runtime_stream_inner(
                         model_name,
                         candidate_index = candidate_index.as_str(),
                         error_category = "execution_runtime_unavailable",
+                        error = %transport_error,
                         "gateway in-process stream execution unavailable"
                     );
                     let terminal_unix_secs = current_request_candidate_unix_ms();

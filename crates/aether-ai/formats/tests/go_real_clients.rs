@@ -346,3 +346,17 @@ fn claude_code_history_with_thinking_replays_to_go_chat_with_known_fields_only()
         }
     }
 }
+
+#[test]
+fn claude_code_metadata_is_not_sent_to_go_responses_models() {
+    let claude: Value =
+        serde_json::from_str(include_str!("fixtures/real_clients/claude_messages.json")).unwrap();
+    assert!(claude.get("metadata").is_some());
+    for model in ["grok-4.7", "muse-spark-1.3-contributor", "gpt-6-luna"] {
+        let converted = finalized("claude:messages", "openai:responses", model, &claude).unwrap();
+        assert!(
+            converted.get("metadata").is_none(),
+            "{model} still gets metadata"
+        );
+    }
+}
