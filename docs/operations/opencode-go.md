@@ -63,6 +63,20 @@ cannot execute. The client's own tools (shell, patch, plan, ...) are always kept
 - **Claude Code's `WebSearch`/`WebFetch`** are plain client functions. On Gemini they
   are not turned into Google's built-in search/URL tools.
 
+## Account settings the gateway cannot change
+
+Some Go models are refused by the service itself until the workspace that owns the key allows
+them (Console, Privacy settings). The gateway reports the service's own text:
+
+- "This Go model requires Global regions. Select Global in your workspace's Privacy settings"
+  (seen on DeepSeek, GPT Luna);
+- "This Go model trains on request data. Allow paid endpoints that train on request data ..."
+  (the `*-contributor` models: Muse Spark, Gemini 4 Argon).
+
+With several keys, a request that one workspace refuses fails over to a key whose workspace
+allows it, so enable the setting on every key you want to serve those models. Per-model monthly
+limits answer "Go usage limit exceeded" (HTTP 429) and fail over the same way.
+
 ## Headers and Authentication
 
 - Chat, Responses and Messages inference use `Authorization: Bearer <provider key>`.
