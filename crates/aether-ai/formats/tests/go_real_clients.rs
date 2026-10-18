@@ -313,3 +313,36 @@ fn claude_code_tool_history_replays_to_gemini_without_extra_thoughts() {
         .collect();
     assert_eq!(kinds, ["thought", "call"], "{model_parts:?}");
 }
+
+#[test]
+fn claude_code_history_with_thinking_replays_to_go_chat_with_known_fields_only() {
+    use aether_ai_formats::formats::shared::standard_matrix::build_standard_request_body_with_model_directives_and_request_headers_and_reasoning_replay_policy as build;
+    let body = json!({"model":"x","max_tokens":100,"stream":true,
+        "messages":[
+            {"role":"user","content":[{"type":"text","text":"go"}]},
+            {"role":"assistant","content":[{"type":"thinking","thinking":"Considering","signature":"sig"},{"type":"tool_use","id":"toolu_1","name":"Write","input":{"file_path":"/tmp/a","content":"A"}}]},
+            {"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"ok"}]}],
+        "tools":[{"name":"Write","description":"w","input_schema":{"type":"object","properties":{"file_path":{"type":"string"}}}}]});
+    let converted = build(&body, "claude:messages", "beam-free", "opencode_go", "openai:chat", "/v1/messages", true, None, Some("key"), None, false,
+        aether_ai_formats::formats::openai::responses::OpenAiResponsesReasoningReplayPolicy::OpenAiItemIds).unwrap();
+    // The real Go Chat backend answers 400 "Unrecognized request argument supplied:
+    // messages[N].reasoning_parts" to any assistant field it does not know.
+    let known = [
+        "role",
+        "content",
+        "tool_calls",
+        "reasoning_content",
+        "name",
+        "refusal",
+    ];
+    for message in converted["messages"].as_array().unwrap() {
+        if message["role"] == "assistant" {
+            for key in message.as_object().unwrap().keys() {
+                assert!(
+                    known.contains(&key.as_str()),
+                    "assistant message carries {key}: {message}"
+                );
+            }
+        }
+    }
+}

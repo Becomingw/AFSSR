@@ -459,7 +459,25 @@ pub fn restore_native_responses_payload(
 
 /// Map a presentation preference to instructions on endpoints without a native
 /// verbosity parameter. This never alters tools, schemas or thinking controls.
+/// Go's Chat backends reject any message field they do not know ("Unrecognized request argument
+/// supplied: messages[N].reasoning_parts" on beam-free), and the gateway's own carrier for signed
+/// reasoning is one. Only the plain `reasoning_content` text is replayed.
+fn strip_unknown_chat_message_fields(body: &mut serde_json::Value) {
+    let Some(messages) = body
+        .get_mut("messages")
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return;
+    };
+    for message in messages {
+        if let Some(object) = message.as_object_mut() {
+            object.remove("reasoning_parts");
+        }
+    }
+}
+
 pub fn adapt_chat_request(body: &mut serde_json::Value) -> Result<(), crate::FormatError> {
+    strip_unknown_chat_message_fields(body);
     let Some(verbosity) = body.get("verbosity").filter(|v| !v.is_null()).cloned() else {
         return Ok(());
     };

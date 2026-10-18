@@ -27,6 +27,7 @@ const FUNCTION_ONLY_RESPONSES = new Set(['grok-4.6', 'grok-4.7', 'muse-spark-1.2
 const XAI_WEB_SEARCH = new Set(['grok-4.6', 'grok-4.7']);
 const NEW_THINKING_MODELS = new Set(['qwen3.8-max', 'qwen3.8-flash', 'claude-haiku-5-5']);
 const TRAINS_ON_DATA = (model) => model.endsWith('-contributor');
+const CHAT_MESSAGE_FIELDS = new Set(['role', 'content', 'tool_calls', 'tool_call_id', 'reasoning_content', 'name', 'refusal']);
 const ANTHROPIC_TOP_LEVEL = new Set(['model', 'messages', 'max_tokens', 'system', 'tools', 'tool_choice', 'stream', 'temperature', 'top_p', 'top_k', 'stop_sequences', 'thinking', 'metadata', 'output_config', 'service_tier']);
 
 /** Maps a request path to { protocol, model } or null. Accepts the documented vendor-prefixed paths, the short ones and the legacy /zen/go ones. */
@@ -88,6 +89,10 @@ function validateChat(body) {
   for (const [i, message] of (body.messages ?? []).entries()) {
     if (!['system', 'developer', 'user', 'assistant', 'tool'].includes(message.role)) {
       return upstreamFailed('chat', 'invalid_request_error', `messages[${i}].role: unsupported role "${message.role}"`);
+    }
+    // Real beam-free: "Unrecognized request argument supplied: messages[4].reasoning_parts."
+    for (const key of Object.keys(message)) {
+      if (!CHAT_MESSAGE_FIELDS.has(key)) return fail('chat', 400, `Upstream request failed: [unsupported_parameter] Unrecognized request argument supplied: messages[${i}].${key}.`);
     }
     if (message.role === 'tool' && !message.tool_call_id) return upstreamFailed('chat', 'invalid_request_error', `messages[${i}]: tool_call_id is required`);
   }

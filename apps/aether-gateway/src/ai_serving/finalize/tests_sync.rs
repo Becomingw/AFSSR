@@ -555,6 +555,15 @@ fn converts_gemini_chat_function_call_to_openai_chat_tool_calls() {
     )
     .expect("result should exist");
 
+    // Gemini does not name its calls: the id is generated and unique per response.
+    let call_id = result["choices"][0]["message"]["tool_calls"][0]["id"]
+        .as_str()
+        .expect("generated tool call id")
+        .to_string();
+    assert!(
+        call_id.starts_with("call_") && call_id != "call_auto_1",
+        "{call_id}"
+    );
     assert_eq!(
         result,
         json!({
@@ -567,7 +576,7 @@ fn converts_gemini_chat_function_call_to_openai_chat_tool_calls() {
                     "role": "assistant",
                     "content": "Let me call a tool.",
                     "tool_calls": [{
-                        "id": "call_auto_1",
+                        "id": call_id,
                         "type": "function",
                         "function": {
                             "name": "get_weather",
@@ -1032,6 +1041,14 @@ fn converts_gemini_cli_function_call_to_openai_responses_function_call() {
     let created_at = result["created_at"]
         .as_i64()
         .expect("created_at should be a unix timestamp");
+    let call_id = result["output"][1]["call_id"]
+        .as_str()
+        .expect("generated call id")
+        .to_string();
+    assert!(
+        call_id.starts_with("call_") && call_id != "call_auto_1",
+        "{call_id}"
+    );
 
     assert_eq!(
         result,
@@ -1057,8 +1074,8 @@ fn converts_gemini_cli_function_call_to_openai_responses_function_call() {
                 },
                 {
                     "type": "function_call",
-                    "id": "call_auto_1",
-                    "call_id": "call_auto_1",
+                    "id": call_id,
+                    "call_id": call_id,
                     "name": "get_weather",
                     "arguments": "{\"location\":\"Tokyo\"}"
                 }

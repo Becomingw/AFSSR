@@ -869,6 +869,14 @@ async fn gateway_executes_openai_responses_cross_format_function_call_upstream_s
     let created_at = response_json["created_at"]
         .as_i64()
         .expect("created_at should be a unix timestamp");
+    let call_id = response_json["output"][1]["call_id"]
+        .as_str()
+        .expect("generated call id")
+        .to_string();
+    assert!(
+        call_id.starts_with("call_") && call_id != "call_auto_1",
+        "{call_id}"
+    );
     assert_eq!(
         response_json,
         json!({
@@ -893,8 +901,8 @@ async fn gateway_executes_openai_responses_cross_format_function_call_upstream_s
                 },
                 {
                     "type": "function_call",
-                    "id": "call_auto_1",
-                    "call_id": "call_auto_1",
+                    "id": call_id,
+                    "call_id": call_id,
                     "name": "get_weather",
                     "arguments": "{\"location\":\"Tokyo\"}"
                 }
