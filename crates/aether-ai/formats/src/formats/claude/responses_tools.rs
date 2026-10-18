@@ -1371,15 +1371,11 @@ impl ClaudeResponsesTools {
         body: &Value,
         model: &str,
     ) -> Result<Value, FormatError> {
-        // Only xAI documents a hosted web search on its Responses endpoint; Muse is
-        // function-only, so the declaration is not forwarded to it.
-        let stripped;
-        let body = if model.starts_with("muse-spark") {
-            stripped = Self::without_hosted_web_search(body);
-            &stripped
-        } else {
-            body
-        };
+        // Hosted web search is not forwarded to any Go model: only xAI documents one, accepting the
+        // declaration is not proof a search runs, and it cannot be priced under a hard cost limit
+        // (every request of a cost-limited account would be refused). The client's tools stay.
+        let stripped = Self::without_hosted_web_search(body);
+        let body = &stripped;
         let mut web_tools = collected_tools(body)?
             .into_iter()
             .filter(is_native_web_tool)

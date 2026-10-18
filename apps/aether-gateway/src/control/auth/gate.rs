@@ -379,6 +379,9 @@ async fn calculate_execution_plan_cost_upper_bound(
     let Some(context) = context else {
         return Ok(None);
     };
+    // Codex sends no output cap. The model's own configured output limit is a real bound on what
+    // it can produce, so use it instead of refusing every request from a cost-limited account.
+    let max_output_tokens = max_output_tokens.or_else(|| configured_output_limit(&context));
     let mut estimate =
         aether_billing::BillingAuthorizationEstimateInput::new(task_type, input_tokens);
     estimate.api_format = Some(api_format.to_string());
@@ -391,6 +394,20 @@ async fn calculate_execution_plan_cost_upper_bound(
             &estimate,
         )
         .map_err(|err| GatewayError::Internal(err.to_string()))
+}
+
+fn configured_output_limit(
+    context: &aether_data_contracts::repository::billing::StoredBillingModelContext,
+) -> Option<i64> {
+    [
+        context.model_config.as_ref(),
+        context.global_model_config.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(|config| config.get("output_limit"))
+    .filter_map(serde_json::Value::as_i64)
+    .find(|limit| *limit > 0)
 }
 
 async fn validate_execution_plan_pricing_for_unavailable_estimate(
@@ -653,6 +670,7 @@ fn output_choice_count_upper_bound(api_format: &str, value: &serde_json::Value) 
 fn request_input_is_self_contained(api_format: &str, value: &serde_json::Value) -> bool {
     match api_format {
         "claude:messages" => claude_request_input_is_self_contained(value),
+        "gemini:generate_content" => gemini_request_input_is_self_contained(value),
         _ => openai_request_input_is_self_contained(api_format, value),
     }
 }
@@ -694,6 +712,102 @@ fn claude_text_block_is_self_contained(value: &serde_json::Value) -> bool {
     })
 }
 
+/// Extended thinking is billed as output and output is capped by `max_tokens`, so every
+/// documented mode keeps the request bounded; unknown shapes still fail closed.
+fn claude_thinking_config_is_bounded(value: &serde_json::Value) -> bool {
+    let Some(thinking) = value.as_object() else {
+        return false;
+    };
+    if !only_fields(thinking, &["type", "budget_tokens", "display"])
+        || thinking.get("display").is_some_and(|v| !v.is_string())
+    {
+        return false;
+    }
+    match thinking.get("type").and_then(serde_json::Value::as_str) {
+        Some("disabled" | "adaptive") => !thinking.contains_key("budget_tokens"),
+        Some("enabled") => thinking
+            .get("budget_tokens")
+            .is_none_or(serde_json::Value::is_u64),
+        _ => false,
+    }
+}
+
+/// Text, function calls and inline data only: every part is literal and already inside the byte
+/// bound. Hosted tools (search, URL context, code execution) and file references fail closed.
+fn gemini_request_input_is_self_contained(value: &serde_json::Value) -> bool {
+    let Some(body) = value.as_object() else {
+        return false;
+    };
+    if !only_fields(
+        body,
+        &[
+            "model",
+            "contents",
+            "systemInstruction",
+            "system_instruction",
+            "tools",
+            "toolConfig",
+            "tool_config",
+            "generationConfig",
+            "generation_config",
+            "safetySettings",
+            "safety_settings",
+            "stream",
+        ],
+    ) {
+        return false;
+    }
+    let parts_ok = |parts: &serde_json::Value| {
+        parts.as_array().is_some_and(|parts| {
+            parts.iter().all(|part| {
+                part.as_object().is_some_and(|part| {
+                    only_fields(
+                        part,
+                        &[
+                            "text",
+                            "thought",
+                            "thoughtSignature",
+                            "thought_signature",
+                            "functionCall",
+                            "function_call",
+                            "functionResponse",
+                            "function_response",
+                            "inlineData",
+                            "inline_data",
+                        ],
+                    )
+                })
+            })
+        })
+    };
+    let contents_ok = body
+        .get("contents")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|contents| {
+            !contents.is_empty()
+                && contents.iter().all(|content| {
+                    content.get("parts").is_some_and(parts_ok)
+                        && content
+                            .as_object()
+                            .is_some_and(|o| only_fields(o, &["role", "parts"]))
+                })
+        });
+    let system_ok = ["systemInstruction", "system_instruction"]
+        .iter()
+        .filter_map(|key| body.get(*key))
+        .all(|system| system.get("parts").is_some_and(parts_ok));
+    let tools_ok = body.get("tools").is_none_or(|tools| {
+        tools.as_array().is_some_and(|tools| {
+            tools.iter().all(|tool| {
+                tool.as_object().is_some_and(|tool| {
+                    only_fields(tool, &["functionDeclarations", "function_declarations"])
+                })
+            })
+        })
+    });
+    contents_ok && system_ok && tools_ok
+}
+
 fn claude_request_input_is_self_contained(value: &serde_json::Value) -> bool {
     let Some(body) = value.as_object() else {
         return false;
@@ -718,6 +832,8 @@ fn claude_request_input_is_self_contained(value: &serde_json::Value) -> bool {
             "service_tier",
             "cache_control",
             "thinking",
+            "output_config",
+            "context_management",
         ],
     ) || nonempty_string(body.get("model")).is_none()
         || body
@@ -725,10 +841,30 @@ fn claude_request_input_is_self_contained(value: &serde_json::Value) -> bool {
             .and_then(serde_json::Value::as_u64)
             .is_none_or(|n| n == 0)
         || !claude_cache_control_is_bounded(body.get("cache_control"))
-        || body.get("thinking").is_some_and(|v| {
-            !v.as_object().is_some_and(|thinking| {
-                only_fields(thinking, &["type"])
-                    && thinking.get("type").and_then(serde_json::Value::as_str) == Some("disabled")
+        || body
+            .get("thinking")
+            .is_some_and(|v| !claude_thinking_config_is_bounded(v))
+        || body.get("output_config").is_some_and(|v| {
+            !v.as_object().is_some_and(|config| {
+                only_fields(config, &["effort"])
+                    && config
+                        .get("effort")
+                        .is_none_or(serde_json::Value::is_string)
+            })
+        })
+        || body.get("context_management").is_some_and(|v| {
+            // Edits only ever remove history, so they cannot raise the upper bound.
+            !v.as_object().is_some_and(|config| {
+                only_fields(config, &["edits"])
+                    && config
+                        .get("edits")
+                        .and_then(serde_json::Value::as_array)
+                        .is_some_and(|edits| {
+                            edits.iter().all(|edit| {
+                                edit.as_object()
+                                    .is_some_and(|edit| nonempty_string(edit.get("type")).is_some())
+                            })
+                        })
             })
         })
         || body
@@ -804,7 +940,7 @@ fn claude_request_input_is_self_contained(value: &serde_json::Value) -> bool {
         };
         let role = message.get("role").and_then(serde_json::Value::as_str);
         if !only_fields(message, &["role", "content"])
-            || !matches!(role, Some("user" | "assistant"))
+            || !matches!(role, Some("user" | "assistant" | "system"))
         {
             return false;
         }
@@ -826,6 +962,24 @@ fn claude_request_input_is_self_contained(value: &serde_json::Value) -> bool {
             }
             match block.get("type").and_then(serde_json::Value::as_str) {
                 Some("text") if claude_text_block_is_self_contained(value) => {}
+                // Replayed reasoning is literal text, already inside the byte bound.
+                Some("thinking") if role == Some("assistant") => {
+                    if !only_fields(block, &["type", "thinking", "signature", "cache_control"])
+                        || !block
+                            .get("thinking")
+                            .is_some_and(serde_json::Value::is_string)
+                        || block.get("signature").is_some_and(|v| !v.is_string())
+                    {
+                        return false;
+                    }
+                }
+                Some("redacted_thinking") if role == Some("assistant") => {
+                    if !only_fields(block, &["type", "data", "cache_control"])
+                        || !block.get("data").is_some_and(serde_json::Value::is_string)
+                    {
+                        return false;
+                    }
+                }
                 Some("tool_use") if role == Some("assistant") => {
                     // Historical names/IDs and arbitrary argument objects are literal
                     // tokens, independent of the currently available tool definitions.
@@ -2317,6 +2471,84 @@ mod tests {
         .expect("quota rejection should resolve");
 
         assert_eq!(rejection, None);
+    }
+
+    #[test]
+    fn gemini_function_conversations_have_a_bounded_cost_estimate() {
+        let body = json!({"model": "m", "contents": [
+            {"role": "user", "parts": [{"text": "go"}]},
+            {"role": "model", "parts": [{"text": "plan", "thought": true}, {"functionCall": {"name": "Write", "args": {}}}]},
+            {"role": "user", "parts": [{"functionResponse": {"name": "Write", "response": {"result": "ok"}}}]}],
+            "systemInstruction": {"parts": [{"text": "sys"}]},
+            "tools": [{"functionDeclarations": [{"name": "Write", "parametersJsonSchema": {"type": "object"}}]}],
+            "generationConfig": {"maxOutputTokens": 100}});
+        assert!(super::request_input_is_self_contained(
+            "gemini:generate_content",
+            &body
+        ));
+        let mut hosted = body.clone();
+        hosted["tools"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"googleSearch": {}}));
+        assert!(!super::request_input_is_self_contained(
+            "gemini:generate_content",
+            &hosted
+        ));
+        let mut file = body;
+        file["contents"][0]["parts"][0] = json!({"fileData": {"fileUri": "gs://x"}});
+        assert!(!super::request_input_is_self_contained(
+            "gemini:generate_content",
+            &file
+        ));
+    }
+
+    #[test]
+    fn real_claude_code_requests_have_a_bounded_cost_estimate() {
+        // Captured from the real CLI: adaptive thinking, output_config, context_management and a
+        // mid-conversation system message. A hard cost limit must still be able to bound it.
+        let mut body: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../../crates/aether-ai/formats/tests/fixtures/real_clients/claude_messages.json"
+        ))
+        .expect("fixture parses");
+        assert!(super::request_input_is_self_contained(
+            "claude:messages",
+            &body
+        ));
+        // Replayed reasoning is still literal text.
+        body["messages"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"role": "assistant", "content": [
+            {"type": "thinking", "thinking": "plan", "signature": "sig"},
+            {"type": "redacted_thinking", "data": "opaque"},
+            {"type": "tool_use", "id": "toolu_1", "name": "Write", "input": {"file_path": "a"}}]}));
+        assert!(super::request_input_is_self_contained(
+            "claude:messages",
+            &body
+        ));
+        // Server tools and unknown extensions still fail closed.
+        let mut server_tool = body.clone();
+        server_tool["tools"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"type": "web_search_20250305", "name": "web_search"}));
+        assert!(!super::request_input_is_self_contained(
+            "claude:messages",
+            &server_tool
+        ));
+        let mut unknown = body.clone();
+        unknown["container"] = json!("abc");
+        assert!(!super::request_input_is_self_contained(
+            "claude:messages",
+            &unknown
+        ));
+        let mut bad_thinking = body;
+        bad_thinking["thinking"] = json!({"type": "enabled", "budget_tokens": "lots"});
+        assert!(!super::request_input_is_self_contained(
+            "claude:messages",
+            &bad_thinking
+        ));
     }
 
     #[test]

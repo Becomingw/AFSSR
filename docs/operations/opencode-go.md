@@ -51,11 +51,13 @@ compact/image/embedding endpoints are not automatically added or claimed to work
 Go backends validate strictly, so a request is never sent with something the target
 cannot execute. The client's own tools (shell, patch, plan, ...) are always kept.
 
-- **Hosted web search** (Codex `web_search`): kept only for Grok, which documents its
-  own hosted search. For Chat, Messages (Anthropic's `web_search_20250305` is an
-  unknown tag there), Gemini 4 (cannot mix a hosted tool with function declarations) and
-  Muse it is dropped, together with a forced web `tool_choice` and replayed
-  `web_search_call` items, instead of refusing the whole request.
+- **Hosted web search** (Codex `web_search`): never forwarded to a Go model. Chat has no
+  such protocol, Messages (Anthropic's `web_search_20250305` is an unknown tag there) and
+  Gemini 4 (cannot mix a hosted tool with function declarations) cannot run it, only xAI
+  documents one on Responses and accepting the declaration is not proof a search runs,
+  and a hosted tool cannot be priced under a hard cost limit (every request of a
+  cost-limited account would be refused). It is dropped together with a forced web
+  `tool_choice` and replayed `web_search_call` items, instead of refusing the request.
 - **Claude Code extensions on Messages**: `context_management`, `builtin_tools`,
   `container`, `mcp_servers`, `betas` and any non-`custom` tool type are removed.
 - **Claude Code's `WebSearch`/`WebFetch`** are plain client functions. On Gemini they
@@ -189,12 +191,9 @@ preserves that opaque input in sync/SSE. Other custom tools remain strict. No co
 is extracted from assistant text, guessed, or executed by the gateway. An empty
 JavaScript block is still a no-op, not proof of successful model tool use.
 
-Grok native web search is preserved separately from Claude's web-tool converter,
-including search statuses, sources and output items during client-tool rewriting.
-Its API rejects `external_web_access`: redundant `true` maps to its documented
-online default, while `false` fails explicitly rather than weakening cache-only
-policy. Other web fields are retained for native validation. Merely accepting a
-tool declaration is not proof that an actual search completed.
+Grok's native web-search *output* items (statuses, sources) are still understood when a
+provider returns them, but the hosted tool is no longer requested (see "What is not
+forwarded").
 
 Native Muse 1.3 probes accept root `oneOf`, `anyOf` and `allOf` tool schemas without
 an object carrier. Its dedicated profile preserves those schemas instead of adding

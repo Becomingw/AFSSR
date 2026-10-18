@@ -1272,34 +1272,25 @@ fn mimo_raw_code_mode_stream_keeps_the_exact_typed_payload() {
 }
 
 #[test]
-fn grok_native_web_parameters_are_not_claude_web_parameters() {
+fn grok_hosted_web_search_is_not_forwarded_but_client_tools_are() {
     use aether_ai_formats::provider_compat::opencode_go::adapt_native_responses_request_for_model;
     let mut original = body();
     let web = json!({"type":"web_search","external_web_access":true,"filters":{"allowed_domains":["example.com"]},"search_content_types":["text","image"]});
-    original["tools"] = json!([web.clone()]);
+    original["tools"] = json!([web]);
     original["tool_choice"] = json!({"type":"web_search"});
     let mut native = original.clone();
     adapt_native_responses_request_for_model(&mut native, "grok-4.6").unwrap();
-    let search = native["tools"]
+    assert!(native["tools"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|t| t["type"] == "web_search")
-        .unwrap();
-    let mut expected = web;
-    expected
-        .as_object_mut()
-        .unwrap()
-        .remove("external_web_access");
-    assert_eq!(search, &expected);
-    assert_eq!(native["tool_choice"], original["tool_choice"]);
+        .all(|t| t["type"] != "web_search"));
+    assert!(native.get("tool_choice").is_none());
     assert!(native["tools"]
         .as_array()
         .unwrap()
         .iter()
         .any(|t| t["type"] == "function"));
-    original["tools"][0]["external_web_access"] = json!(false);
-    assert!(adapt_native_responses_request_for_model(&mut original, "grok-4.6").is_err());
 }
 
 #[test]

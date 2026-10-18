@@ -81,7 +81,32 @@ pub fn adapt_native_responses_request_for_model(
                 })?;
         return Ok(());
     }
+    // Hosted web search is not forwarded to any Go model (see `normalize_go_functionized_responses`);
+    // the client's own tools stay.
+    drop_hosted_web_search(body);
     adapt_native_responses_request(body)
+}
+
+fn is_hosted_web_search(tool: &Value) -> bool {
+    matches!(
+        tool["type"].as_str(),
+        Some("web_search" | "web_search_preview" | "web_search_preview_2025_03_11")
+    )
+}
+
+fn drop_hosted_web_search(body: &mut Value) {
+    let Some(object) = body.as_object_mut() else {
+        return;
+    };
+    if let Some(tools) = object.get_mut("tools").and_then(Value::as_array_mut) {
+        tools.retain(|tool| !is_hosted_web_search(tool));
+    }
+    if object.get("tool_choice").is_some_and(is_hosted_web_search) {
+        object.remove("tool_choice");
+    }
+    if let Some(input) = object.get_mut("input").and_then(Value::as_array_mut) {
+        input.retain(|item| item["type"] != "web_search_call");
+    }
 }
 
 /// Go's Messages backends are Anthropic-compatible, not Anthropic: they validate strictly and

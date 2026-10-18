@@ -131,6 +131,8 @@ fn codex_hosted_web_search_never_reaches_a_backend_that_cannot_run_it() {
         ("claude:messages", "minimax-m3"),
         ("gemini:generate_content", "gemini-4-argon-contributor"),
         ("openai:responses", "muse-spark-1.3-contributor"),
+        ("openai:responses", "gpt-6-luna"),
+        ("openai:responses", "grok-4.7"),
     ] {
         let converted = finalized("openai:responses", format, model, &codex)
             .unwrap_or_else(|e| panic!("{model}: {e}"));
@@ -146,15 +148,10 @@ fn codex_hosted_web_search_never_reaches_a_backend_that_cannot_run_it() {
             "{model} lost the client's shell tool"
         );
     }
-    // xAI documents its own hosted search; it is kept (without OpenAI's redundant flag).
+    // Grok documents a hosted search, but it is not forwarded either (unverified, and unpriceable
+    // under a hard cost limit): the client's tools are what Codex needs.
     let grok = finalized("openai:responses", "openai:responses", "grok-4.7", &codex).unwrap();
-    let search = grok["tools"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|t| t["type"] == "web_search")
-        .expect("grok keeps web_search");
-    assert!(search.get("external_web_access").is_none());
+    assert!(!grok.to_string().contains("\"web_search\""));
 }
 
 #[test]

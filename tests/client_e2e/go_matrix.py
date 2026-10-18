@@ -35,13 +35,28 @@ GO_SCENARIOS = ['text_only', 'write_file', 'multi_tool']
 class GoStack(run.Stack):
     """The standard stack, but with one `opencode_go` provider instead of three custom ones."""
 
-    def __init__(self, gateway_bin, keep, allow_training=True):
+    def __init__(self, gateway_bin, keep, allow_training=True, cost_limit=None):
         super().__init__(gateway_bin, keep)
+        self.cost_limit = cost_limit
         self.mock_extra = ['go']
         self.mock_env = {'GO_ALLOW_TRAINING': '1' if allow_training else '0'}
 
+    def apply_cost_limit(self):
+        """A finite personal budget makes every request go through the hard cost-limit estimate,
+        which refuses (HTTP 500) any request whose cost it cannot bound."""
+        admin = self.admin
+        owner = admin.request('GET', '/api/users/me')['id']
+        current = admin.request('GET', '/api/admin/system/configs/internal_access_policy', statuses=(200, 404)).get('value')
+        value = json.loads(json.dumps(current)) if current else {'users': {}}
+        value.setdefault('users', {})[owner] = {'unlimited': False, 'five_hour_budget_usd': self.cost_limit,
+                                                'weekly_budget_usd': self.cost_limit, 'monthly_budget_usd': self.cost_limit,
+                                                'models': {}, 'families': {}}
+        admin.request('PUT', '/api/admin/system/configs/internal_access_policy', {'expected_value': current, 'value': value}, statuses=(200, 201))
+
     def provision_all(self):
         admin = self.admin
+        if self.cost_limit:
+            self.apply_cost_limit()
         provider = admin.request('POST', '/api/admin/providers/', {'name': 'OpenCode Go (mock)', 'provider_type': 'opencode_go', 'billing_type': 'pay_as_you_go', 'is_active': True, 'max_retries': 0}, statuses=(200, 201))
         pid = provider['id']
         self.provider_id = pid
@@ -114,6 +129,7 @@ def main():
     parser.add_argument('--scenarios', default=','.join(GO_SCENARIOS))
     parser.add_argument('--gateway-bin', default=str(run.ROOT / 'target/debug/aether-gateway'))
     parser.add_argument('--timeout', type=int, default=120)
+    parser.add_argument('--cost-limit', type=float, help='give the test user a finite budget (hard cost limit active), USD')
     parser.add_argument('--keep', action='store_true')
     parser.add_argument('--json', type=pathlib.Path, help='write all results here')
     args = parser.parse_args()
@@ -125,7 +141,7 @@ def main():
     if unknown:
         raise SystemExit(f'unknown Go model(s): {unknown}')
 
-    stack = GoStack(args.gateway_bin, args.keep)
+    stack = GoStack(args.gateway_bin, args.keep, cost_limit=args.cost_limit)
     results = []
     try:
         stack.start()
