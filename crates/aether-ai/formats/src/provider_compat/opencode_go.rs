@@ -496,16 +496,22 @@ pub fn model_api_format(model: &str) -> Option<&'static str> {
         | "step-5-preview-free"
         | "beam-free"
         | "cat-jam-free" => Some("openai:chat"),
-        other => inferred_model_api_format(other),
+        // A model listing does not establish its native protocol; see `inferred_model_api_format`
+        // for the family rule used when the model is not in this table.
+        _ => None,
     }
 }
 
-/// Protocol of a model that is not in the table above, so a new Go model works with nothing but
+/// Protocol of a model: the table above, else the family rule, so a new Go model works with nothing but
 /// the key. OpenCode itself does the same: every Go model is Chat unless it belongs to one of the
 /// three vendor families that are served natively (OpenAI Responses, Anthropic Messages, Google).
 /// A wrong guess is a deterministic 400 for that one model, never a wrong answer. Only plain
 /// upstream ids are inferred: an alias with a path or a client prefix (`opencode-go/...`) is not.
-fn inferred_model_api_format(model: &str) -> Option<&'static str> {
+pub fn inferred_model_api_format(model: &str) -> Option<&'static str> {
+    if let Some(known) = model_api_format(model) {
+        return Some(known);
+    }
+    let model = model.trim();
     let valid = !model.is_empty()
         && model.len() <= 80
         && model.starts_with(|c: char| c.is_ascii_alphanumeric())
@@ -588,8 +594,10 @@ mod tests {
             model_api_format("gemini-4-argon-contributor"),
             Some("gemini:generate_content")
         );
+        assert_eq!(model_api_format("gpt-6.1-sol"), None);
         assert_eq!(model_api_format("opencode-go/glm-5.3-flash"), None);
-        assert_eq!(model_api_format("a b"), None);
+        assert_eq!(inferred_model_api_format("opencode-go/glm-5.3-flash"), None);
+        assert_eq!(inferred_model_api_format("a b"), None);
     }
 
     #[test]
@@ -604,10 +612,20 @@ mod tests {
             "openai:responses:compact"
         ));
         // Unlisted models follow OpenCode's own family rule instead of needing a manual mapping.
-        assert_eq!(model_api_format("future-model"), Some("openai:chat"));
-        assert_eq!(model_api_format("qwen4-max"), Some("claude:messages"));
-        assert_eq!(model_api_format("gpt-7-luna"), Some("openai:responses"));
-        assert_eq!(model_api_format("omen-alpha"), Some("openai:chat"));
+        assert_eq!(
+            inferred_model_api_format("future-model"),
+            Some("openai:chat")
+        );
+        assert_eq!(
+            inferred_model_api_format("qwen4-max"),
+            Some("claude:messages")
+        );
+        assert_eq!(
+            inferred_model_api_format("gpt-7-luna"),
+            Some("openai:responses")
+        );
+        assert_eq!(inferred_model_api_format("omen-alpha"), Some("openai:chat"));
+        assert_eq!(model_api_format("future-model"), None);
         assert!(model_supports_api_format(
             "opencode-go/x",
             "claude:messages"

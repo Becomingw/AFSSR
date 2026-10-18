@@ -330,7 +330,9 @@ fn row_default_provider_model_name_available(
         )
         .is_none();
     let Some(mappings) = row.model_provider_model_mappings.as_ref() else {
-        return !unknown_go_model;
+        // A model that is not in the table is served on the protocol its name implies (OpenCode's
+        // own family rule), so a new Go model needs no manual mapping.
+        return !unknown_go_model || go_inferred_protocol_matches(row, api_format);
     };
     let mut has_explicit_default_mapping = false;
     for mapping in mappings {
@@ -343,6 +345,16 @@ fn row_default_provider_model_name_available(
         }
     }
     !has_explicit_default_mapping && !unknown_go_model
+}
+
+fn go_inferred_protocol_matches(
+    row: &StoredMinimalCandidateSelectionRow,
+    api_format: &str,
+) -> bool {
+    aether_ai_formats::provider_compat::opencode_go::inferred_model_api_format(
+        &row.model_provider_model_name,
+    )
+    .is_some_and(|native| native == aether_ai_formats::normalize_api_format_alias(api_format))
 }
 
 fn mapping_scope_matches(

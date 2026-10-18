@@ -106,7 +106,7 @@ pub(crate) fn parse_opencode_go_models_response_page(
         let native = model
             .get("id")
             .and_then(Value::as_str)
-            .and_then(aether_ai_formats::provider_compat::opencode_go::model_api_format);
+            .and_then(aether_ai_formats::provider_compat::opencode_go::inferred_model_api_format);
         // Go returns a provider-wide list from every protocol endpoint. A
         // successful catalog GET is not proof that a model supports that API.
         model["api_formats"] = json!(native.into_iter().collect::<Vec<_>>());

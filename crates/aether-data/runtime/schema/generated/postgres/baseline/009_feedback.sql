@@ -84,3 +84,4 @@ CREATE TABLE IF NOT EXISTS public.user_avatars (
 
 ALTER TABLE ONLY public.user_avatars ADD CONSTRAINT user_avatars_pkey PRIMARY KEY (user_id);
 ALTER TABLE ONLY public.user_avatars ADD CONSTRAINT fk_user_avatars_user_id FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
