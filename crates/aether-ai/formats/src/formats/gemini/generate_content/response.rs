@@ -437,6 +437,11 @@ fn canonical_usage_to_gemini_usage_metadata(usage: &CanonicalUsage) -> Value {
     Value::Object(out)
 }
 
+/// A fresh id for a tool call the provider did not name.
+pub(crate) fn unique_generated_tool_call_id() -> String {
+    format!("call_{}", uuid::Uuid::new_v4().simple())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -590,9 +595,4 @@ mod tests {
             Some(CanonicalContentBlock::ToolUse { name, .. }) if name == "lookup"
         ));
     }
-}
-
-/// A fresh id for a tool call the provider did not name.
-pub(crate) fn unique_generated_tool_call_id() -> String {
-    format!("call_{}", uuid::Uuid::new_v4().simple())
 }
