@@ -136,6 +136,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { ActivityHeatmap, ActivityHeatmapDay } from '@/types/activity'
 import { formatCurrency, formatTokens } from '@/utils/format'
 import { useI18n } from '@/i18n'
+import { computeCellSize, createWidthStabilizer } from './heatmapSizing'
 
 const props = withDefaults(defineProps<{
   data?: ActivityHeatmap | null
@@ -274,17 +275,15 @@ let resizeObserver: ResizeObserver | null = null
 let mediaQuery: MediaQueryList | null = null
 let mediaQueryHandler: ((event?: MediaQueryListEvent) => void) | null = null
 
+const widthStabilizer = createWidthStabilizer()
+
 const recalcCellSize = () => {
   const columnCount = weekColumns.value.length
   if (!columnCount || !heatmapWidth.value) {
     return
   }
-
-  const totalGap = Math.max(columnCount - 1, 0) * cellGap.value
-  const availableSpace = Math.max(heatmapWidth.value - totalGap, 0)
-  const rawSize = availableSpace / columnCount
-  // 自适应尺寸，最小 6px
-  cellSize.value = Math.max(6, rawSize)
+  // 整数像素 + 最小 6px，避免亚像素尺寸导致的溢出和抖动（#1）
+  cellSize.value = computeCellSize(heatmapWidth.value, columnCount, cellGap.value)
 }
 
 watch(
@@ -299,12 +298,14 @@ watch(
   () => heatmapWrapper.value,
   el => {
     resizeObserver?.disconnect()
+    widthStabilizer.reset()
     if (el && typeof ResizeObserver !== 'undefined') {
       resizeObserver = new ResizeObserver(entries => {
         if (!entries.length) {
           return
         }
-        heatmapWidth.value = entries[0].contentRect.width
+        // 经过稳定器过滤，忽略亚像素抖动与滚动条出现/消失引起的来回振荡
+        heatmapWidth.value = widthStabilizer.update(entries[0].contentRect.width)
         recalcCellSize()
       })
       resizeObserver.observe(el)
