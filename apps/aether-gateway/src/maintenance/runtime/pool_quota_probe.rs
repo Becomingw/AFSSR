@@ -146,6 +146,35 @@ fn provider_supports_quota_probe(provider_type: &str) -> bool {
     provider_type_supports_quota_refresh(provider_type)
 }
 
+/// Resolve the probe configuration for a provider.
+///
+/// Account-pool providers are probed only when `pool_advanced.probing_enabled`
+/// is set.  Provider types whose adapter declares `quota_refresh_without_pool`
+/// (API-key subscriptions such as OpenCode Go) are always probed, with or
+/// without `pool_advanced`, so that the quota snapshot used by both pool and
+/// normal scheduling stays fresh.
+fn pool_quota_probe_config_for_provider(
+    provider: &StoredProviderCatalogProvider,
+    provider_type: &str,
+) -> Option<AdminProviderPoolConfig> {
+    let pool_config = admin_provider_pool_config(provider);
+    if !provider_quota_refresh_runs_without_pool(provider_type) {
+        return pool_config.filter(|config| config.probing_enabled);
+    }
+    let mut config = pool_config.or_else(|| {
+        crate::handlers::shared::provider_pool::admin_provider_pool_config_from_config_value(Some(
+            &serde_json::json!({ "pool_advanced": {} }),
+        ))
+    })?;
+    config.probing_enabled = true;
+    Some(config)
+}
+
+fn provider_quota_refresh_runs_without_pool(provider_type: &str) -> bool {
+    aether_provider_pool::ProviderPoolService::with_builtin_adapters()
+        .quota_refresh_without_pool(provider_type)
+}
+
 fn parse_probe_stamp(raw_value: Option<&str>) -> Option<u64> {
     let parsed = raw_value
         .map(str::trim)
@@ -1508,12 +1537,8 @@ pub(crate) async fn perform_pool_quota_probe_once_with_config(
             }
         })
         .filter_map(|(provider, provider_type)| {
-            let pool_config = admin_provider_pool_config(&provider)?;
-            if pool_config.probing_enabled {
-                Some((provider, provider_type, pool_config))
-            } else {
-                None
-            }
+            let pool_config = pool_quota_probe_config_for_provider(&provider, &provider_type)?;
+            Some((provider, provider_type, pool_config))
         })
         .collect::<Vec<_>>();
 
@@ -1605,9 +1630,7 @@ async fn perform_pool_quota_probe_once_for_provider_with_mode(
             ..PoolQuotaProbeRunSummary::empty()
         });
     }
-    let Some(pool_config) =
-        admin_provider_pool_config(&provider).filter(|config| config.probing_enabled)
-    else {
+    let Some(pool_config) = pool_quota_probe_config_for_provider(&provider, &provider_type) else {
         return Ok(PoolQuotaProbeRunSummary {
             providers_checked: 1,
             ..PoolQuotaProbeRunSummary::empty()

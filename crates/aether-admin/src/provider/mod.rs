@@ -2,6 +2,7 @@ pub mod endpoints;
 pub mod models;
 pub mod models_write;
 pub mod oauth;
+pub mod opencode_go_quota;
 pub mod ops;
 pub mod pool;
 pub mod quota;

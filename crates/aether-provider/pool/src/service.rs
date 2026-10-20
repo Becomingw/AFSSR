@@ -13,8 +13,8 @@ use crate::provider::{ProviderPoolAdapter, ProviderPoolMemberInput};
 use crate::providers::{
     AntigravityProviderPoolAdapter, ChatGptWebProviderPoolAdapter, CodexProviderPoolAdapter,
     DefaultProviderPoolAdapter, GeminiCliProviderPoolAdapter, GrokProviderPoolAdapter,
-    KiroProviderPoolAdapter, WindsurfProviderPoolAdapter, CLAUDE_CODE_PROVIDER_POOL_ADAPTER,
-    VERTEX_AI_PROVIDER_POOL_ADAPTER,
+    KiroProviderPoolAdapter, OpenCodeGoProviderPoolAdapter, WindsurfProviderPoolAdapter,
+    CLAUDE_CODE_PROVIDER_POOL_ADAPTER, VERTEX_AI_PROVIDER_POOL_ADAPTER,
 };
 
 #[derive(Clone)]
@@ -54,6 +54,7 @@ impl ProviderPoolService {
             .with_adapter(Arc::new(GrokProviderPoolAdapter))
             .with_adapter(Arc::new(KiroProviderPoolAdapter))
             .with_adapter(Arc::new(ChatGptWebProviderPoolAdapter))
+            .with_adapter(Arc::new(OpenCodeGoProviderPoolAdapter))
             .with_adapter(Arc::new(WindsurfProviderPoolAdapter))
             .with_adapter(Arc::new(VERTEX_AI_PROVIDER_POOL_ADAPTER))
     }
@@ -95,6 +96,15 @@ impl ProviderPoolService {
     ) -> Option<StoredProviderCatalogEndpoint> {
         self.adapter(provider_type)
             .quota_refresh_endpoint(endpoints, include_inactive)
+    }
+
+    pub fn quota_refresh_without_pool(&self, provider_type: &str) -> bool {
+        self.adapter(provider_type).quota_refresh_without_pool()
+    }
+
+    pub fn skip_exhausted_accounts_without_pool(&self, provider_type: &str) -> bool {
+        self.adapter(provider_type)
+            .skip_exhausted_accounts_without_pool()
     }
 
     pub fn quota_refresh_unsupported_message(&self, provider_type: &str) -> String {

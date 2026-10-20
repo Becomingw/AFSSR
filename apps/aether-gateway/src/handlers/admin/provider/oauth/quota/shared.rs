@@ -1717,6 +1717,7 @@ fn provider_quota_url_has_allowed_origin(provider_name: &str, value: &str) -> bo
         "grok" => host == "grok.com",
         "windsurf" => host == "server.codeium.com",
         "kiro" => kiro_quota_host_is_allowed(host),
+        "opencode_go" => host == "opencode.ai",
         _ => false,
     }
 }
@@ -1822,6 +1823,7 @@ mod tests {
                 "kiro",
                 "https://q.us-east-1.amazonaws.com/getUsageLimits?origin=AI_EDITOR",
             ),
+            ("opencode_go", "https://opencode.ai/zen/go/v1/usage"),
         ] {
             assert!(
                 provider_quota_url_has_allowed_origin(provider_name, url),
@@ -1865,6 +1867,12 @@ mod tests {
                 "kiro",
                 "https://q.us-east-1.amazonaws.com.attacker.test/getUsageLimits",
             ),
+            (
+                "opencode_go",
+                "https://opencode.ai.attacker.test/zen/go/v1/usage",
+            ),
+            ("opencode_go", "http://opencode.ai/zen/go/v1/usage"),
+            ("opencode_go", "https://opencode.ai:8443/zen/go/v1/usage"),
             ("unknown", "https://chatgpt.com/backend-api/wham/usage"),
         ] {
             assert!(

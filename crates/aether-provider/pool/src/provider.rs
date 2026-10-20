@@ -59,6 +59,19 @@ pub trait ProviderPoolAdapter: Send + Sync {
         "找不到有效端点".to_string()
     }
 
+    /// Whether background quota refresh should also run for providers that
+    /// are not configured as an account pool (`pool_advanced` absent).
+    fn quota_refresh_without_pool(&self) -> bool {
+        false
+    }
+
+    /// Whether quota-exhausted keys should be skipped by normal (non-pool)
+    /// candidate selection when `pool_advanced.skip_exhausted_accounts` is
+    /// not configured.
+    fn skip_exhausted_accounts_without_pool(&self) -> bool {
+        false
+    }
+
     fn normalize_plan_tier(&self, value: &str) -> Option<String> {
         normalize_provider_plan_tier(value, self.provider_type())
     }
