@@ -3224,9 +3224,7 @@ fn map_user_preference_row(
         announcement_notifications: row
             .try_get("announcement_notifications")
             .map_postgres_err()?,
-        leaderboard_anonymous: row
-            .try_get("leaderboard_anonymous")
-            .map_postgres_err()?,
+        leaderboard_anonymous: row.try_get("leaderboard_anonymous").map_postgres_err()?,
     })
 }
 

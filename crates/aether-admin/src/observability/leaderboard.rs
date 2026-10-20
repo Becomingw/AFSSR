@@ -567,6 +567,9 @@ mod tests {
         let mut labels: Vec<_> = r.boards[0].items.iter().map(|e| e.name.clone()).collect();
         labels.sort();
         assert_eq!(labels, vec!["alice", "carol", "成员 002"]);
-        assert!(r.boards[0].items.iter().all(|e| e.id.starts_with("member-")));
+        assert!(r.boards[0]
+            .items
+            .iter()
+            .all(|e| e.id.starts_with("member-")));
     }
 }
