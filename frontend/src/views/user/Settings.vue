@@ -596,6 +596,29 @@
                 </div>
               </div>
             </div>
+            <div class="space-y-3">
+              <h4 class="font-medium text-foreground">
+                隐私设置
+              </h4>
+              <div class="flex items-center justify-between py-2">
+                <div class="flex-1">
+                  <Label
+                    for="leaderboard-anonymous"
+                    class="text-sm font-medium cursor-pointer"
+                  >
+                    在排行榜中匿名显示我
+                  </Label>
+                  <p class="text-xs text-muted-foreground mt-1">
+                    开启后，其他用户在排行榜中只能看到你的匿名代号
+                  </p>
+                </div>
+                <Switch
+                  id="leaderboard-anonymous"
+                  v-model="preferencesForm.leaderboard_anonymous"
+                  @update:model-value="updateLeaderboardAnonymity"
+                />
+              </div>
+            </div>
           </div>
         </Card>
       </div>
@@ -779,7 +802,8 @@ const preferencesForm = ref({
     email: true,
     usage_alerts: true,
     announcements: true
-  }
+  },
+  leaderboard_anonymous: false
 })
 
 const featureSettingsForm = ref({
@@ -1063,7 +1087,8 @@ async function loadPreferences() {
         email: prefs.notifications?.email ?? true,
         usage_alerts: prefs.notifications?.usage_alerts ?? true,
         announcements: prefs.notifications?.announcements ?? true
-      }
+      },
+      leaderboard_anonymous: prefs.leaderboard_anonymous ?? false
     }
 
     // 保存原始值
@@ -1233,6 +1258,17 @@ async function updatePreferences() {
     success('设置已保存')
   } catch (error) {
     log.error('更新偏好设置失败:', error)
+    showError('保存设置失败')
+  }
+}
+
+async function updateLeaderboardAnonymity(value: boolean) {
+  try {
+    await meApi.updatePreferences({ leaderboard_anonymous: value })
+    success(value ? '已在排行榜中匿名显示' : '排行榜中将显示你的用户名')
+  } catch (error) {
+    preferencesForm.value.leaderboard_anonymous = !value
+    log.error('更新排行榜隐私设置失败:', error)
     showError('保存设置失败')
   }
 }

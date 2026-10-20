@@ -776,6 +776,9 @@ pub struct StoredUserPreferenceRecord {
     pub email_notifications: bool,
     pub usage_alerts: bool,
     pub announcement_notifications: bool,
+    /// Hide the username on the public leaderboard (#2). Defaults to `false`.
+    #[serde(default)]
+    pub leaderboard_anonymous: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -925,6 +928,7 @@ impl StoredUserPreferenceRecord {
             email_notifications: true,
             usage_alerts: true,
             announcement_notifications: true,
+            leaderboard_anonymous: false,
         }
     }
 }

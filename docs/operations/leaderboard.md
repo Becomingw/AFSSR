@@ -51,9 +51,12 @@ was deleted. The UI explicitly labels detail-dependent metrics.
 
 ## Privacy and Resource Boundaries
 
-Ordinary users receive generated `member-N` IDs/labels, never real user IDs,
-usernames, email addresses, per-user USD values, aggregate USD spend or precise
-early-bird times. Member numbers are only report-local pseudonyms, not permanent
+Ordinary users receive generated `member-N` IDs, never real user IDs, email
+addresses, per-user USD values, aggregate USD spend or precise early-bird times.
+Labels show the username of active accounts by default; a user who enables
+"在排行榜中匿名显示我" in personal settings (`leaderboard_anonymous` preference,
+migration `20261021000000_leaderboard_anonymity.sql`, default `false`) and deleted
+or disabled accounts are shown as `成员 NNN` instead. Member numbers are only report-local pseudonyms, not permanent
 identities or a formal anonymity guarantee. Public user boards are suppressed
 when the report includes fewer than three users. Hourly leaders require three
 distinct members in that hour. No prompts, API keys, request IDs or bodies are

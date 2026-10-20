@@ -3223,6 +3223,7 @@ mod tests {
             email_notifications: true,
             usage_alerts: true,
             announcement_notifications: true,
+            leaderboard_anonymous: false,
         };
         let repository = InMemoryUserReadRepository::seed_auth_users([admin.clone()])
             .with_export_users([export_row])
@@ -4026,6 +4027,7 @@ mod tests {
             email_notifications: false,
             usage_alerts: true,
             announcement_notifications: false,
+            leaderboard_anonymous: false,
         };
 
         assert!(repository

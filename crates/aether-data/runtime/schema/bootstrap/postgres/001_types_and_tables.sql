@@ -1353,6 +1353,7 @@ CREATE TABLE IF NOT EXISTS public.user_preferences (
     email_notifications boolean DEFAULT true,
     usage_alerts boolean DEFAULT true,
     announcement_notifications boolean DEFAULT true,
+    leaderboard_anonymous boolean DEFAULT false NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );

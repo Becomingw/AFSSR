@@ -56,7 +56,8 @@ async fn user_report(State(state): State<AppState>, request: Request) -> Respons
     {
         return r;
     }
-    // The user endpoint always masks identities, including administrator sessions.
+    // The user endpoint always uses the public view (anonymity opt-outs honoured, no
+    // amounts or exact times), including for administrator sessions.
     match report(&state, parts.uri.query(), true).await {
         Ok(r) => r,
         Err(_) => response(
@@ -152,14 +153,29 @@ pub(crate) async fn report(
         })
         .await?;
     let mut names = std::collections::BTreeMap::new();
-    if !masked {
-        let ids: Vec<_> = users
-            .iter()
-            .map(|u| u.group_key.clone())
-            .chain(activity.iter().map(|r| r.user_id.clone()))
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
-            .collect();
+    let ids: Vec<_> = users
+        .iter()
+        .map(|u| u.group_key.clone())
+        .chain(activity.iter().map(|r| r.user_id.clone()))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    if masked {
+        // Public view (#2): show usernames by default, except for users who opted
+        // into anonymity in their preferences, and deleted/inactive accounts.
+        for user in state.list_users_by_ids(&ids).await? {
+            if user.is_deleted || !user.is_active {
+                continue;
+            }
+            let anonymous = state
+                .read_user_preferences(&user.id)
+                .await?
+                .is_some_and(|p| p.leaderboard_anonymous);
+            if !anonymous {
+                names.insert(user.id, user.username);
+            }
+        }
+    } else {
         for user in state.list_users_by_ids(&ids).await? {
             names.insert(user.id, user.username);
         }
