@@ -1752,6 +1752,156 @@ fn build_windsurf_quota_status_snapshot(
     }))
 }
 
+fn build_opencode_go_quota_status_snapshot(
+    upstream_metadata: Option<&Value>,
+    source: &str,
+) -> Option<Value> {
+    let metadata = provider_quota_metadata_bucket(upstream_metadata, "opencode_go")?;
+    let observed_at_unix_secs = provider_quota_timestamp_unix_secs(metadata.get("updated_at"));
+    let source_windows = metadata.get("windows").and_then(Value::as_object);
+    // Snapshot codes use the structural names the pool quota resolver treats
+    // as account-wide (`5h`, `weekly`, `monthly`) so that every model on the
+    // key is gated by them; `window` keeps the upstream name.
+    let windows = [
+        ("rolling", "5h", "5小时"),
+        ("weekly", "weekly", "周"),
+        ("monthly", "monthly", "月"),
+    ]
+    .into_iter()
+    .filter_map(|(upstream_window, code, label)| {
+        let window = source_windows?.get(upstream_window)?.as_object()?;
+        let percent = window
+            .get("percent")
+            .and_then(admin_provider_quota_pure::coerce_json_f64);
+        let used_ratio = percent.map(|value| (value / 100.0).clamp(0.0, 1.0));
+        let remaining_ratio = used_ratio.map(|value| (1.0 - value).clamp(0.0, 1.0));
+        let reset_at = provider_quota_timestamp_unix_secs(window.get("reset_at"));
+        let is_exhausted = window
+            .get("limited")
+            .and_then(admin_provider_quota_pure::coerce_json_bool)
+            .unwrap_or(false)
+            || used_ratio.is_some_and(|value| value >= 1.0 - 1e-6);
+        Some(json!({
+            "code": code,
+            "window": upstream_window,
+            "label": label,
+            "scope": "account",
+            "unit": "percent",
+            "status": window.get("status").cloned().unwrap_or(Value::Null),
+            "used_ratio": used_ratio,
+            "remaining_ratio": remaining_ratio,
+            "reset_at": reset_at,
+            "reset_seconds": quota_window_reset_seconds(observed_at_unix_secs, reset_at),
+            "is_exhausted": is_exhausted,
+        }))
+    })
+    .collect::<Vec<_>>();
+
+    let no_subscription = metadata
+        .get("no_subscription")
+        .and_then(admin_provider_quota_pure::coerce_json_bool)
+        == Some(true);
+    let auth_invalid = metadata
+        .get("auth_invalid")
+        .and_then(admin_provider_quota_pure::coerce_json_bool)
+        == Some(true);
+    let last_error = metadata
+        .get("last_error")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    if windows.is_empty() && observed_at_unix_secs.is_none() && !no_subscription && !auth_invalid {
+        return None;
+    }
+
+    let window_field = |window: &Value, field: &str| -> Option<u64> {
+        window
+            .get(field)
+            .and_then(admin_provider_quota_pure::coerce_json_u64)
+    };
+    let exhausted_windows = windows
+        .iter()
+        .filter(|window| {
+            window
+                .get("is_exhausted")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        })
+        .collect::<Vec<_>>();
+    let exhausted_by_window = !exhausted_windows.is_empty();
+    // An exhausted key stays unusable until its latest exhausted window resets;
+    // otherwise report the reset of the most-used window.
+    let (reset_at, reset_seconds) = if exhausted_by_window {
+        exhausted_windows
+            .iter()
+            .max_by_key(|window| window_field(window, "reset_at").unwrap_or(0))
+            .map(|window| {
+                (
+                    window_field(window, "reset_at"),
+                    window_field(window, "reset_seconds"),
+                )
+            })
+            .unwrap_or((None, None))
+    } else {
+        windows
+            .iter()
+            .max_by(|left, right| {
+                let left = left
+                    .get("used_ratio")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(0.0);
+                let right = right
+                    .get("used_ratio")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(0.0);
+                left.total_cmp(&right)
+            })
+            .map(|window| {
+                (
+                    window_field(window, "reset_at"),
+                    window_field(window, "reset_seconds"),
+                )
+            })
+            .unwrap_or((None, None))
+    };
+    let exhausted = no_subscription || exhausted_by_window;
+    let (code, label, reason) = if no_subscription {
+        (
+            "no_subscription",
+            Some("无 Go 订阅"),
+            Some("Key 有效但没有 OpenCode Go 订阅".to_string()),
+        )
+    } else if auth_invalid {
+        ("auth_invalid", Some("Key 无效"), last_error)
+    } else if exhausted_by_window {
+        (
+            "exhausted",
+            Some("额度耗尽"),
+            Some("OpenCode Go 额度窗口已耗尽".to_string()),
+        )
+    } else {
+        ("ok", None, last_error)
+    };
+
+    Some(json!({
+        "version": 2,
+        "provider_type": "opencode_go",
+        "code": code,
+        "label": label,
+        "reason": reason,
+        "freshness": "fresh",
+        "source": source,
+        "observed_at": observed_at_unix_secs,
+        "exhausted": exhausted,
+        "usage_ratio": quota_windows_usage_ratio(&windows),
+        "updated_at": observed_at_unix_secs,
+        "reset_at": reset_at,
+        "reset_seconds": reset_seconds,
+        "windows": windows,
+    }))
+}
+
 fn build_antigravity_quota_status_snapshot(
     upstream_metadata: Option<&Value>,
     source: &str,
@@ -2257,6 +2407,7 @@ pub(crate) fn sync_provider_key_quota_status_snapshot(
         "kiro" => build_kiro_quota_status_snapshot(upstream_metadata, source),
         "chatgpt_web" => build_chatgpt_web_quota_status_snapshot(upstream_metadata, source),
         "windsurf" => build_windsurf_quota_status_snapshot(upstream_metadata, source),
+        "opencode_go" => build_opencode_go_quota_status_snapshot(upstream_metadata, source),
         "antigravity" => build_antigravity_quota_status_snapshot(upstream_metadata, source),
         "grok" => build_grok_quota_status_snapshot(upstream_metadata, source),
         "gemini_cli" => build_gemini_cli_quota_status_snapshot(upstream_metadata, source),
@@ -3630,6 +3781,94 @@ mod tests {
         assert_eq!(credits.get("has_credits"), Some(&json!(true)));
         assert_eq!(windows.len(), 1);
         assert_eq!(windows[0].get("remaining_ratio"), Some(&json!(0.75)));
+    }
+
+    #[test]
+    fn opencode_go_snapshot_maps_three_windows_and_max_usage() {
+        let mut key = sample_catalog_key();
+        key.upstream_metadata = Some(json!({
+            "opencode_go": {
+                "updated_at": 1_786_000_000u64,
+                "rate_limited": false,
+                "windows": {
+                    "rolling": {"status": "ok", "percent": 42.0, "reset_at": 1_786_010_000u64, "limited": false},
+                    "weekly": {"status": "ok", "percent": 75.0, "reset_at": 1_786_300_000u64, "limited": false},
+                    "monthly": {"status": "ok", "percent": 10.0, "reset_at": 1_788_000_000u64, "limited": false}
+                }
+            }
+        }));
+        let payload = provider_key_status_snapshot_payload(&key, "opencode_go");
+        let quota = payload
+            .get("quota")
+            .and_then(Value::as_object)
+            .expect("quota");
+        assert_eq!(quota.get("provider_type"), Some(&json!("opencode_go")));
+        assert_eq!(quota.get("code"), Some(&json!("ok")));
+        assert_eq!(quota.get("exhausted"), Some(&json!(false)));
+        assert_eq!(quota.get("usage_ratio"), Some(&json!(0.75)));
+        // Not exhausted: reset of the most-used (weekly) window.
+        assert_eq!(quota.get("reset_at"), Some(&json!(1_786_300_000u64)));
+        let windows = quota
+            .get("windows")
+            .and_then(Value::as_array)
+            .expect("windows");
+        assert_eq!(windows.len(), 3);
+        assert_eq!(windows[0].get("code"), Some(&json!("5h")));
+        assert_eq!(windows[0].get("window"), Some(&json!("rolling")));
+        assert_eq!(windows[0].get("reset_seconds"), Some(&json!(10_000u64)));
+    }
+
+    #[test]
+    fn opencode_go_snapshot_exhausted_uses_latest_exhausted_window_reset() {
+        let mut key = sample_catalog_key();
+        key.upstream_metadata = Some(json!({
+            "opencode_go": {
+                "updated_at": 1_786_000_000u64,
+                "rate_limited": true,
+                "windows": {
+                    "rolling": {"status": "rate-limited", "percent": 100.0, "reset_at": 1_786_010_000u64, "limited": true},
+                    "weekly": {"status": "rate-limited", "percent": 100.0, "reset_at": 1_786_300_000u64, "limited": true},
+                    "monthly": {"status": "ok", "percent": 60.0, "reset_at": 1_788_000_000u64, "limited": false}
+                }
+            }
+        }));
+        let payload = provider_key_status_snapshot_payload(&key, "opencode_go");
+        let quota = payload
+            .get("quota")
+            .and_then(Value::as_object)
+            .expect("quota");
+        assert_eq!(quota.get("code"), Some(&json!("exhausted")));
+        assert_eq!(quota.get("exhausted"), Some(&json!(true)));
+        assert_eq!(quota.get("usage_ratio"), Some(&json!(1.0)));
+        assert_eq!(quota.get("reset_at"), Some(&json!(1_786_300_000u64)));
+    }
+
+    #[test]
+    fn opencode_go_snapshot_reports_missing_subscription_and_auth_errors() {
+        let mut key = sample_catalog_key();
+        key.upstream_metadata = Some(json!({
+            "opencode_go": {"updated_at": 1_786_000_000u64, "last_error": "HTTP 403", "no_subscription": true}
+        }));
+        let payload = provider_key_status_snapshot_payload(&key, "opencode_go");
+        assert_eq!(
+            payload.pointer("/quota/code"),
+            Some(&json!("no_subscription"))
+        );
+        assert_eq!(payload.pointer("/quota/exhausted"), Some(&json!(true)));
+
+        key.upstream_metadata = Some(json!({
+            "opencode_go": {"updated_at": 1_786_000_000u64, "last_error": "HTTP 401", "auth_invalid": true}
+        }));
+        let payload = provider_key_status_snapshot_payload(&key, "opencode_go");
+        assert_eq!(payload.pointer("/quota/code"), Some(&json!("auth_invalid")));
+        assert_eq!(payload.pointer("/quota/exhausted"), Some(&json!(false)));
+
+        key.upstream_metadata = Some(json!({"opencode_go": {}}));
+        let payload = provider_key_status_snapshot_payload(&key, "opencode_go");
+        assert_ne!(
+            payload.pointer("/quota/provider_type"),
+            Some(&json!("opencode_go"))
+        );
     }
 
     #[test]

@@ -19,21 +19,22 @@ pub use providers::{
     build_chatgpt_web_pool_quota_request, build_codex_pool_quota_request,
     build_codex_pool_reset_credit_consume_request, build_codex_pool_reset_credits_request,
     build_gemini_cli_pool_quota_request, build_kiro_pool_quota_request,
-    build_windsurf_pool_model_configs_request,
+    build_opencode_go_pool_quota_request, build_windsurf_pool_model_configs_request,
     build_windsurf_pool_model_configs_request_with_base_url, build_windsurf_pool_quota_request,
     build_windsurf_pool_quota_request_with_base_url, build_windsurf_pool_rate_limit_request,
     build_windsurf_pool_rate_limit_request_with_base_url, enrich_chatgpt_web_quota_metadata,
     grok_mode_id_for_model, grok_pool_tier_from_quota_bucket, grok_quota_window_key_for_model,
     grok_supported_quota_windows_for_tier, normalize_chatgpt_web_image_quota_limit,
-    AntigravityProviderPoolAdapter, ChatGptWebProviderPoolAdapter, CodexProviderPoolAdapter,
-    DefaultProviderPoolAdapter, GeminiCliProviderPoolAdapter, GrokProviderPoolAdapter,
-    KiroPoolQuotaAuthInput, KiroProviderPoolAdapter, UnsupportedQuotaProviderPoolAdapter,
+    opencode_go_usage_url_for_base_url, AntigravityProviderPoolAdapter,
+    ChatGptWebProviderPoolAdapter, CodexProviderPoolAdapter, DefaultProviderPoolAdapter,
+    GeminiCliProviderPoolAdapter, GrokProviderPoolAdapter, KiroPoolQuotaAuthInput,
+    KiroProviderPoolAdapter, OpenCodeGoProviderPoolAdapter, UnsupportedQuotaProviderPoolAdapter,
     ANTIGRAVITY_FETCH_AVAILABLE_MODELS_PATH, ANTIGRAVITY_RETRIEVE_USER_QUOTA_SUMMARY_PATH,
     CHATGPT_WEB_CONVERSATION_INIT_PATH, CHATGPT_WEB_DEFAULT_BASE_URL,
     CODEX_WHAM_RESET_CREDITS_CONSUME_URL, CODEX_WHAM_RESET_CREDITS_URL, CODEX_WHAM_USAGE_URL,
     GEMINI_CLI_RETRIEVE_USER_QUOTA_PATH, GEMINI_CLI_USER_AGENT, KIRO_USAGE_LIMITS_PATH,
-    KIRO_USAGE_SDK_VERSION, WINDSURF_MODEL_CONFIGS_PATH, WINDSURF_RATE_LIMIT_PATH,
-    WINDSURF_USER_STATUS_PATH,
+    KIRO_USAGE_SDK_VERSION, OPENCODE_GO_PROVIDER_TYPE, WINDSURF_MODEL_CONFIGS_PATH,
+    WINDSURF_RATE_LIMIT_PATH, WINDSURF_USER_STATUS_PATH,
 };
 pub use quota::{
     provider_pool_key_account_quota_exhausted, provider_pool_key_model_quota_exhausted,
@@ -80,6 +81,7 @@ mod tests {
                 "gemini_cli",
                 "grok",
                 "kiro",
+                "opencode_go",
                 "vertex_ai",
                 "windsurf"
             ]
@@ -104,10 +106,16 @@ mod tests {
                 "gemini_cli",
                 "grok",
                 "kiro",
+                "opencode_go",
                 "windsurf"
             ]
         );
         assert!(service.supports_quota_refresh("codex"));
+        assert!(service.supports_quota_refresh("opencode_go"));
+        assert!(service.quota_refresh_without_pool("opencode_go"));
+        assert!(!service.quota_refresh_without_pool("codex"));
+        assert!(service.skip_exhausted_accounts_without_pool("opencode_go"));
+        assert!(!service.skip_exhausted_accounts_without_pool("kiro"));
         assert!(service.supports_quota_refresh("antigravity"));
         assert!(service.supports_quota_refresh("grok"));
         assert!(service.supports_quota_refresh("gemini_cli"));
@@ -646,7 +654,7 @@ mod tests {
         );
         assert_eq!(
             recent_refresh["providers"],
-            json!(["codex", "grok", "kiro", "windsurf"])
+            json!(["codex", "grok", "kiro", "opencode_go", "windsurf"])
         );
         assert_eq!(free_first["default_enabled"], json!(false));
         assert_eq!(recent_refresh["default_enabled"], json!(false));

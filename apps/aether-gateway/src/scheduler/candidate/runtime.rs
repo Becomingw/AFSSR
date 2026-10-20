@@ -317,11 +317,8 @@ async fn read_provider_pool_state_map(
                 .config
                 .as_ref()
                 .and_then(|value| value.get("pool_advanced"));
-            let skip_exhausted_accounts = pool_advanced
-                .and_then(serde_json::Value::as_object)
-                .and_then(|value| value.get("skip_exhausted_accounts"))
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false);
+            let skip_exhausted_accounts =
+                provider_skip_exhausted_accounts(pool_advanced, provider.provider_type.as_str());
             (
                 provider.id,
                 ProviderPoolState {
@@ -331,6 +328,26 @@ async fn read_provider_pool_state_map(
             )
         })
         .collect())
+}
+
+/// Effective skip-exhausted flag: `pool_advanced.skip_exhausted_accounts`
+/// when configured.  Without an
+/// account pool, provider types whose quota snapshot is refreshed outside the
+/// pool (OpenCode Go) skip exhausted keys by default so that normal
+/// scheduling stops sending requests to a key until its window resets.
+fn provider_skip_exhausted_accounts(
+    pool_advanced: Option<&serde_json::Value>,
+    provider_type: &str,
+) -> bool {
+    match pool_advanced {
+        Some(pool_advanced) => pool_advanced
+            .as_object()
+            .and_then(|value| value.get("skip_exhausted_accounts"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false),
+        None => aether_provider_pool::ProviderPoolService::with_builtin_adapters()
+            .skip_exhausted_accounts_without_pool(provider_type),
+    }
 }
 
 fn read_key_account_quota_exhaustion_map(
@@ -496,4 +513,105 @@ fn read_provider_key_rpm_reset_at_map(
             )
         })
         .collect::<BTreeMap<_, _>>()
+}
+
+#[cfg(test)]
+mod opencode_go_quota_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn candidate(provider_type: &str) -> SchedulerMinimalCandidateSelectionCandidate {
+        SchedulerMinimalCandidateSelectionCandidate {
+            provider_id: "provider-1".to_string(),
+            provider_name: "OpenCode Go".to_string(),
+            provider_type: provider_type.to_string(),
+            provider_priority: 0,
+            endpoint_id: "endpoint-1".to_string(),
+            endpoint_api_format: "openai:chat".to_string(),
+            key_id: "key-1".to_string(),
+            key_name: "key".to_string(),
+            key_auth_type: "api_key".to_string(),
+            key_internal_priority: 10,
+            key_global_priority_for_format: None,
+            key_capabilities: None,
+            model_id: "model-1".to_string(),
+            global_model_id: "global-1".to_string(),
+            global_model_name: "glm-5.1".to_string(),
+            selected_provider_model_name: "glm-5.1".to_string(),
+            supports_streaming: true,
+            mapping_matched_model: None,
+        }
+    }
+
+    fn exhausted_key(reset_at: u64) -> StoredProviderCatalogKey {
+        let mut key = StoredProviderCatalogKey::new(
+            "key-1".to_string(),
+            "provider-1".to_string(),
+            "key".to_string(),
+            "api_key".to_string(),
+            None,
+            true,
+        )
+        .expect("key should build");
+        key.status_snapshot = Some(json!({
+            "quota": {
+                "provider_type": "opencode_go",
+                "code": "exhausted",
+                "exhausted": true,
+                "windows": [
+                    {"code": "5h", "scope": "account", "used_ratio": 1.0, "is_exhausted": true, "reset_at": reset_at},
+                    {"code": "weekly", "scope": "account", "used_ratio": 0.3, "is_exhausted": false}
+                ]
+            }
+        }));
+        key
+    }
+
+    fn far_future() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 3600
+    }
+
+    #[test]
+    fn non_pool_opencode_go_skips_exhausted_keys_by_default() {
+        assert!(provider_skip_exhausted_accounts(None, "opencode_go"));
+        assert!(!provider_skip_exhausted_accounts(None, "codex"));
+        assert!(!provider_skip_exhausted_accounts(None, "custom"));
+
+        let candidates = vec![candidate("opencode_go")];
+        let keys = BTreeMap::from([("key-1".to_string(), exhausted_key(far_future()))]);
+        let skip = BTreeMap::from([(
+            "provider-1".to_string(),
+            provider_skip_exhausted_accounts(None, "opencode_go"),
+        )]);
+        let map = read_key_account_quota_exhaustion_map(&candidates, &keys, &skip);
+        assert_eq!(map.get("key-1"), Some(&true));
+    }
+
+    #[test]
+    fn non_pool_opencode_go_key_becomes_selectable_after_reset_at() {
+        let candidates = vec![candidate("opencode_go")];
+        let keys = BTreeMap::from([("key-1".to_string(), exhausted_key(1_000_000_000))]);
+        let skip = BTreeMap::from([("provider-1".to_string(), true)]);
+        let map = read_key_account_quota_exhaustion_map(&candidates, &keys, &skip);
+        assert_eq!(map.get("key-1"), Some(&false));
+    }
+
+    #[test]
+    fn pool_mode_honors_configured_skip_exhausted_accounts() {
+        let enabled = json!({"skip_exhausted_accounts": true});
+        let disabled =
+            json!({"scheduling_presets": [{"preset": "quota_balanced", "enabled": true}]});
+        assert!(provider_skip_exhausted_accounts(
+            Some(&enabled),
+            "opencode_go"
+        ));
+        assert!(!provider_skip_exhausted_accounts(
+            Some(&disabled),
+            "opencode_go"
+        ));
+    }
 }

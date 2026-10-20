@@ -73,6 +73,13 @@ pub(crate) fn project_local_adaptive_rate_limit(
         return None;
     }
 
+    // A 429 from a key whose subscription quota window is known to be
+    // exhausted is a quota signal, not an RPM signal: learning from it would
+    // keep the key throttled long after the window resets.
+    if provider_key_quota_window_exhausted(current_key) {
+        return None;
+    }
+
     let upstream_limit =
         parse_latest_upstream_limit(headers).and_then(|value| u32::try_from(value).ok());
     let mut history = adaptive_history_records(current_key.adjustment_history.as_ref());
@@ -244,6 +251,26 @@ pub(crate) fn project_local_adaptive_success(
         last_probe_increase_at_unix_secs,
         status_snapshot,
     })
+}
+
+/// Provider types whose quota snapshot reflects subscription windows that
+/// produce 429s once exhausted.
+const QUOTA_WINDOW_PROVIDER_TYPES: &[&str] = &["opencode_go"];
+
+fn provider_key_quota_window_exhausted(key: &StoredProviderCatalogKey) -> bool {
+    let Some(provider_type) = key
+        .status_snapshot
+        .as_ref()
+        .and_then(|snapshot| snapshot.get("quota"))
+        .and_then(|quota| quota.get("provider_type"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .map(str::to_ascii_lowercase)
+    else {
+        return false;
+    };
+    QUOTA_WINDOW_PROVIDER_TYPES.contains(&provider_type.as_str())
+        && aether_provider_pool::provider_pool_key_account_quota_exhausted(key, &provider_type)
 }
 
 fn local_candidate_failure_should_record_adaptive_rate_limit(
@@ -831,6 +858,55 @@ mod tests {
             projection.status_snapshot["enforcement_active"],
             json!(false)
         );
+    }
+
+    fn opencode_go_quota_key(reset_at: u64) -> StoredProviderCatalogKey {
+        let mut key = sample_adaptive_key();
+        key.status_snapshot = Some(json!({
+            "quota": {
+                "provider_type": "opencode_go",
+                "code": "exhausted",
+                "exhausted": true,
+                "windows": [
+                    {"code": "weekly", "scope": "account", "used_ratio": 1.0, "is_exhausted": true, "reset_at": reset_at}
+                ]
+            }
+        }));
+        key
+    }
+
+    #[test]
+    fn rate_limit_projection_ignores_opencode_go_quota_exhaustion_429() {
+        let reset_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 3600;
+        let key = opencode_go_quota_key(reset_at);
+        assert!(project_local_adaptive_rate_limit(
+            &key,
+            LocalFailoverClassification::RetryUpstreamFailure,
+            429,
+            Some(5),
+            None,
+            1_760_000_000,
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn rate_limit_projection_learns_again_after_opencode_go_window_reset() {
+        let key = opencode_go_quota_key(1_000_000_000);
+        let projection = project_local_adaptive_rate_limit(
+            &key,
+            LocalFailoverClassification::RetryUpstreamFailure,
+            429,
+            Some(5),
+            None,
+            1_760_000_000,
+        )
+        .expect("an elapsed quota window must not suppress RPM learning");
+        assert_rpm_projection(&projection);
     }
 
     #[test]
