@@ -63,11 +63,14 @@ class Client:
         return response['result']
 
 
-def issue_create(client, title, visibility='private', admin=False):
-    return client.request('POST', '/api/admin/feedback' if admin else '/api/feedback', {
+def issue_create(client, title, visibility='public', admin=False):
+    body = {
         'title': title, 'description': 'Synthetic acceptance, no production information.',
-        'category': 'bug', 'visibility': visibility, 'client_request_id': str(uuid.uuid4()),
-    }, statuses=(200, 201))['issue']
+        'category': 'bug', 'client_request_id': str(uuid.uuid4()),
+    }
+    if visibility:
+        body['visibility'] = visibility
+    return client.request('POST', '/api/admin/feedback' if admin else '/api/feedback', body, statuses=(200, 201))['issue']
 
 
 def command(client, issue, action, admin=False, statuses=(200,), **fields):
@@ -108,9 +111,12 @@ def main():
     check(True, 'server-side delegated role boundaries and administrator protection')
 
     owner, other = clients['user'], clients['other']
-    private = issue_create(owner, 'Private visibility acceptance')
-    other.request('GET', '/api/feedback/' + private['id'], statuses=(403, 404))
-    public = issue_create(owner, 'Public lifecycle acceptance', 'public')
+    owner.request('POST', '/api/feedback', {
+        'title': 'Private visibility refusal acceptance',
+        'description': 'Synthetic acceptance, no production information.',
+        'category': 'bug', 'visibility': 'private', 'client_request_id': str(uuid.uuid4()),
+    }, statuses=(400,))
+    public = issue_create(owner, 'Public lifecycle acceptance')
     public_id = public['id']
     other.request('GET', '/api/feedback/' + public_id)
     Client().request('GET', '/api/feedback/' + public_id, statuses=(401, 403))
@@ -122,11 +128,9 @@ def main():
     public = first['issue']
     other.request('POST', path, {**payload, 'client_request_id': str(uuid.uuid4())}, statuses=(409,))
     private_marker = 'private-' + uuid.uuid4().hex
-    public = command(admin, public, 'reply', admin=True, content=private_marker, visibility='private')['issue']
+    command(admin, public, 'reply', admin=True, content=private_marker, visibility='private', statuses=(400,))
     visible = other.request('GET', '/api/feedback/' + public_id)
-    check(private_marker not in json.dumps(visible), 'private administrator reply hidden from public viewers')
-    visible_owner = owner.request('GET', '/api/feedback/' + public_id)
-    check(private_marker in json.dumps(visible_owner), 'private reply remains visible to issue owner')
+    check(private_marker not in json.dumps(visible), 'a refused private reply is never published')
     command(owner, public, 'set_status', status='closed', statuses=(403,))
     command(other, public, 'set_status', status='resolved', comment='Cannot resolve another issue', statuses=(403,))
     command(owner, public, 'set_status', status='resolved', statuses=(400,))
