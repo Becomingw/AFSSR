@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   base64UrlEncodeUtf8,
   buildCcSwitchProviderImportUrl,
+  defaultCcSwitchProviderName,
   type CcSwitchTargetApp,
 } from '@/features/api-keys/utils/ccswitchImport'
 
@@ -85,6 +86,7 @@ describe('ccswitchImport', () => {
     )
     expect(decodedUsageScript).toContain('/api/ccswitch/usage')
     expect(decodedUsageScript).toContain('Authorization')
+    expect(decodedUsageScript).toContain('planName: response.plan_name || "Aether Local"')
     expect(config).toEqual({
       env: {
         ANTHROPIC_AUTH_TOKEN: 'sk-user-live-1',
@@ -114,6 +116,20 @@ describe('ccswitchImport', () => {
     expect(config.config).toContain('model = "gpt-5"')
     expect(config.config).toContain('base_url = "https://aether.example.com/v1"')
     expect(config.config).toContain('wire_api = "responses"')
+    expect(config.config).toContain('name = "Aether Local"')
+  })
+
+  it('falls back to Arca when no site name is configured', () => {
+    expect(defaultCcSwitchProviderName()).toBe('Arca')
+    expect(defaultCcSwitchProviderName('   ')).toBe('Arca')
+    const { params, config } = parseImportUrl(buildCcSwitchProviderImportUrl({
+      ...baseInput,
+      siteName: '',
+      targetApp: 'codex',
+    }))
+    expect(params.get('name')).toBe('Arca')
+    expect(config.config).toContain('name = "Arca"')
+    expect(config.config).not.toContain('Aether')
   })
 
   it('accepts explicit Claude slots without a separate default model', () => {

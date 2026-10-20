@@ -2201,7 +2201,7 @@ async fn gateway_handles_admin_system_config_locally_with_bearer_admin_session()
     assert_eq!(response.status(), StatusCode::OK);
     let payload: serde_json::Value = response.json().await.expect("json body should parse");
     assert_eq!(payload["key"], "site_name");
-    assert_eq!(payload["value"], "Aether");
+    assert_eq!(payload["value"], "Arca");
     assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
 
     gateway_handle.abort();

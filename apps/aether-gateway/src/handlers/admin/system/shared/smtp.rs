@@ -228,7 +228,7 @@ async fn resolve_admin_smtp_config(
             .as_ref()
             .and_then(|value| system_config_string(Some(value)))
             .or_else(|| system_config_string(smtp_from_name.as_ref()))
-            .unwrap_or_else(|| "Aether".to_string()),
+            .unwrap_or_else(|| "Arca".to_string()),
     })
 }
 
