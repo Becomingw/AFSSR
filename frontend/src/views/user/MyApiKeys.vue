@@ -926,6 +926,7 @@
 <script setup lang="ts">
 import { getI18nLocale } from '@/i18n'
 import { ref, onMounted, onBeforeUnmount, computed, watch, reactive } from 'vue'
+import { ARCA_NAME } from '@/constants/arcaBrand'
 import { meApi, type ApiKey, type InstallSessionTargetSystem, type InstallTargetCli, type ApiKeyInstallSession } from '@/api/me'
 import Card from '@/components/ui/card.vue'
 import Button from '@/components/ui/button.vue'
@@ -1040,7 +1041,7 @@ const ccSwitchPlainApiKey = ref('')
 const ccSwitchTargetApp = ref<CcSwitchTargetApp>('claude')
 const ccSwitchProviderName = ref('')
 const ccSwitchProviderNameDirty = ref(false)
-const ccSwitchSiteName = ref('Aether')
+const ccSwitchSiteName = ref(ARCA_NAME)
 const ccSwitchModelIds = reactive<Record<CcSwitchModelFieldKey, string>>({
   default: '',
   haiku: '',
@@ -1349,7 +1350,7 @@ async function prepareCcSwitchDialog() {
       meApi.getAvailableModels({ limit: 1000 }),
     ])
     ccSwitchBaseUrl.value = clientConfig.base_url
-    ccSwitchSiteName.value = clientConfig.site_name?.trim() || 'Aether'
+    ccSwitchSiteName.value = clientConfig.site_name?.trim() || ARCA_NAME
     if (!ccSwitchProviderNameDirty.value) {
       ccSwitchProviderName.value = defaultCcSwitchProviderName(ccSwitchSiteName.value)
     }

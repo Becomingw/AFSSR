@@ -61,7 +61,7 @@ describe('useSiteInfo', () => {
     expect(document.title).toBe('Configured Aether')
   })
 
-  it.each(['Aether', 'AFSSR'])('rebrands the legacy %s default without changing custom names', async (name) => {
+  it.each(['Aether', 'AFSSR', 'Arca'])('rebrands the legacy %s default without changing custom names', async (name) => {
     apiClientMocks.get.mockResolvedValue({ data: { site_name: name, site_subtitle: 'AI Gateway' } })
     const { useSiteInfo } = await import('../useSiteInfo')
     const { siteName, siteSubtitle, refreshSiteInfo } = useSiteInfo()

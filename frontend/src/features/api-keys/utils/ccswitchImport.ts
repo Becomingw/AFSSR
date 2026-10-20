@@ -1,3 +1,5 @@
+import { ARCA_NAME } from '@/constants/arcaBrand'
+
 export type CcSwitchTargetApp = 'claude' | 'codex' | 'gemini' | 'grokbuild' | 'opencode' | 'openclaw' | 'hermes' | 'pi'
 
 export interface CcSwitchTargetOption {
@@ -56,7 +58,8 @@ const TARGET_API_FORMAT = {
   pi: 'openai_chat',
 } satisfies Record<CcSwitchTargetApp, string>
 
-const AETHER_USAGE_QUERY_SCRIPT = [
+function buildUsageQueryScript(planName: string): string {
+  return [
   '({',
   '  request: {',
   '    url: "{{baseUrl}}/api/ccswitch/usage",',
@@ -77,7 +80,7 @@ const AETHER_USAGE_QUERY_SCRIPT = [
   '',
   '    return {',
   '      isValid: true,',
-  '      planName: response.plan_name || "Aether",',
+  `      planName: response.plan_name || ${JSON.stringify(planName)},`,
   '      remaining: response.remaining,',
   '      used: response.used,',
   '      total: response.total,',
@@ -87,6 +90,7 @@ const AETHER_USAGE_QUERY_SCRIPT = [
   '  }',
   '})',
 ].join('\n')
+}
 
 export function base64UrlEncodeUtf8(text: string): string {
   const bytes = new TextEncoder().encode(text)
@@ -131,10 +135,10 @@ export function ccSwitchTargetLabel(targetApp: CcSwitchTargetApp): string {
 export function defaultCcSwitchProviderName(
   siteName?: string,
 ): string {
-  return siteName?.trim() || 'Aether'
+  return siteName?.trim() || ARCA_NAME
 }
 
-function buildCodexToml(baseUrl: string, modelId: string): string {
+function buildCodexToml(baseUrl: string, modelId: string, providerName: string): string {
   return [
     'model_provider = "aether"',
     `model = ${quoteTomlString(modelId)}`,
@@ -142,7 +146,7 @@ function buildCodexToml(baseUrl: string, modelId: string): string {
     'disable_response_storage = true',
     '',
     '[model_providers.aether]',
-    'name = "Aether"',
+    `name = ${quoteTomlString(providerName)}`,
     `base_url = ${quoteTomlString(aetherV1BaseUrl(baseUrl))}`,
     'wire_api = "responses"',
     'requires_openai_auth = true',
@@ -164,7 +168,10 @@ function normalizeCcSwitchModelIds(input: BuildCcSwitchProviderImportUrlInput): 
   }
 }
 
-function buildCcSwitchConfig(input: BuildCcSwitchProviderImportUrlInput): Record<string, unknown> | undefined {
+function buildCcSwitchConfig(
+  input: BuildCcSwitchProviderImportUrlInput,
+  providerName: string,
+): Record<string, unknown> | undefined {
   const baseUrl = normalizedBaseUrl(input.baseUrl)
   const modelIds = normalizeCcSwitchModelIds(input)
 
@@ -185,7 +192,7 @@ function buildCcSwitchConfig(input: BuildCcSwitchProviderImportUrlInput): Record
         auth: {
           OPENAI_API_KEY: input.apiKey,
         },
-        config: buildCodexToml(baseUrl, modelIds.default),
+        config: buildCodexToml(baseUrl, modelIds.default, providerName),
       }
     case 'gemini':
       return {
@@ -226,7 +233,7 @@ export function buildCcSwitchProviderImportUrl(input: BuildCcSwitchProviderImpor
     params.set('sonnetModel', modelIds.sonnet)
     params.set('opusModel', modelIds.opus)
   }
-  const config = buildCcSwitchConfig(input)
+  const config = buildCcSwitchConfig(input, providerName)
   if (config) {
     params.set('configFormat', 'json')
     params.set('config', base64UrlEncodeUtf8(JSON.stringify(config)))
@@ -237,7 +244,7 @@ export function buildCcSwitchProviderImportUrl(input: BuildCcSwitchProviderImpor
     params.set('usageEnabled', 'true')
     params.set('usageBaseUrl', normalizedBaseUrl(input.baseUrl))
     params.set('usageAutoInterval', '30')
-    params.set('usageScript', base64UrlEncodeUtf8(AETHER_USAGE_QUERY_SCRIPT))
+    params.set('usageScript', base64UrlEncodeUtf8(buildUsageQueryScript(providerName)))
   }
   if (icon) params.set('icon', icon)
 

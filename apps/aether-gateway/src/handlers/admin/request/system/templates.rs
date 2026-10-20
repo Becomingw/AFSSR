@@ -126,7 +126,7 @@ impl<'a> AdminAppState<'a> {
         let smtp_from_name = self.read_system_config_json_value("smtp_from_name").await?;
         let app_name = system_config_string(email_app_name.as_ref())
             .or_else(|| system_config_string(smtp_from_name.as_ref()))
-            .unwrap_or_else(|| "Aether".to_string());
+            .unwrap_or_else(|| "Arca".to_string());
 
         let mut defaults = BTreeMap::new();
         defaults.insert("app_name".to_string(), app_name);

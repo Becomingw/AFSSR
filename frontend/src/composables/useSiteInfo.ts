@@ -21,7 +21,9 @@ let fetchPromise: Promise<void> | null = null
 function normalizeSiteInfo(data: Partial<SiteInfo> | null | undefined): SiteInfo {
   const name = data?.site_name?.trim()
   const subtitle = data?.site_subtitle?.trim()
-  const legacyDefault = name === 'Aether' || name === 'AFSSR'
+  // Untouched backend defaults (site_name + 'AI Gateway' subtitle) map to the
+  // Arca brand defaults; 'Arca' is the current backend default site_name.
+  const legacyDefault = name === 'Aether' || name === 'AFSSR' || name === ARCA_NAME
   return {
     site_name: !name || legacyDefault ? DEFAULT_SITE_INFO.site_name : name,
     site_subtitle: !subtitle || (legacyDefault && subtitle === 'AI Gateway')

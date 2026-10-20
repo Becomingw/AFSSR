@@ -60,7 +60,7 @@ pub(super) async fn handle_users_me_client_config_get(
         .ok()
         .flatten()
         .and_then(|value| value.as_str().map(ToOwned::to_owned))
-        .unwrap_or_else(|| "Aether".to_string());
+        .unwrap_or_else(|| "Arca".to_string());
 
     Json(json!({
         "base_url": base_url_from_request(headers, request_context, remote_addr),
