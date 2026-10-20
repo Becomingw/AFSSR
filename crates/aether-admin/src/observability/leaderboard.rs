@@ -77,6 +77,10 @@ fn ranked(mut values: Vec<(String, String, f64)>, hide_values: bool, limit: usiz
 }
 
 /// Identity masking happens before serialization, not in the browser.
+///
+/// In the masked (public) view `names` must only contain users who agreed to be
+/// shown by name; everyone else is rendered with an anonymous `成员 NNN` label.
+/// Output ids are always opaque `member-N` codes in the masked view.
 pub fn build_report(
     users: &[StoredUsageLeaderboardSummary],
     models: &[StoredUsageLeaderboardSummary],
@@ -105,7 +109,10 @@ pub fn build_report(
         .enumerate()
         .map(|(i, id)| {
             let label = if masked {
-                format!("成员 {:03}", i + 1)
+                names
+                    .get(id)
+                    .cloned()
+                    .unwrap_or_else(|| format!("成员 {:03}", i + 1))
             } else {
                 names
                     .get(id)
@@ -484,7 +491,7 @@ mod tests {
             &users,
             &[],
             &rows,
-            &BTreeMap::from([("secret-a".into(), "private-name".into())]),
+            &BTreeMap::new(),
             LeaderboardWindow {
                 start_day: 3,
                 end_day: 4,
@@ -524,5 +531,42 @@ mod tests {
             true,
         );
         assert!(small.boards.iter().all(|b| b.items.is_empty()));
+    }
+    #[test]
+    fn masked_view_shows_public_names_but_keeps_ids_opaque() {
+        let users: Vec<_> = ["secret-a", "secret-b", "secret-c"]
+            .iter()
+            .map(|id| StoredUsageLeaderboardSummary {
+                group_key: (*id).into(),
+                legacy_name: None,
+                request_count: 10,
+                total_tokens: 100,
+                total_cost_usd: 1.234,
+            })
+            .collect();
+        // secret-b opted into anonymity, so the caller does not pass its name.
+        let names = BTreeMap::from([
+            ("secret-a".to_string(), "alice".to_string()),
+            ("secret-c".to_string(), "carol".to_string()),
+        ]);
+        let r = build_report(
+            &users,
+            &[],
+            &[],
+            &names,
+            LeaderboardWindow {
+                start_day: 3,
+                end_day: 4,
+                offset_minutes: 0,
+            },
+            true,
+        );
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(!json.contains("secret-"));
+        assert!(!json.contains("1.234"));
+        let mut labels: Vec<_> = r.boards[0].items.iter().map(|e| e.name.clone()).collect();
+        labels.sort();
+        assert_eq!(labels, vec!["alice", "carol", "成员 002"]);
+        assert!(r.boards[0].items.iter().all(|e| e.id.starts_with("member-")));
     }
 }

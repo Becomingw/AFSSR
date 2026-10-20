@@ -89,6 +89,7 @@ fn build_users_me_preferences_payload(
             "usage_alerts": preferences.usage_alerts,
             "announcements": preferences.announcement_notifications,
         },
+        "leaderboard_anonymous": preferences.leaderboard_anonymous,
     });
     if expose_provider_details {
         payload["default_provider"] = json!(preferences.default_provider_name);
@@ -345,6 +346,17 @@ pub(super) async fn handle_users_me_preferences_put(
         };
     if let Some(announcement_notifications) = announcement_notifications {
         preferences.announcement_notifications = announcement_notifications;
+    }
+
+    let leaderboard_anonymous =
+        match parse_users_me_optional_bool_field(payload, "leaderboard_anonymous") {
+            Ok(value) => value,
+            Err(detail) => {
+                return build_auth_error_response(http::StatusCode::BAD_REQUEST, detail, false)
+            }
+        };
+    if let Some(leaderboard_anonymous) = leaderboard_anonymous {
+        preferences.leaderboard_anonymous = leaderboard_anonymous;
     }
 
     match state.write_user_preferences(&preferences).await {

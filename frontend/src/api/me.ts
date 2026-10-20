@@ -40,6 +40,8 @@ export interface UserPreferences {
     usage_alerts?: boolean
     announcements?: boolean
   }
+  /** 在排行榜中匿名显示（默认 false，即显示用户名） */
+  leaderboard_anonymous?: boolean
 }
 
 // 提供商配置接口
