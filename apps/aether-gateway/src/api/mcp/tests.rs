@@ -1836,3 +1836,343 @@ async fn mcp_key_management_accepts_the_legacy_header_name() {
     assert_eq!(legacy.status(), StatusCode::CREATED);
     handle.abort();
 }
+
+#[tokio::test]
+async fn mcp_self_service_keys_expiry_lifecycle_preserves_restrictions() {
+    use aether_data::repository::management_tokens::UpdateManagementTokenRecord;
+    let (state, _, user_id) = fixture("user_admin").await;
+    let headers = session_headers(&state, &user_id).await;
+    let (url, handle) = start(state.clone()).await;
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let endpoint = format!("{url}/api/mcp/keys");
+    let created = client
+        .post(&endpoint)
+        .headers(headers.clone())
+        .json(&json!({"name":"Permanent", "expires_in_days":null,"allowed_ips":["127.0.0.1"]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let created: Value = created.json().await.unwrap();
+    assert_eq!(
+        created["data"].get("expires_at_unix_secs"),
+        Some(&Value::Null)
+    );
+    let id = created["data"]["id"].as_str().unwrap();
+    let raw = created["token"].as_str().unwrap();
+    let target = format!("{endpoint}/{id}");
+    let original = state
+        .get_management_token_with_user(id)
+        .await
+        .unwrap()
+        .unwrap()
+        .token;
+    assert!(original.expires_at_unix_secs.is_none());
+    let before = chrono::Utc::now().timestamp().max(0) as u64;
+    let updated = client
+        .patch(&target)
+        .headers(headers.clone())
+        .json(&json!({"expires_in_days":90}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(updated.status(), StatusCode::OK);
+    assert_eq!(updated.headers()["cache-control"], "no-store");
+    let body: Value = updated.json().await.unwrap();
+    assert!(!body.to_string().contains(raw));
+    let finite = state
+        .get_management_token_with_user(id)
+        .await
+        .unwrap()
+        .unwrap()
+        .token;
+    assert!(finite.expires_at_unix_secs.unwrap() >= before + 90 * 86400);
+    assert_eq!(finite.permissions, original.permissions);
+    assert_eq!(finite.allowed_ips, original.allowed_ips);
+    assert_eq!(finite.name, original.name);
+    assert_eq!(finite.is_active, original.is_active);
+
+    // Expired and disabled keys remain owner-manageable, but renewal never reactivates them.
+    state
+        .update_management_token_for_user(
+            &UpdateManagementTokenRecord {
+                token_id: id.into(),
+                name: None,
+                description: None,
+                clear_description: false,
+                allowed_ips: None,
+                clear_allowed_ips: false,
+                permissions: None,
+                expires_at_unix_secs: Some(1),
+                clear_expires_at: false,
+                is_active: Some(false),
+            },
+            &user_id,
+        )
+        .await
+        .unwrap();
+    let updated = client
+        .patch(&target)
+        .headers(headers.clone())
+        .json(&json!({"expires_in_days":null}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(updated.status(), StatusCode::OK);
+    let renewed = state
+        .get_management_token_with_user(id)
+        .await
+        .unwrap()
+        .unwrap()
+        .token;
+    assert!(renewed.expires_at_unix_secs.is_none());
+    assert!(!renewed.is_active);
+    assert_eq!(
+        post(&client, &url, raw, rpc("tools/list", json!({})))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        client
+            .delete(&target)
+            .headers(headers.clone())
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    assert!(state
+        .get_management_token_with_user(id)
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        client
+            .patch(&target)
+            .headers(headers)
+            .json(&json!({"expires_in_days":30}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    handle.abort();
+}
+
+#[tokio::test]
+async fn mcp_self_service_keys_patch_rejects_invalid_and_noninteractive_requests() {
+    let (state, raw, user_id) = fixture("user_admin").await;
+    let headers = session_headers(&state, &user_id).await;
+    let (url, handle) = start(state).await;
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let target = format!("{url}/api/mcp/keys/mcp-key");
+    for body in [
+        json!({}),
+        json!({"expires_in_days":0}),
+        json!({"expires_in_days":91}),
+        json!({"expires_in_days":null,"permissions":[]}),
+    ] {
+        assert_eq!(
+            client
+                .patch(&target)
+                .headers(headers.clone())
+                .json(&body)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+    let body = json!({"expires_in_days":30});
+    let mut missing = headers.clone();
+    missing.remove("x-arca-mcp-key-management");
+    assert_eq!(
+        client
+            .patch(&target)
+            .headers(missing)
+            .json(&body)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        client
+            .patch(&target)
+            .headers(headers.clone())
+            .header("Origin", "https://attacker.test")
+            .json(&body)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        client
+            .patch(&target)
+            .bearer_auth(raw)
+            .header("x-arca-mcp-key-management", "1")
+            .json(&body)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        client
+            .patch(format!("{url}/api/mcp/keys/missing"))
+            .headers(headers)
+            .json(&body)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    handle.abort();
+}
+
+#[tokio::test]
+async fn mcp_self_service_keys_expired_key_can_be_revoked() {
+    use aether_data::repository::management_tokens::UpdateManagementTokenRecord;
+    let (state, _, user_id) = fixture("user_admin").await;
+    let headers = session_headers(&state, &user_id).await;
+    state
+        .update_management_token_for_user(
+            &UpdateManagementTokenRecord {
+                token_id: "mcp-key".into(),
+                name: None,
+                description: None,
+                clear_description: false,
+                allowed_ips: None,
+                clear_allowed_ips: false,
+                permissions: None,
+                expires_at_unix_secs: Some(1),
+                clear_expires_at: false,
+                is_active: None,
+            },
+            &user_id,
+        )
+        .await
+        .unwrap();
+    let (url, handle) = start(state.clone()).await;
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    assert_eq!(
+        client
+            .delete(format!("{url}/api/mcp/keys/mcp-key"))
+            .headers(headers)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    assert!(state
+        .get_management_token_with_user("mcp-key")
+        .await
+        .unwrap()
+        .is_none());
+    handle.abort();
+}
+
+#[tokio::test]
+async fn mcp_self_service_keys_patch_rejects_foreign_and_non_mcp_keys() {
+    use aether_data::repository::management_tokens::UpdateManagementTokenRecord;
+    let (state, _, user_id) = fixture("user_admin").await;
+    let owner_headers = session_headers(&state, &user_id).await;
+    let other = state
+        .create_local_auth_user_with_settings(
+            Some("mcp-other@example.test".into()),
+            true,
+            "mcp_other_fixture".into(),
+            "not-a-password".into(),
+            "user_admin".into(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let other_headers = session_headers(&state, &other.id).await;
+    let (url, handle) = start(state.clone()).await;
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let target = format!("{url}/api/mcp/keys/mcp-key");
+    let original = state
+        .get_management_token_with_user("mcp-key")
+        .await
+        .unwrap()
+        .unwrap()
+        .token;
+    assert_eq!(
+        client
+            .patch(&target)
+            .headers(other_headers)
+            .json(&json!({"expires_in_days":30}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_FOUND,
+    );
+    assert_eq!(
+        state
+            .get_management_token_with_user("mcp-key")
+            .await
+            .unwrap()
+            .unwrap()
+            .token,
+        original
+    );
+    let renamed = state
+        .update_management_token_for_user(
+            &UpdateManagementTokenRecord {
+                token_id: "mcp-key".into(),
+                name: Some("Ordinary management key".into()),
+                description: None,
+                clear_description: false,
+                allowed_ips: None,
+                clear_allowed_ips: false,
+                permissions: None,
+                expires_at_unix_secs: None,
+                clear_expires_at: false,
+                is_active: None,
+            },
+            &user_id,
+        )
+        .await
+        .unwrap();
+    assert!(matches!(renamed, crate::LocalMutationOutcome::Applied(_)));
+    assert_eq!(
+        client
+            .patch(&target)
+            .headers(owner_headers)
+            .json(&json!({"expires_in_days":30}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_FOUND,
+    );
+    assert_eq!(
+        state
+            .get_management_token_with_user("mcp-key")
+            .await
+            .unwrap()
+            .unwrap()
+            .token
+            .expires_at_unix_secs,
+        original.expires_at_unix_secs
+    );
+    handle.abort();
+}

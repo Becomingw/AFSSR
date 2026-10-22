@@ -2,6 +2,7 @@
 use crate::LocalMutationOutcome;
 use aether_data::repository::management_tokens::{
     CreateManagementTokenRecord, ManagementTokenListQuery, StoredManagementTokenUserSummary,
+    UpdateManagementTokenRecord,
 };
 use axum::{
     body::Bytes,
@@ -19,9 +20,10 @@ use super::failure;
 use crate::{control::GatewayAdminPrincipalContext, AppState};
 
 pub(super) fn mount(router: Router<AppState>) -> Router<AppState> {
-    router
-        .route("/api/mcp/keys", get(list).post(create))
-        .route("/api/mcp/keys/{id}", axum::routing::delete(revoke))
+    router.route("/api/mcp/keys", get(list).post(create)).route(
+        "/api/mcp/keys/{id}",
+        axum::routing::delete(revoke).patch(update),
+    )
 }
 
 fn no_store(value: Value) -> Response {
@@ -183,15 +185,33 @@ struct CreateInput {
     #[serde(default = "default_read_only")]
     read_only: bool,
     #[serde(default = "default_days")]
-    expires_in_days: u64,
+    expires_in_days: Option<u64>,
     allowed_ips: Option<Value>,
     permissions: Option<Vec<String>>,
 }
 fn default_read_only() -> bool {
     true
 }
-fn default_days() -> u64 {
-    30
+fn default_days() -> Option<u64> {
+    Some(30)
+}
+
+fn valid_expiry(days: Option<u64>) -> bool {
+    days.is_none_or(|days| (1..=90).contains(&days))
+}
+
+// deserialize_with without default requires the field, but still permits explicit null.
+fn required_expiry<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<u64>, D::Error> {
+    Option::<u64>::deserialize(deserializer)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpdateInput {
+    #[serde(deserialize_with = "required_expiry")]
+    expires_in_days: Option<u64>,
 }
 
 async fn create(
@@ -212,10 +232,10 @@ async fn create(
         Err(_) => return failure(StatusCode::BAD_REQUEST, "Invalid key configuration"),
     };
     let name = input.name.trim();
-    if name.is_empty() || name.len() > 80 || !(1..=90).contains(&input.expires_in_days) {
+    if name.is_empty() || name.len() > 80 || !valid_expiry(input.expires_in_days) {
         return failure(
             StatusCode::BAD_REQUEST,
-            "Name must be 1-80 bytes; expiry must be 1-90 days",
+            "Name must be 1-80 bytes; expiry must be 1-90 days or null",
         );
     }
     let allowed_ips = match crate::handlers::shared::parse_json_ip_rules(input.allowed_ips.as_ref())
@@ -277,9 +297,9 @@ async fn create(
         description: Some("Agent MCP self-service credential".into()),
         allowed_ips,
         permissions: Some(json!(scopes)),
-        expires_at_unix_secs: Some(
-            chrono::Utc::now().timestamp().max(0) as u64 + input.expires_in_days * 86400,
-        ),
+        expires_at_unix_secs: input
+            .expires_in_days
+            .map(|days| chrono::Utc::now().timestamp().max(0) as u64 + days * 86400),
         is_active: true,
     };
     match state.create_management_token(&record).await {
@@ -293,6 +313,68 @@ async fn create(
             failure(StatusCode::BAD_REQUEST, "Key configuration rejected")
         }
         _ => failure(StatusCode::SERVICE_UNAVAILABLE, "Key creation unavailable"),
+    }
+}
+
+async fn update(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    uri: Uri,
+    body: Bytes,
+) -> Response {
+    let principal = match session(&state, &headers, &uri, true).await {
+        Ok(p) => p,
+        Err(response) => return response,
+    };
+    if body.len() > 16 * 1024 {
+        return failure(StatusCode::PAYLOAD_TOO_LARGE, "Key configuration too large");
+    }
+    let input: UpdateInput = match serde_json::from_slice(&body) {
+        Ok(input) => input,
+        Err(_) => return failure(StatusCode::BAD_REQUEST, "Invalid key configuration"),
+    };
+    let days = input.expires_in_days;
+    if !valid_expiry(days) {
+        return failure(StatusCode::BAD_REQUEST, "Expiry must be 1-90 days or null");
+    }
+    let token = match state.get_management_token_with_user(&id).await {
+        Ok(Some(item))
+            if item.token.user_id == principal.user_id && item.token.name.starts_with("MCP/") =>
+        {
+            item.token
+        }
+        Ok(_) => return failure(StatusCode::NOT_FOUND, "Key not found"),
+        Err(_) => return failure(StatusCode::SERVICE_UNAVAILABLE, "Key storage unavailable"),
+    };
+    // Only expiry changes: do not reactivate disabled keys, rotate their secrets,
+    // or change their scopes and IP allowlist.
+    let record = UpdateManagementTokenRecord {
+        token_id: token.id,
+        name: None,
+        description: None,
+        clear_description: false,
+        allowed_ips: None,
+        clear_allowed_ips: false,
+        permissions: None,
+        expires_at_unix_secs: days
+            .map(|days| chrono::Utc::now().timestamp().max(0) as u64 + days * 86400),
+        clear_expires_at: days.is_none(),
+        is_active: None,
+    };
+    match state
+        .update_management_token_for_user(&record, &principal.user_id)
+        .await
+    {
+        Ok(LocalMutationOutcome::Applied(token)) => {
+            tracing::info!(log_type="audit", event_name="mcp_key_updated", user_id=%principal.user_id, key_id=%token.id, "MCP self-service credential expiry updated");
+            no_store(json!({"data":token}))
+        }
+        Ok(LocalMutationOutcome::NotFound) => failure(StatusCode::NOT_FOUND, "Key not found"),
+        Ok(LocalMutationOutcome::Invalid(_)) => {
+            failure(StatusCode::BAD_REQUEST, "Key configuration rejected")
+        }
+        _ => failure(StatusCode::SERVICE_UNAVAILABLE, "Key update unavailable"),
     }
 }
 
@@ -325,5 +407,46 @@ async fn revoke(
         }
         Ok(false) => failure(StatusCode::NOT_FOUND, "Key not found"),
         Err(_) => failure(StatusCode::SERVICE_UNAVAILABLE, "Key storage unavailable"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn create_expiry_defaults_but_explicit_null_is_permanent() {
+        let default: CreateInput = serde_json::from_value(json!({"name":"test"})).unwrap();
+        assert_eq!(default.expires_in_days, Some(30));
+        let permanent: CreateInput =
+            serde_json::from_value(json!({"name":"test","expires_in_days":null})).unwrap();
+        assert_eq!(permanent.expires_in_days, None);
+    }
+
+    #[test]
+    fn update_requires_explicit_expiry_and_rejects_other_fields() {
+        assert!(serde_json::from_value::<UpdateInput>(json!({})).is_err());
+        assert!(serde_json::from_value::<UpdateInput>(
+            json!({"expires_in_days":30,"is_active":true})
+        )
+        .is_err());
+        for value in [json!(-1), json!(1.5), json!("30")] {
+            assert!(
+                serde_json::from_value::<UpdateInput>(json!({"expires_in_days":value})).is_err()
+            );
+        }
+        let permanent: UpdateInput =
+            serde_json::from_value(json!({"expires_in_days":null})).unwrap();
+        assert_eq!(permanent.expires_in_days, None);
+    }
+
+    #[test]
+    fn finite_expiry_stays_within_existing_bounds() {
+        assert!(valid_expiry(None));
+        assert!(valid_expiry(Some(1)));
+        assert!(valid_expiry(Some(90)));
+        assert!(!valid_expiry(Some(0)));
+        assert!(!valid_expiry(Some(91)));
+        assert!(!valid_expiry(Some(u64::MAX)));
     }
 }
