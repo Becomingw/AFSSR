@@ -8,9 +8,19 @@ agent. No database migration, additional daemon, or upstream model key is needed
 
 Sign in to the console and open **Agent MCP** (`/admin/mcp`). Create a named key
 for the signed-in administrator. The default is read-only, with a 30-day expiry;
-expiry must be 1-90 days. Optional IP/CIDR restrictions apply to every request.
+finite expiry must be 1-90 days, or explicitly choose never expiring. Optional
+IP/CIDR restrictions apply to every request.
 The plaintext is returned once, with `Cache-Control: no-store`, and is never
-persisted in browser storage. Revoke an individual key from this page.
+persisted in browser storage. Renew/change expiry or revoke an individual key
+(including an expired key) from this page. A never-expiring key remains usable
+until revoked or otherwise disabled; prefer finite expiry when possible.
+
+The interactive session API accepts `expires_in_days: null` for no expiry;
+omitting it on POST `/api/mcp/keys` retains the 30-day default. PATCH
+`/api/mcp/keys/{id}` requires that field and measures finite expiry from update
+time. It changes only expiry, not the secret, active status, scopes or IP rules.
+Both mutations require an administrator login session and the existing
+key-management header/origin checks; management tokens cannot renew themselves.
 
 These are management tokens (`ae-...`), not inference keys (`sk-...`). Existing
 management tokens are also supported. A management key can access matching

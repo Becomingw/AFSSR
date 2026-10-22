@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-const client = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), delete: vi.fn() }))
+const client = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), delete: vi.fn(), patch: vi.fn() }))
 vi.mock('../client', () => ({ default: client }))
-import { listMcpKeys, createMcpKey, revokeMcpKey } from '../mcp'
+import { listMcpKeys, createMcpKey, revokeMcpKey, updateMcpKey } from '../mcp'
 
 beforeEach(() => vi.clearAllMocks())
 describe('MCP self-service API', () => {
@@ -19,4 +19,10 @@ describe('MCP self-service API', () => {
     await revokeMcpKey('id/1')
     expect(client.delete).toHaveBeenCalledWith('/api/mcp/keys/id%2F1', { headers: { 'X-Arca-MCP-Key-Management': '1' } })
   })
+})
+
+it('sends explicit null and interactive headers when changing expiry', async () => {
+  client.patch.mockResolvedValue({ data: { data: { id: 'id/1' } } })
+  expect(await updateMcpKey('id/1', { expires_in_days: null })).toEqual({ data: { id: 'id/1' } })
+  expect(client.patch).toHaveBeenCalledWith('/api/mcp/keys/id%2F1', { expires_in_days: null }, { headers: { 'X-Arca-MCP-Key-Management': '1' } })
 })

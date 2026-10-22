@@ -5,7 +5,7 @@ export interface McpKey {
   name: string
   token_prefix?: string
   is_active: boolean
-  expires_at_unix_secs?: number
+  expires_at_unix_secs?: number | null
   last_used_at_unix_secs?: number
   permissions?: string[]
   allowed_ips?: unknown
@@ -23,7 +23,7 @@ export interface McpKeysResponse {
 export interface CreateMcpKey {
   name: string
   read_only: boolean
-  expires_in_days: number
+  expires_in_days?: number | null
   allowed_ips?: string[]
   permissions?: string[]
 }
@@ -36,4 +36,8 @@ export async function createMcpKey(input: CreateMcpKey): Promise<{ token: string
 }
 export async function revokeMcpKey(id: string): Promise<void> {
   await apiClient.delete(`/api/mcp/keys/${encodeURIComponent(id)}`, { headers })
+}
+
+export async function updateMcpKey(id: string, input: { expires_in_days: number | null }): Promise<{ data: McpKey }> {
+  return (await apiClient.patch<{ data: McpKey }>(`/api/mcp/keys/${encodeURIComponent(id)}`, input, { headers })).data
 }
