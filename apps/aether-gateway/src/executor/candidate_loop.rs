@@ -1619,17 +1619,30 @@ async fn release_plan_usage_policy_cost_best_effort(
     {
         return;
     }
-    if let Err(error) = crate::plan_usage_policy::release_plan_usage_policy_cost(
+    let reservation_token = transfer_tracker
+        .usage_policy_reservation_token()
+        .expect("a reserved plan cost always has a reservation token");
+    let mut result = crate::plan_usage_policy::release_plan_usage_policy_cost(
         state,
         decision,
         plan,
-        transfer_tracker
-            .usage_policy_reservation_token()
-            .expect("a reserved plan cost always has a reservation token"),
+        reservation_token,
         current_unix_ms() / 1_000,
     )
-    .await
-    {
+    .await;
+    if result.is_err() {
+        // A transient DB failure would otherwise leave the reservation holding budget until its
+        // TTL expires, so retry once before giving up.
+        result = crate::plan_usage_policy::release_plan_usage_policy_cost(
+            state,
+            decision,
+            plan,
+            reservation_token,
+            current_unix_ms() / 1_000,
+        )
+        .await;
+    }
+    if let Err(error) = result {
         warn!(
             event_name = "plan_usage_cost_reservation_release_failed",
             log_type = "ops",
