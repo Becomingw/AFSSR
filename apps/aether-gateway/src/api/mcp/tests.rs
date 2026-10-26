@@ -16,6 +16,111 @@ fn benefit_preview_accepts_a_read_only_post_body_without_write_confirmation() {
     p.management_token_permissions = Some(vec!["admin:users:write".into()]);
     assert!(!execution::authorized(op, &op.sample_uri(), &p));
 }
+#[test]
+fn mcp_request_body_follows_http_method_not_read_only_impact() {
+    let body = Bytes::from_static(br#"{"user_id":"fixture"}"#);
+    for method in [Method::GET, Method::HEAD] {
+        assert!(execution::body_for_method(&method, &body).is_none());
+    }
+    for method in [Method::POST, Method::PUT, Method::PATCH, Method::DELETE] {
+        assert_eq!(execution::body_for_method(&method, &body), Some(&body));
+    }
+}
+
+#[derive(Debug, Default)]
+struct PreviewLedger;
+
+#[async_trait::async_trait]
+impl aether_data_contracts::repository::account_usage::AccountUsageRepository for PreviewLedger {
+    async fn read_windows(
+        &self,
+        _: &str,
+        _: u64,
+        windows: &[aether_data_contracts::repository::account_usage::AccountUsageWindow],
+    ) -> Result<
+        Vec<aether_data_contracts::repository::account_usage::AccountUsageAmounts>,
+        aether_data_contracts::DataLayerError,
+    > {
+        Ok(windows
+            .iter()
+            .map(
+                |_| aether_data_contracts::repository::account_usage::AccountUsageAmounts {
+                    finalized_units: 0,
+                    reserved_units: 0,
+                },
+            )
+            .collect())
+    }
+}
+
+#[tokio::test]
+async fn mcp_benefits_preview_dispatches_body_without_confirmation_or_policy_mutation() {
+    let original = json!({"default":{"weekly_budget_usd":20}});
+    let state = AppState::new().unwrap().with_data_state_for_tests(
+        crate::data::GatewayDataState::disabled()
+            .with_account_usage_for_tests(Arc::new(PreviewLedger))
+            .with_system_config_values_for_tests([(
+                crate::internal_access::CONFIG_KEY.into(),
+                original.clone(),
+            )]),
+    );
+    let user = state
+        .create_local_auth_user_with_settings(
+            None,
+            true,
+            "mcp-preview-member".into(),
+            "synthetic-hash".into(),
+            "user".into(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let handler = McpHandler {
+        state,
+        runtime: Arc::new(Runtime::default()),
+    };
+    let identity = RequestIdentity {
+        hash: VerifiedManagementTokenHash::new("synthetic-preview-dispatch".into()),
+        remote: "127.0.0.1:12345".parse().unwrap(),
+    };
+    let op = catalog::find("arca_benefits_preview").unwrap();
+    let mut p = principal("audit_admin");
+    p.management_token_permissions = Some(vec!["admin:users:read".into()]);
+    let args =
+        json!({"body":{"user_id":user.id,"config":{"users":{user.id.clone():{"unlimited":true}}}}});
+    for _ in 0..2 {
+        let result = handler
+            .execute(op, args.as_object().unwrap().clone(), &identity, &p)
+            .await;
+        assert_eq!(result["status"], 200, "{result}");
+        assert_eq!(result["executed"], false);
+        assert_eq!(result["data"]["user"]["id"], user.id);
+        assert_eq!(result["data"]["proposed"]["allocation"]["unlimited"], true);
+        assert_eq!(result["data"]["current"]["allocation"]["unlimited"], false);
+        assert_eq!(result["data"]["changed"], true);
+        assert!(result.get("confirmation").is_none());
+        assert!(handler.runtime.tickets.lock().unwrap().is_empty());
+    }
+    assert_eq!(
+        handler
+            .state
+            .read_system_config_json_value_strong(crate::internal_access::CONFIG_KEY)
+            .await
+            .unwrap(),
+        Some(original)
+    );
+    p.management_token_permissions = Some(vec!["admin:users:write".into()]);
+    let denied = handler
+        .execute(op, args.as_object().unwrap().clone(), &identity, &p)
+        .await;
+    assert_eq!(denied["status"], 403);
+    assert!(handler.runtime.tickets.lock().unwrap().is_empty());
+}
+
 use crate::control::GatewayPublicRequestContext;
 use aether_data::repository::management_tokens::{
     InMemoryManagementTokenRepository, StoredManagementToken, StoredManagementTokenUserSummary,
