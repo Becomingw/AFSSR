@@ -240,6 +240,56 @@ function getCodexQuotaText(quota: QuotaStatusSnapshot): string | null {
   return normalizeText(quota.label)
 }
 
+const OPENCODE_GO_QUOTA_WINDOWS = [
+  ['5h', '5H'],
+  ['weekly', '周'],
+  ['monthly', '月'],
+] as const
+
+function formatRecoveryDuration(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.floor(totalSeconds))
+  const days = Math.floor(seconds / 86400)
+  const hours = Math.floor((seconds % 86400) / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  if (days > 0) return hours > 0 ? `${days}d ${hours}h` : `${days}d`
+  if (hours > 0) return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`
+  return `${Math.max(minutes, 1)}m`
+}
+
+function getQuotaWindowSecondsUntilReset(window: QuotaWindowSnapshot): number | null {
+  const resetAt = finiteNumber(window.reset_at)
+  if (resetAt != null && resetAt > 0) {
+    const resetAtSeconds = resetAt > 1e12 ? resetAt / 1000 : resetAt
+    return Math.max(0, resetAtSeconds - Date.now() / 1000)
+  }
+  const resetSeconds = finiteNumber(window.reset_seconds)
+  return resetSeconds != null && resetSeconds >= 0 ? resetSeconds : null
+}
+
+function getOpenCodeGoQuotaText(quota: QuotaStatusSnapshot): string | null {
+  const code = normalizeText(quota.code)?.toLowerCase()
+  if (code === 'no_subscription' || code === 'auth_invalid') {
+    return normalizeText(quota.label)
+  }
+
+  const parts: string[] = []
+  const exhaustedParts: string[] = []
+  for (const [windowCode, label] of OPENCODE_GO_QUOTA_WINDOWS) {
+    const window = getQuotaWindow(quota, windowCode)
+    const remainingPercent = getQuotaWindowRemainingPercent(window)
+    if (!window || remainingPercent == null) continue
+    parts.push(`${label}剩余 ${formatPercent(remainingPercent)}`)
+    if (window.is_exhausted === true) {
+      const seconds = getQuotaWindowSecondsUntilReset(window)
+      exhaustedParts.push(seconds != null
+        ? `${label}额度耗尽，${formatRecoveryDuration(seconds)} 后恢复`
+        : `${label}额度耗尽`)
+    }
+  }
+  if (parts.length === 0) return normalizeText(quota.label)
+  return [...exhaustedParts, ...parts].join(' | ')
+}
+
 function getKiroQuotaText(quota: QuotaStatusSnapshot): string | null {
   const code = normalizeText(quota.code)?.toLowerCase()
   if (code === 'banned') {
@@ -450,6 +500,8 @@ export function getQuotaSnapshotFallbackText(
   switch (providerType) {
     case 'codex':
       return getCodexQuotaText(quota)
+    case 'opencode_go':
+      return getOpenCodeGoQuotaText(quota)
     case 'kiro':
       return getKiroQuotaText(quota)
     case 'grok':

@@ -1694,6 +1694,7 @@ watch(showAdaptiveHotPoolMetricsButton, (enabled) => {
 
 const showAccountQuotaColumn = computed(() => {
   return selectedProviderType.value === 'codex'
+    || selectedProviderType.value === 'opencode_go'
     || selectedProviderType.value === 'gemini_cli'
     || selectedProviderType.value === 'kiro'
     || selectedProviderType.value === 'windsurf'
@@ -3731,6 +3732,12 @@ function getGeminiCliQuotaWindowLabel(window: QuotaWindowSnapshot): string {
   return label || code || '模型'
 }
 
+const OPENCODE_GO_QUOTA_WINDOW_PRESENTATION: Record<string, { label: string, sortOrder: number }> = {
+  '5h': { label: '5H', sortOrder: 0 },
+  weekly: { label: '周', sortOrder: 1 },
+  monthly: { label: '月', sortOrder: 2 },
+}
+
 function buildQuotaProgressItemsFromSnapshot(key: PoolKeyDetail): QuotaProgressItem[] {
   const quota = getQuotaSnapshot(key)
   if (!quota) return []
@@ -3751,6 +3758,29 @@ function buildQuotaProgressItemsFromSnapshot(key: PoolKeyDetail): QuotaProgressI
           remainingPercent,
           resetAtSeconds: normalizeUnixSeconds(window.reset_at ?? quotaResetAtSeconds ?? null),
           resetSeconds: normalizeRemainingSeconds(window.reset_seconds ?? quotaResetSeconds ?? null),
+          updatedAtSeconds: getQuotaSnapshotUpdatedAtSeconds(quota),
+          allowDynamicReset: true,
+        }
+      })
+      .filter((item): item is QuotaProgressItem => item != null)
+  }
+
+  if (providerType === 'opencode_go') {
+    const quotaResetAtSeconds = getQuotaSnapshotResetAtSeconds(quota)
+    const quotaResetSeconds = getQuotaSnapshotResetSeconds(quota)
+    return (quota.windows ?? [])
+      .map((window): QuotaProgressItem | null => {
+        const presentation = OPENCODE_GO_QUOTA_WINDOW_PRESENTATION[String(window.code || '').trim().toLowerCase()]
+        const remainingPercent = getQuotaWindowRemainingPercent(window)
+        if (!presentation || remainingPercent == null) return null
+        // reset_at 为空表示该窗口尚未使用：不回退到整体 reset_at，避免显示错误的倒计时
+        const unused = window.reset_at == null && window.reset_seconds == null
+        return {
+          label: presentation.label,
+          sortOrder: presentation.sortOrder,
+          remainingPercent,
+          resetAtSeconds: unused ? null : normalizeUnixSeconds(window.reset_at ?? quotaResetAtSeconds ?? null),
+          resetSeconds: unused ? null : normalizeRemainingSeconds(window.reset_seconds ?? quotaResetSeconds ?? null),
           updatedAtSeconds: getQuotaSnapshotUpdatedAtSeconds(quota),
           allowDynamicReset: true,
         }
