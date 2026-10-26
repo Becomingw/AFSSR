@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
 import { describe, expect, it } from 'vitest'
 import { createApp, defineComponent, h } from 'vue'
 
@@ -166,5 +169,41 @@ describe('pool key display panels', () => {
 
     app.unmount()
     root.remove()
+  })
+
+  it('renders OpenCode Go 5H/周/月 rows with exhausted and unused windows', () => {
+    const Probe = defineComponent({
+      setup() {
+        return () => h(PoolKeyQuotaPanel, {
+          items: [
+            { label: '5H', remainingPercent: 100, resetText: '未使用', meterText: '100.0%', barClass: 'bg-green-500', meterClass: 'text-green-600' },
+            { label: '周', remainingPercent: 60, resetText: '1d 后重置', meterText: '60.0%', barClass: 'bg-green-500', meterClass: 'text-green-600' },
+            { label: '月', remainingPercent: 0, resetText: '3d 2h 后重置', meterText: '0.0%', barClass: 'bg-red-500', meterClass: 'text-red-600' },
+          ],
+        })
+      },
+    })
+
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+    const app = createApp(Probe)
+    app.use(createI18n())
+    app.mount(root)
+
+    const meters = Array.from(root.querySelectorAll('[data-testid="pool-quota-meter-text"]')).map(node => node.textContent)
+    expect(meters).toEqual(['100.0%', '60.0%', '0.0%'])
+    expect(root.textContent).toContain('3d 2h 后重置')
+
+    app.unmount()
+    root.remove()
+  })
+
+  it('wires OpenCode Go snapshots into the pool quota column like Codex', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/views/admin/PoolManagement.vue'), 'utf8')
+    expect(source).toContain("selectedProviderType.value === 'opencode_go'")
+    expect(source).toContain("if (providerType === 'opencode_go') {")
+    expect(source).toMatch(/'5h': \{ label: '5H', sortOrder: 0 \}/)
+    expect(source).toMatch(/weekly: \{ label: '周', sortOrder: 1 \}/)
+    expect(source).toMatch(/monthly: \{ label: '月', sortOrder: 2 \}/)
   })
 })

@@ -359,4 +359,65 @@ describe('providerKeyQuota', () => {
       },
     }, 'windsurf')).toBe('可用模型 3 个')
   })
+
+  it('summarizes OpenCode Go quota windows like Codex', () => {
+    expect(getQuotaDisplayText({
+      status_snapshot: {
+        oauth: { code: 'valid' },
+        account: { code: 'ok', blocked: false },
+        quota: {
+          version: 2,
+          provider_type: 'opencode_go',
+          code: 'ok',
+          exhausted: false,
+          windows: [
+            { code: 'monthly', label: '月', used_ratio: 0.3, remaining_ratio: 0.7, reset_at: 4102444800, is_exhausted: false },
+            { code: '5h', label: '5小时', used_ratio: 0.25, remaining_ratio: 0.75, reset_at: 4102444800, is_exhausted: false },
+            // 未使用的窗口：reset_at 为空，视为满额
+            { code: 'weekly', label: '周', used_ratio: 0, remaining_ratio: 1, reset_at: null, reset_seconds: null, is_exhausted: false },
+          ],
+        },
+      },
+    }, 'opencode_go')).toBe('5H剩余 75.0% | 周剩余 100.0% | 月剩余 70.0%')
+  })
+
+  it('shows the exhausted OpenCode Go window and time to recovery', () => {
+    const now = Math.floor(Date.now() / 1000)
+    expect(getQuotaDisplayText({
+      status_snapshot: {
+        oauth: { code: 'valid' },
+        account: { code: 'ok', blocked: false },
+        quota: {
+          version: 2,
+          provider_type: 'opencode_go',
+          code: 'exhausted',
+          label: '额度耗尽',
+          exhausted: true,
+          reset_at: now + 3 * 86400 + 2 * 3600 + 30,
+          windows: [
+            { code: '5h', label: '5小时', used_ratio: 0, remaining_ratio: 1, reset_at: null, is_exhausted: false },
+            { code: 'weekly', label: '周', used_ratio: 0.4, remaining_ratio: 0.6, reset_at: now + 86400, is_exhausted: false },
+            { code: 'monthly', label: '月', used_ratio: 1, remaining_ratio: 0, reset_at: now + 3 * 86400 + 2 * 3600 + 30, is_exhausted: true },
+          ],
+        },
+      },
+    })).toBe('月额度耗尽，3d 2h 后恢复 | 5H剩余 100.0% | 周剩余 60.0% | 月剩余 0.0%')
+  })
+
+  it('falls back to the OpenCode Go status label without windows', () => {
+    expect(getQuotaDisplayText({
+      status_snapshot: {
+        oauth: { code: 'valid' },
+        account: { code: 'ok', blocked: false },
+        quota: {
+          version: 2,
+          provider_type: 'opencode_go',
+          code: 'no_subscription',
+          label: '无 Go 订阅',
+          exhausted: true,
+          windows: [],
+        },
+      },
+    })).toBe('无 Go 订阅')
+  })
 })
