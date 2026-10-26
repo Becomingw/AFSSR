@@ -11,6 +11,7 @@
 - `ARCA_GATEWAY_DATA_POSTGRES_MIN_CONNECTIONS` / `ARCA_GATEWAY_DATA_POSTGRES_MAX_CONNECTIONS`：数据库连接池手动覆盖值；未配置时 PostgreSQL 按每核 `4` 条自动推导，总池范围为 `32-100`。该预算按进程计算，多实例部署应按数据库连接上限显式分配
 - `ARCA_GATEWAY_MAX_IN_FLIGHT_REQUESTS`：单实例请求并发上限；未配置时按 CPU 自动推导（基础范围 `512-65536`），低文件描述符预算时会进一步下调
 - `ARCA_GATEWAY_REQUEST_BODY_BUFFER_BUDGET_MB`：单实例同时读取和解压请求体的加权内存预算，默认 `256MB`
+- `ARCA_GATEWAY_USAGE_POLICY_DEFAULT_OUTPUT_TOKENS`：客户端未传 `max_tokens` 时，套餐用量策略预占成本所用的输出 token 数，默认 `4096`，并受模型配置的 `output_limit` 约束；超出部分在请求结束后按实际用量结算。显式传入 `max_tokens` 时仍按其值预占
 - `ARCA_GATEWAY_REQUEST_BODY_READ_TIMEOUT_MS`：可选的请求体完整读取超时；默认或显式设为 `0` 时关闭，非零值限制在 `1000-600000ms`
 - `ARCA_MAX_REQUEST_BODY_MB`：单请求解压后请求体上限，默认 `256MB`；显式设为 `0` 表示不再收紧默认值，但仍受 `256MB` 安全硬上限约束
 - `ARCA_MAX_INTERNAL_BUFFERED_BODY_MB`：heartbeat、管理探测等内部整包响应体上限，默认 `64MB`；显式设为 `0` 表示不再收紧默认值，但仍受 `256MB` 安全硬上限约束

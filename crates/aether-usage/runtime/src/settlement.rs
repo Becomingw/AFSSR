@@ -60,19 +60,28 @@ pub async fn reconcile_usage_policy_cost_for_event(
     let Some(reservation_token) = event_usage_policy_reservation_token(event) else {
         return Ok(());
     };
-    let actual_cost_units = if terminal_state == UsagePolicyCostReservationState::Finalized {
-        let actual_cost_usd = event.data.actual_total_cost_usd.ok_or_else(|| {
-            InvalidInput(
-                "completed usage event with a plan reservation token is missing actual cost"
-                    .to_string(),
-            )
-        })?;
-        nonnegative_usd_to_usage_policy_cost_units(finite_cost(actual_cost_usd)?.max(0.0))
-            .ok_or_else(|| {
-                InvalidInput("usage policy settlement cost exceeds the supported range".to_string())
-            })?
+    let (terminal_state, actual_cost_units) = if terminal_state
+        == UsagePolicyCostReservationState::Finalized
+    {
+        match finalized_actual_cost_units(event.data.actual_total_cost_usd) {
+            Ok(units) => (terminal_state, units),
+            Err(reason) => {
+                // A missing or invalid actual cost must not leave the reservation stuck in
+                // `reserved` (it would hold sub-pool budget until the TTL expires). Release it
+                // with zero cost and surface the billing anomaly instead.
+                tracing::warn!(
+                    event_name = "usage_policy_cost_reservation_released_without_actual_cost",
+                    log_type = "ops",
+                    request_id = %event.request_id,
+                    usage_event_type = ?event.event_type,
+                    reason,
+                    "terminal usage event with a plan reservation token has no usable actual cost; releasing reservation"
+                );
+                (UsagePolicyCostReservationState::Released, 0)
+            }
+        }
     } else {
-        0
+        (terminal_state, 0)
     };
 
     let _ = writer
@@ -86,6 +95,15 @@ pub async fn reconcile_usage_policy_cost_for_event(
         })
         .await?;
     Ok(())
+}
+
+fn finalized_actual_cost_units(actual_total_cost_usd: Option<f64>) -> Result<u64, &'static str> {
+    let actual_cost_usd = actual_total_cost_usd.ok_or("missing actual cost")?;
+    if !actual_cost_usd.is_finite() {
+        return Err("non-finite actual cost");
+    }
+    nonnegative_usd_to_usage_policy_cost_units(actual_cost_usd.max(0.0))
+        .ok_or("actual cost exceeds the supported range")
 }
 
 pub async fn settle_usage_if_needed(
@@ -597,7 +615,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn event_reconciliation_requires_enriched_cost_and_preserves_server_token() {
+    async fn event_reconciliation_preserves_server_token_and_actual_cost() {
         let writer = TestSettlementWriter {
             has_writer: true,
             ..Default::default()
@@ -615,16 +633,6 @@ mod tests {
                 ..UsageEventData::default()
             },
         );
-        assert!(matches!(
-            reconcile_usage_policy_cost_for_event(&writer, &event).await,
-            Err(aether_data_contracts::DataLayerError::InvalidInput(_))
-        ));
-        assert!(writer
-            .reconciliations
-            .lock()
-            .expect("reconciliations lock")
-            .is_empty());
-
         event.data.actual_total_cost_usd = Some(1.25);
         reconcile_usage_policy_cost_for_event(&writer, &event)
             .await
@@ -634,6 +642,78 @@ mod tests {
         assert_eq!(reconciliations[0].request_id, "shared-trace");
         assert_eq!(reconciliations[0].reservation_token, "server-token");
         assert_eq!(reconciliations[0].actual_cost_units, 125_000_000);
+        assert_eq!(
+            reconciliations[0].terminal_state,
+            UsagePolicyCostReservationState::Finalized
+        );
+    }
+
+    #[tokio::test]
+    async fn completed_event_without_usable_actual_cost_releases_reservation() {
+        for actual_cost in [None, Some(f64::NAN), Some(f64::INFINITY)] {
+            let writer = TestSettlementWriter {
+                has_writer: true,
+                ..Default::default()
+            };
+            let mut event = UsageEvent::new(
+                UsageEventType::Completed,
+                "missing-cost",
+                UsageEventData {
+                    user_id: Some("user-1".to_string()),
+                    provider_name: "openai".to_string(),
+                    model: "gpt-5".to_string(),
+                    request_metadata: Some(json!({
+                        "plan_usage_reservation_token": "server-token"
+                    })),
+                    ..UsageEventData::default()
+                },
+            );
+            event.data.actual_total_cost_usd = actual_cost;
+            reconcile_usage_policy_cost_for_event(&writer, &event)
+                .await
+                .expect("missing actual cost must not block reservation release");
+            let reconciliations = writer.reconciliations.lock().expect("reconciliations lock");
+            assert_eq!(reconciliations.len(), 1);
+            assert_eq!(reconciliations[0].reservation_token, "server-token");
+            assert_eq!(reconciliations[0].actual_cost_units, 0);
+            assert_eq!(
+                reconciliations[0].terminal_state,
+                UsagePolicyCostReservationState::Released
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_and_cancelled_events_release_reservation_with_zero_cost() {
+        for event_type in [UsageEventType::Failed, UsageEventType::Cancelled] {
+            let writer = TestSettlementWriter {
+                has_writer: true,
+                ..Default::default()
+            };
+            let event = UsageEvent::new(
+                event_type,
+                "failed-request",
+                UsageEventData {
+                    user_id: Some("user-1".to_string()),
+                    provider_name: "openai".to_string(),
+                    model: "gpt-5".to_string(),
+                    request_metadata: Some(json!({
+                        "plan_usage_reservation_token": "server-token"
+                    })),
+                    ..UsageEventData::default()
+                },
+            );
+            reconcile_usage_policy_cost_for_event(&writer, &event)
+                .await
+                .expect("failed or cancelled event should release");
+            let reconciliations = writer.reconciliations.lock().expect("reconciliations lock");
+            assert_eq!(reconciliations.len(), 1);
+            assert_eq!(reconciliations[0].actual_cost_units, 0);
+            assert_eq!(
+                reconciliations[0].terminal_state,
+                UsagePolicyCostReservationState::Released
+            );
+        }
     }
 
     #[tokio::test]

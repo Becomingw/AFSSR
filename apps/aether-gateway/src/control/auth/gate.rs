@@ -300,9 +300,10 @@ async fn estimate_execution_plan_cost_upper_bound_usd_inner(
         .await?;
         return Ok(None);
     };
-    let max_output_tokens = max_output_tokens_from_request(body_json)
-        .map(|value| value.saturating_mul(output_choice_count_upper_bound(&api_format, body_json)))
-        .and_then(|value| i64::try_from(value).ok());
+    let requested_output_tokens = max_output_tokens_from_request(body_json)
+        .map(|value| value.saturating_mul(output_choice_count_upper_bound(&api_format, body_json)));
+    let output_cap_requested = requested_output_tokens.is_some();
+    let max_output_tokens = requested_output_tokens.and_then(|value| i64::try_from(value).ok());
     let cache_ttl_minutes =
         aether_data_contracts::repository::usage::resolve_provider_cache_ttl_minutes(
             Some(&api_format),
@@ -320,6 +321,7 @@ async fn estimate_execution_plan_cost_upper_bound_usd_inner(
         &api_format,
         input_tokens,
         max_output_tokens,
+        output_cap_requested,
         requested_processing_tier.as_deref(),
         cache_ttl_minutes,
     );
@@ -335,6 +337,7 @@ async fn estimate_execution_plan_cost_upper_bound_usd_inner(
             task_type,
             input_tokens,
             max_output_tokens,
+            output_cap_requested,
             requested_processing_tier.as_deref(),
             cache_ttl_minutes,
         )
@@ -353,6 +356,7 @@ async fn estimate_execution_plan_cost_upper_bound_usd_inner(
                 task_type,
                 input_tokens,
                 max_output_tokens,
+                output_cap_requested,
                 requested_processing_tier.as_deref(),
                 cache_ttl_minutes,
             )
@@ -371,6 +375,7 @@ async fn calculate_execution_plan_cost_upper_bound(
     task_type: &str,
     input_tokens: i64,
     max_output_tokens: Option<i64>,
+    output_cap_requested: bool,
     requested_processing_tier: Option<&str>,
     cache_ttl_minutes: Option<i64>,
 ) -> Result<Option<f64>, GatewayError> {
@@ -379,9 +384,19 @@ async fn calculate_execution_plan_cost_upper_bound(
     let Some(context) = context else {
         return Ok(None);
     };
-    // Codex sends no output cap. The model's own configured output limit is a real bound on what
-    // it can produce, so use it instead of refusing every request from a cost-limited account.
-    let max_output_tokens = max_output_tokens.or_else(|| configured_output_limit(&context));
+    // Clients such as Codex send no output cap. Reserving the model's full configured output limit
+    // (often 128k tokens) makes the reservation dwarf the real cost, so — like new-api's
+    // pre-consume — reserve only a small default output budget, capped by the configured limit.
+    // Any overrun beyond the default is settled from the actual usage afterwards.
+    // An explicit cap that does not fit keeps the previous fallback to the configured limit.
+    let max_output_tokens = if output_cap_requested {
+        max_output_tokens.or_else(|| configured_output_limit(&context))
+    } else {
+        Some(default_reserved_output_tokens(
+            configured_output_limit(&context),
+            usage_policy_default_output_tokens_from_env(),
+        ))
+    };
     let mut estimate =
         aether_billing::BillingAuthorizationEstimateInput::new(task_type, input_tokens);
     estimate.api_format = Some(api_format.to_string());
@@ -394,6 +409,38 @@ async fn calculate_execution_plan_cost_upper_bound(
             &estimate,
         )
         .map_err(|err| GatewayError::Internal(err.to_string()))
+}
+
+const USAGE_POLICY_DEFAULT_OUTPUT_TOKENS_ENV: &str =
+    "AETHER_GATEWAY_USAGE_POLICY_DEFAULT_OUTPUT_TOKENS";
+const DEFAULT_USAGE_POLICY_DEFAULT_OUTPUT_TOKENS: i64 = 4096;
+
+fn usage_policy_default_output_tokens_from_env() -> i64 {
+    static VALUE: std::sync::OnceLock<i64> = std::sync::OnceLock::new();
+    *VALUE.get_or_init(|| {
+        parse_usage_policy_default_output_tokens(
+            std::env::var(USAGE_POLICY_DEFAULT_OUTPUT_TOKENS_ENV)
+                .ok()
+                .as_deref(),
+        )
+    })
+}
+
+fn parse_usage_policy_default_output_tokens(raw: Option<&str>) -> i64 {
+    raw.and_then(|value| value.trim().parse::<i64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_USAGE_POLICY_DEFAULT_OUTPUT_TOKENS)
+}
+
+/// Output tokens to reserve when the client did not send an explicit output cap.
+fn default_reserved_output_tokens(
+    configured_output_limit: Option<i64>,
+    default_tokens: i64,
+) -> i64 {
+    match configured_output_limit {
+        Some(limit) if limit > 0 => default_tokens.min(limit),
+        _ => default_tokens,
+    }
 }
 
 fn configured_output_limit(
@@ -557,6 +604,7 @@ fn execution_plan_cost_upper_bound_cache_key(
     api_format: &str,
     input_tokens: i64,
     max_output_tokens: Option<i64>,
+    output_cap_requested: bool,
     requested_processing_tier: Option<&str>,
     cache_ttl_minutes: Option<i64>,
 ) -> String {
@@ -568,9 +616,11 @@ fn execution_plan_cost_upper_bound_cache_key(
         global_model_name.unwrap_or(""),
         api_format,
         input_tokens,
-        max_output_tokens
-            .map(|value| value.to_string())
-            .unwrap_or_else(|| "none".to_string()),
+        match (max_output_tokens, output_cap_requested) {
+            (Some(value), _) => value.to_string(),
+            (None, true) => "unrepresentable".to_string(),
+            (None, false) => "none".to_string(),
+        },
         requested_processing_tier.unwrap_or("standard"),
         cache_ttl_minutes
             .map(|value| value.to_string())
@@ -1263,9 +1313,10 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        available_balance_capacity_usd, execution_plan_balance_capacity_rejection,
-        execution_plan_cost_upper_bound_cache_key, max_output_tokens_from_request,
-        openai_request_input_is_self_contained, output_choice_count_upper_bound,
+        available_balance_capacity_usd, default_reserved_output_tokens,
+        execution_plan_balance_capacity_rejection, execution_plan_cost_upper_bound_cache_key,
+        max_output_tokens_from_request, openai_request_input_is_self_contained,
+        output_choice_count_upper_bound, parse_usage_policy_default_output_tokens,
         request_input_is_self_contained, request_model_local_rejection, GatewayLocalAuthRejection,
     };
     use crate::control::{GatewayControlAuthContext, GatewayControlDecision};
@@ -2644,6 +2695,7 @@ mod tests {
             "openai:responses",
             100,
             Some(10),
+            true,
             Some("priority"),
             None,
         );
@@ -2654,6 +2706,7 @@ mod tests {
             "openai:responses",
             100,
             Some(10),
+            true,
             Some("priority"),
             Some(30),
         );
@@ -3154,5 +3207,25 @@ mod tests {
                 usize::from(expected_status == 429)
             );
         }
+    }
+
+    #[test]
+    fn omitted_max_tokens_reserves_small_default_capped_by_output_limit() {
+        assert_eq!(default_reserved_output_tokens(Some(128_000), 4096), 4096);
+        assert_eq!(default_reserved_output_tokens(Some(1024), 4096), 1024);
+        assert_eq!(default_reserved_output_tokens(None, 4096), 4096);
+        assert_eq!(default_reserved_output_tokens(Some(0), 4096), 4096);
+    }
+
+    #[test]
+    fn usage_policy_default_output_tokens_parses_env_with_fallback() {
+        assert_eq!(parse_usage_policy_default_output_tokens(None), 4096);
+        assert_eq!(
+            parse_usage_policy_default_output_tokens(Some(" 8192 ")),
+            8192
+        );
+        assert_eq!(parse_usage_policy_default_output_tokens(Some("0")), 4096);
+        assert_eq!(parse_usage_policy_default_output_tokens(Some("-5")), 4096);
+        assert_eq!(parse_usage_policy_default_output_tokens(Some("abc")), 4096);
     }
 }
