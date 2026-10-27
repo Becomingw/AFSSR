@@ -83,3 +83,13 @@ Current pure entrypoints:
 - `convert_response_pure`
 
 `convert_request` and `convert_response` remain legacy wrappers for existing callers that still need mapped model/report-context behavior during migration.
+
+## Custom Tool Input Text
+
+OpenAI Chat custom tool calls and Responses `custom_tool_call` history/output carry
+opaque string input, not JSON function arguments. Canonical conversion must preserve
+the string value exactly, including JSON-looking text (`null`, quoted strings,
+objects/arrays), whitespace, and empty input. Ordinary function-call arguments
+continue to use JSON parsing. OpenCode Go custom-to-function wrapping must likewise
+roundtrip the original string and namespace. This is a text-fidelity contract; it
+does not establish the cause of a provider HTTP 400 or alter diagnostic retention.
