@@ -280,11 +280,16 @@ async fn reserve_plan_usage_policy_cost_with_policy(
     let estimated_cost_usd =
         crate::control::estimate_execution_plan_cost_upper_bound_usd(state, plan, report_context)
             .await?
-            .ok_or_else(|| {
-                GatewayError::Internal(
-            "a hard plan cost limit is active, but this request cost cannot be estimated safely"
-                .to_string(),
-        )
+            .ok_or_else(|| GatewayError::Client {
+                // Defensive fallback only: known media, stored files and hosted tools are all
+                // estimable. Remaining cases (server-side conversation state, unknown request
+                // shapes) are a client error, never a hidden 500.
+                status: http::StatusCode::UNPROCESSABLE_ENTITY,
+                message: "a hard plan cost limit is active, but this request's cost cannot be \
+                    estimated in advance (e.g. it references server-side conversation state such \
+                    as previous_response_id); resend the full input or use a key without a hard \
+                    cost limit"
+                    .to_string(),
             })?;
     let reserved_cost_units = nonnegative_usd_to_usage_policy_cost_units(estimated_cost_usd)
         .ok_or_else(|| {

@@ -288,6 +288,7 @@ async fn estimate_execution_plan_cost_upper_bound_usd_inner(
         .await?;
         return Ok(None);
     }
+    let hosted_tools_surcharge_usd = hosted_tools_policy_cost_usd(body_json);
     let input_tokens = request_input_token_count_policy_bound(&api_format, body_json);
     let Ok(input_tokens) = i64::try_from(input_tokens) else {
         validate_execution_plan_pricing_for_unavailable_estimate(
@@ -325,6 +326,39 @@ async fn estimate_execution_plan_cost_upper_bound_usd_inner(
         requested_processing_tier.as_deref(),
         cache_ttl_minutes,
     );
+    let estimate = estimate_execution_plan_token_cost_upper_bound(
+        state,
+        plan,
+        model_id,
+        global_model_name,
+        &api_format,
+        task_type,
+        input_tokens,
+        max_output_tokens,
+        output_cap_requested,
+        requested_processing_tier.as_deref(),
+        cache_ttl_minutes,
+        cache_key,
+    )
+    .await?;
+    Ok(estimate.map(|cost| cost + hosted_tools_surcharge_usd))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn estimate_execution_plan_token_cost_upper_bound(
+    state: &AppState,
+    plan: &aether_contracts::ExecutionPlan,
+    model_id: Option<&str>,
+    global_model_name: Option<&str>,
+    api_format: &str,
+    task_type: &str,
+    input_tokens: i64,
+    max_output_tokens: Option<i64>,
+    output_cap_requested: bool,
+    requested_processing_tier: Option<&str>,
+    cache_ttl_minutes: Option<i64>,
+    cache_key: String,
+) -> Result<Option<f64>, GatewayError> {
     let ttl = state.frontdoor_runtime_guards.auth_capacity_cache_ttl;
     if ttl.is_zero() {
         let _permit = state.acquire_auth_snapshot_load_gate().await?;
@@ -333,12 +367,12 @@ async fn estimate_execution_plan_cost_upper_bound_usd_inner(
             plan,
             model_id,
             global_model_name,
-            &api_format,
+            api_format,
             task_type,
             input_tokens,
             max_output_tokens,
             output_cap_requested,
-            requested_processing_tier.as_deref(),
+            requested_processing_tier,
             cache_ttl_minutes,
         )
         .await;
@@ -352,12 +386,12 @@ async fn estimate_execution_plan_cost_upper_bound_usd_inner(
                 plan,
                 model_id,
                 global_model_name,
-                &api_format,
+                api_format,
                 task_type,
                 input_tokens,
                 max_output_tokens,
                 output_cap_requested,
-                requested_processing_tier.as_deref(),
+                requested_processing_tier,
                 cache_ttl_minutes,
             )
             .await
@@ -409,6 +443,105 @@ async fn calculate_execution_plan_cost_upper_bound(
             &estimate,
         )
         .map_err(|err| GatewayError::Internal(err.to_string()))
+}
+
+// Hosted tools are billed per call/session and their results are injected server-side, so the
+// call count is unknown up front. Reserve a small fixed amount per distinct hosted tool on top of
+// the token estimate; the actual usage is settled afterwards. Basis: new-api's per-call tool prices
+// (setting/operation_setting/tools.go: web_search $10 / 1K calls, file_search $2.5 / 1K,
+// google_search $14 / 1K, image_generation $150 / 1K). new-api has no price for code
+// interpreter, MCP or computer use, so they share a small default like the output default.
+const USAGE_POLICY_HOSTED_TOOL_COST_DEFAULTS: [(&str, f64); 3] = [
+    // 5 calls at $10 / 1K.
+    ("AETHER_GATEWAY_USAGE_POLICY_WEB_SEARCH_COST_USD", 0.05),
+    // 1 call at $150 / 1K.
+    (
+        "AETHER_GATEWAY_USAGE_POLICY_IMAGE_GENERATION_COST_USD",
+        0.15,
+    ),
+    // Any other hosted tool: code_interpreter, mcp, computer_use, file_search, ...
+    ("AETHER_GATEWAY_USAGE_POLICY_HOSTED_TOOL_COST_USD", 0.05),
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HostedToolKind {
+    WebSearch,
+    ImageGeneration,
+    Other,
+}
+
+fn hosted_tool_policy_cost_usd(kind: HostedToolKind) -> f64 {
+    static VALUES: std::sync::OnceLock<[f64; 3]> = std::sync::OnceLock::new();
+    let values = VALUES.get_or_init(|| {
+        USAGE_POLICY_HOSTED_TOOL_COST_DEFAULTS.map(|(env, default)| {
+            parse_usage_policy_tool_cost_usd(std::env::var(env).ok().as_deref(), default)
+        })
+    });
+    values[kind as usize]
+}
+
+fn parse_usage_policy_tool_cost_usd(raw: Option<&str>, default: f64) -> f64 {
+    raw.and_then(|value| value.trim().parse::<f64>().ok())
+        .filter(|value| value.is_finite() && *value >= 0.0)
+        .unwrap_or(default)
+}
+
+fn hosted_tool_kind(name: &str) -> HostedToolKind {
+    let name = name.trim().to_ascii_lowercase();
+    if name.starts_with("web_search") || name.starts_with("google_search") || name == "googlesearch"
+    {
+        HostedToolKind::WebSearch
+    } else if name.starts_with("image_generation") {
+        HostedToolKind::ImageGeneration
+    } else {
+        HostedToolKind::Other
+    }
+}
+
+/// Distinct hosted tools in OpenAI (Responses tool types, Chat `web_search_options`),
+/// Claude (non-custom tool types, `mcp_servers`) and Gemini (non-function tool keys).
+fn request_hosted_tools(body: &serde_json::Value) -> Vec<HostedToolKind> {
+    let mut kinds = Vec::new();
+    if body.get("web_search_options").is_some() {
+        kinds.push(HostedToolKind::WebSearch);
+    }
+    if body.get("mcp_servers").is_some_and(has_reference_value) {
+        kinds.push(HostedToolKind::Other);
+    }
+    for tool in body
+        .get("tools")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_object)
+    {
+        match tool.get("type").and_then(serde_json::Value::as_str) {
+            Some("function" | "custom") => {}
+            Some(kind) => kinds.push(hosted_tool_kind(kind)),
+            // Untyped named tools are Claude custom tools; untyped unnamed ones are Gemini tools.
+            None if tool.contains_key("name") => {}
+            None => kinds.extend(
+                tool.keys()
+                    .filter(|key| {
+                        !matches!(
+                            key.as_str(),
+                            "functionDeclarations" | "function_declarations"
+                        )
+                    })
+                    .map(|key| hosted_tool_kind(key)),
+            ),
+        }
+    }
+    kinds.sort_by_key(|kind| *kind as usize);
+    kinds.dedup();
+    kinds
+}
+
+fn hosted_tools_policy_cost_usd(body: &serde_json::Value) -> f64 {
+    request_hosted_tools(body)
+        .into_iter()
+        .map(hosted_tool_policy_cost_usd)
+        .sum()
 }
 
 const USAGE_POLICY_DEFAULT_OUTPUT_TOKENS_ENV: &str =
@@ -824,6 +957,12 @@ fn gemini_request_input_is_self_contained(value: &serde_json::Value) -> bool {
                             "function_response",
                             "inlineData",
                             "inline_data",
+                            "fileData",
+                            "file_data",
+                            "executableCode",
+                            "executable_code",
+                            "codeExecutionResult",
+                            "code_execution_result",
                         ],
                     )
                 })
@@ -850,7 +989,8 @@ fn gemini_request_input_is_self_contained(value: &serde_json::Value) -> bool {
         tools.as_array().is_some_and(|tools| {
             tools.iter().all(|tool| {
                 tool.as_object().is_some_and(|tool| {
-                    only_fields(tool, &["functionDeclarations", "function_declarations"])
+                    // Hosted tools are reserved as a fixed surcharge (`hosted_tools_policy_cost_usd`).
+                    !tool.is_empty()
                 })
             })
         })
@@ -884,6 +1024,8 @@ fn claude_request_input_is_self_contained(value: &serde_json::Value) -> bool {
             "thinking",
             "output_config",
             "context_management",
+            "mcp_servers",
+            "container",
         ],
     ) || nonempty_string(body.get("model")).is_none()
         || body
@@ -937,6 +1079,18 @@ fn claude_request_input_is_self_contained(value: &serde_json::Value) -> bool {
             let Some(tool) = definition.as_object() else {
                 return false;
             };
+            if tool
+                .get("type")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|kind| kind != "custom")
+            {
+                // Server/hosted tools are reserved as a fixed surcharge
+                // (see `hosted_tools_policy_cost_usd`); their config is literal input.
+                if nonempty_string(tool.get("name")).is_none() {
+                    return false;
+                }
+                continue;
+            }
             if !only_fields(
                 tool,
                 &[
@@ -1041,6 +1195,35 @@ fn claude_request_input_is_self_contained(value: &serde_json::Value) -> bool {
                         return false;
                     }
                 }
+                // Media is reserved at a fixed per-part bound (see `media_part_policy_tokens`).
+                Some("image") if role == Some("user") => {
+                    if !only_fields(block, &["type", "source", "cache_control"])
+                        || !claude_media_source_is_bounded(block.get("source"))
+                    {
+                        return false;
+                    }
+                }
+                Some("document") if role == Some("user") => {
+                    if !only_fields(
+                        block,
+                        &[
+                            "type",
+                            "source",
+                            "title",
+                            "context",
+                            "citations",
+                            "cache_control",
+                        ],
+                    ) || !claude_media_source_is_bounded(block.get("source"))
+                    {
+                        return false;
+                    }
+                }
+                // Replayed hosted tool history is literal content.
+                Some(kind)
+                    if role == Some("assistant")
+                        && (matches!(kind, "server_tool_use" | "mcp_tool_use")
+                            || kind.ends_with("_tool_result")) => {}
                 Some("tool_result") if role == Some("user") => {
                     if !only_fields(
                         block,
@@ -1065,6 +1248,30 @@ fn claude_request_input_is_self_contained(value: &serde_json::Value) -> bool {
         }
     }
     true
+}
+
+fn claude_media_source_is_bounded(source: Option<&serde_json::Value>) -> bool {
+    let Some(source) = source.and_then(serde_json::Value::as_object) else {
+        return false;
+    };
+    match source.get("type").and_then(serde_json::Value::as_str) {
+        Some("base64") => {
+            only_fields(source, &["type", "media_type", "data"])
+                && source.get("data").is_some_and(serde_json::Value::is_string)
+        }
+        Some("url") => {
+            only_fields(source, &["type", "url"]) && nonempty_string(source.get("url")).is_some()
+        }
+        Some("text") => {
+            only_fields(source, &["type", "media_type", "data"])
+                && source.get("data").is_some_and(serde_json::Value::is_string)
+        }
+        Some("file") => {
+            only_fields(source, &["type", "file_id"])
+                && nonempty_string(source.get("file_id")).is_some()
+        }
+        _ => false,
+    }
 }
 
 fn openai_request_input_is_self_contained(api_format: &str, value: &serde_json::Value) -> bool {
@@ -1099,32 +1306,16 @@ fn contains_indirect_request_input(value: &serde_json::Value) -> bool {
                 .get("type")
                 .and_then(serde_json::Value::as_str)
                 .map(|value| value.trim().to_ascii_lowercase());
-            if item_type.as_deref().is_some_and(|item_type| {
-                matches!(
-                    item_type,
-                    "url"
-                        | "item_reference"
-                        | "input_file"
-                        | "input_image"
-                        | "input_audio"
-                        | "image_url"
-                        | "file_search"
-                        | "web_search"
-                        | "web_search_preview"
-                        | "computer_use"
-                        | "computer_use_preview"
-                        | "code_interpreter"
-                        | "mcp"
-                        | "image_generation"
-                )
-            }) {
-                return true;
-            }
-            if ["file_id", "file_uri", "fileUri", "vector_store_ids"]
-                .iter()
-                .any(|key| object.get(*key).is_some_and(has_reference_value))
+            if item_type
+                .as_deref()
+                .is_some_and(|item_type| matches!(item_type, "url" | "item_reference"))
             {
                 return true;
+            }
+            // Media parts and stored-file references (`file_id`, `file_uri`) are reserved at a
+            // fixed per-part bound; hosted tools (incl. `vector_store_ids`) at a fixed surcharge.
+            if media_part_kind(object).is_some() {
+                return false;
             }
             object.values().any(contains_indirect_request_input)
         }
@@ -1149,7 +1340,51 @@ fn json_token_count_upper_bound(value: &serde_json::Value) -> u64 {
 }
 
 fn request_input_token_count_policy_bound(api_format: &str, value: &serde_json::Value) -> u64 {
-    let bytes = json_token_count_upper_bound(value);
+    request_input_token_count_policy_bound_with(api_format, value, media_part_policy_tokens)
+}
+
+fn request_input_token_count_policy_bound_with(
+    api_format: &str,
+    value: &serde_json::Value,
+    media_tokens: impl Fn(MediaPartKind) -> u64,
+) -> u64 {
+    // Media payloads (base64 data URIs, URLs) are replaced by a fixed per-part bound instead
+    // of being counted byte-for-byte, so a single image neither costs millions of tokens nor
+    // is dropped from the estimate.
+    let mut media_bytes = 0_u64;
+    let mut media_reserved = 0_u64;
+    let mut pending = vec![value];
+    while let Some(value) = pending.pop() {
+        match value {
+            serde_json::Value::Object(object) => {
+                if let Some(kind) = media_part_kind(object) {
+                    media_bytes = media_bytes.saturating_add(json_token_count_upper_bound(value));
+                    media_reserved = media_reserved.saturating_add(media_tokens(kind));
+                    continue;
+                }
+                for (key, child) in object {
+                    if matches!(
+                        key.as_str(),
+                        "inlineData" | "inline_data" | "fileData" | "file_data"
+                    ) {
+                        if let Some(inline) = child.as_object() {
+                            media_bytes =
+                                media_bytes.saturating_add(json_token_count_upper_bound(child));
+                            media_reserved = media_reserved
+                                .saturating_add(media_tokens(gemini_inline_media_kind(inline)));
+                            continue;
+                        }
+                    }
+                    pending.push(child);
+                }
+            }
+            serde_json::Value::Array(items) => pending.extend(items),
+            _ => {}
+        }
+    }
+    let bytes = json_token_count_upper_bound(value)
+        .saturating_sub(media_bytes)
+        .saturating_add(media_reserved);
     if api_format != "claude:messages" {
         return bytes;
     }
@@ -1168,6 +1403,89 @@ fn request_input_token_count_policy_bound(api_format: &str, value: &serde_json::
         .and_then(serde_json::Value::as_array)
         .map_or(0, |tools| u64::try_from(tools.len()).unwrap_or(u64::MAX));
     claude_framed_input_policy_bound(bytes, nodes, tools)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MediaPartKind {
+    Image,
+    Audio,
+    Video,
+    File,
+}
+
+/// OpenAI Chat/Responses and Claude media parts. Gemini `inlineData` is handled by the caller.
+fn media_part_kind(object: &serde_json::Map<String, serde_json::Value>) -> Option<MediaPartKind> {
+    match object.get("type").and_then(serde_json::Value::as_str)? {
+        "image_url" | "input_image" | "image" => Some(MediaPartKind::Image),
+        "input_audio" => Some(MediaPartKind::Audio),
+        "input_file" | "file" | "document" => Some(MediaPartKind::File),
+        _ => None,
+    }
+}
+
+fn gemini_inline_media_kind(object: &serde_json::Map<String, serde_json::Value>) -> MediaPartKind {
+    let mime = ["mimeType", "mime_type"]
+        .iter()
+        .find_map(|key| object.get(*key).and_then(serde_json::Value::as_str))
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    if mime.starts_with("image/") {
+        MediaPartKind::Image
+    } else if mime.starts_with("audio/") {
+        MediaPartKind::Audio
+    } else if mime.starts_with("video/") {
+        MediaPartKind::Video
+    } else {
+        MediaPartKind::File
+    }
+}
+
+// Per-part input token reservations, modelled on new-api's pre-consume
+// (service/token_counter.go CountRequestToken, tokenkit/image.go ImageTokens).
+// Images: new-api's largest fixed per-image results are Gemini's 12+1 tiles (3354) and
+// Claude's 1568px tier (3140); 4096 covers both and the classic OpenAI 85+170/tile rule.
+// Audio 256, video 8192 and file 4096 are new-api's fixed per-file values.
+const USAGE_POLICY_MEDIA_TOKEN_DEFAULTS: [(&str, MediaPartKind, u64); 4] = [
+    (
+        "AETHER_GATEWAY_USAGE_POLICY_IMAGE_TOKENS",
+        MediaPartKind::Image,
+        4096,
+    ),
+    (
+        "AETHER_GATEWAY_USAGE_POLICY_AUDIO_TOKENS",
+        MediaPartKind::Audio,
+        256,
+    ),
+    (
+        "AETHER_GATEWAY_USAGE_POLICY_VIDEO_TOKENS",
+        MediaPartKind::Video,
+        8192,
+    ),
+    (
+        "AETHER_GATEWAY_USAGE_POLICY_FILE_TOKENS",
+        MediaPartKind::File,
+        4096,
+    ),
+];
+
+fn media_part_policy_tokens(kind: MediaPartKind) -> u64 {
+    static VALUES: std::sync::OnceLock<[u64; 4]> = std::sync::OnceLock::new();
+    let values = VALUES.get_or_init(|| {
+        USAGE_POLICY_MEDIA_TOKEN_DEFAULTS.map(|(env, _, default)| {
+            parse_usage_policy_media_tokens(std::env::var(env).ok().as_deref(), default)
+        })
+    });
+    USAGE_POLICY_MEDIA_TOKEN_DEFAULTS
+        .iter()
+        .position(|(_, k, _)| *k == kind)
+        .map_or(0, |index| values[index])
+}
+
+fn parse_usage_policy_media_tokens(raw: Option<&str>, default: u64) -> u64 {
+    raw.and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(default)
 }
 
 fn claude_framed_input_policy_bound(bytes: u64, nodes: u64, tools: u64) -> u64 {
@@ -2542,15 +2860,22 @@ mod tests {
             .as_array_mut()
             .unwrap()
             .push(json!({"googleSearch": {}}));
-        assert!(!super::request_input_is_self_contained(
+        // Hosted tools and stored files are estimable at fixed bounds.
+        assert!(super::request_input_is_self_contained(
             "gemini:generate_content",
             &hosted
         ));
         let mut file = body;
         file["contents"][0]["parts"][0] = json!({"fileData": {"fileUri": "gs://x"}});
-        assert!(!super::request_input_is_self_contained(
+        assert!(super::request_input_is_self_contained(
             "gemini:generate_content",
             &file
+        ));
+        let mut unknown = file;
+        unknown["contents"][0]["parts"][0] = json!({"futurePart": {}});
+        assert!(!super::request_input_is_self_contained(
+            "gemini:generate_content",
+            &unknown
         ));
     }
 
@@ -2578,18 +2903,22 @@ mod tests {
             "claude:messages",
             &body
         ));
-        // Server tools and unknown extensions still fail closed.
+        // Server tools are estimable with a fixed surcharge; unknown extensions fail closed.
         let mut server_tool = body.clone();
         server_tool["tools"]
             .as_array_mut()
             .unwrap()
             .push(json!({"type": "web_search_20250305", "name": "web_search"}));
-        assert!(!super::request_input_is_self_contained(
+        assert!(super::request_input_is_self_contained(
             "claude:messages",
             &server_tool
         ));
+        assert_eq!(
+            super::request_hosted_tools(&server_tool),
+            vec![super::HostedToolKind::WebSearch]
+        );
         let mut unknown = body.clone();
-        unknown["container"] = json!("abc");
+        unknown["future_extension"] = json!("abc");
         assert!(!super::request_input_is_self_contained(
             "claude:messages",
             &unknown
@@ -2733,11 +3062,7 @@ mod tests {
             json!({"input": "hello", "conversation": "conv_123"}),
             json!({"prompt": {"id": "pmpt_123", "variables": {}}}),
             json!({"input": [{"type": "item_reference", "id": "item_123"}]}),
-            json!({"input": [{"type": "input_file", "file_id": "file_123"}]}),
-            json!({"input": [{"type": "input_image", "image_url": "https://example.test/a.png"}]}),
             json!({"input": [{"type": "url", "url": "https://example.test/document"}]}),
-            json!({"input": [{"file_uri": "https://example.test/file"}]}),
-            json!({"input": "search", "tools": [{"type": "file_search", "vector_store_ids": ["vs_123"]}]}),
         ] {
             assert!(!openai_request_input_is_self_contained(
                 "openai:responses",
@@ -2748,6 +3073,190 @@ mod tests {
             "claude:messages",
             &self_contained
         ));
+    }
+
+    #[test]
+    fn multimodal_parts_get_a_fixed_bounded_cost_estimate() {
+        let tokens = |kind: super::MediaPartKind| match kind {
+            super::MediaPartKind::Image => 1000,
+            super::MediaPartKind::Audio => 200,
+            super::MediaPartKind::Video => 3000,
+            super::MediaPartKind::File => 500,
+        };
+        let big = format!("data:image/png;base64,{}", "A".repeat(200_000));
+        let text_only =
+            json!({"messages": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]});
+        let base =
+            super::request_input_token_count_policy_bound_with("openai:chat", &text_only, tokens);
+
+        // OpenAI Chat Completions: data URI and URL images, inline audio, inline file.
+        let chat = json!({"messages": [{"role": "user", "content": [
+            {"type": "text", "text": "hi"},
+            {"type": "image_url", "image_url": {"url": big, "detail": "high"}},
+            {"type": "image_url", "image_url": {"url": "https://example.test/a.png"}},
+            {"type": "input_audio", "input_audio": {"data": "UklGRg==", "format": "wav"}},
+            {"type": "file", "file": {"filename": "a.pdf", "file_data": "data:application/pdf;base64,JVBERi0="}}]}]});
+        assert!(request_input_is_self_contained("openai:chat", &chat));
+        let bound =
+            super::request_input_token_count_policy_bound_with("openai:chat", &chat, tokens);
+        assert!(bound >= base + 1000 * 2 + 200 + 500, "{bound}");
+        assert!(bound < 20_000, "base64 bytes must not be counted: {bound}");
+
+        // OpenAI Responses: input_image by URL, data URI or stored image id; inline file.
+        let responses = json!({"input": [{"role": "user", "content": [
+            {"type": "input_text", "text": "hi"},
+            {"type": "input_image", "image_url": big},
+            {"type": "input_image", "file_id": "file_img"},
+            {"type": "input_file", "filename": "a.pdf", "file_data": "JVBERi0="},
+            {"type": "input_file", "file_url": "https://example.test/a.pdf"}]}]});
+        assert!(request_input_is_self_contained(
+            "openai:responses",
+            &responses
+        ));
+        assert!(
+            super::request_input_token_count_policy_bound_with(
+                "openai:responses",
+                &responses,
+                tokens
+            ) < 20_000
+        );
+        // Claude: base64/url/file images and base64/url/text documents in user turns.
+        let mut claude = claude_text_request();
+        claude["messages"][0]["content"] = json!([
+            {"type": "text", "text": "hi"},
+            {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "A".repeat(200_000)}},
+            {"type": "image", "source": {"type": "url", "url": "https://example.test/a.png"}},
+            {"type": "image", "source": {"type": "file", "file_id": "file_1"}},
+            {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": "JVBERi0="}, "title": "a"}]);
+        assert!(request_input_is_self_contained("claude:messages", &claude));
+        assert!(
+            super::request_input_token_count_policy_bound_with("claude:messages", &claude, tokens)
+                < 30_000
+        );
+        let mut system_image = claude_text_request();
+        system_image["system"] = json!([{"type": "image", "source": {"type": "url", "url": "https://example.test/a.png"}}]);
+        assert!(!request_input_is_self_contained(
+            "claude:messages",
+            &system_image
+        ));
+
+        // Gemini inlineData is bounded by mime type, not by base64 length.
+        let gemini = json!({"contents": [{"role": "user", "parts": [
+            {"text": "hi"},
+            {"inlineData": {"mimeType": "image/png", "data": "A".repeat(200_000)}},
+            {"inline_data": {"mime_type": "audio/wav", "data": "UklGRg=="}},
+            {"inlineData": {"mimeType": "video/mp4", "data": "AAAA"}}]}]});
+        assert!(request_input_is_self_contained(
+            "gemini:generate_content",
+            &gemini
+        ));
+        let bound = super::request_input_token_count_policy_bound_with(
+            "gemini:generate_content",
+            &gemini,
+            tokens,
+        );
+        assert!((1000 + 200 + 3000..20_000).contains(&bound), "{bound}");
+    }
+
+    #[test]
+    fn hosted_tools_and_stored_files_get_a_fixed_cost_estimate() {
+        use super::HostedToolKind::{ImageGeneration, Other, WebSearch};
+        for (tool, kind) in [
+            (json!({"type": "web_search"}), WebSearch),
+            (json!({"type": "web_search_preview"}), WebSearch),
+            (json!({"type": "image_generation"}), ImageGeneration),
+            (
+                json!({"type": "code_interpreter", "container": {"type": "auto"}}),
+                Other,
+            ),
+            (
+                json!({"type": "mcp", "server_label": "x", "server_url": "https://example.test"}),
+                Other,
+            ),
+            (json!({"type": "computer_use_preview"}), Other),
+            (
+                json!({"type": "file_search", "vector_store_ids": ["vs_1"]}),
+                Other,
+            ),
+        ] {
+            let body = json!({"input": "x", "tools": [tool, {"type": "function", "name": "f"}]});
+            assert!(request_input_is_self_contained("openai:responses", &body));
+            assert_eq!(super::request_hosted_tools(&body), vec![kind]);
+        }
+        let chat = json!({"messages": [{"role": "user", "content": [
+            {"type": "text", "text": "news"},
+            {"type": "file", "file": {"file_id": "file_1"}}]}], "web_search_options": {}});
+        assert!(request_input_is_self_contained("openai:chat", &chat));
+        assert_eq!(super::request_hosted_tools(&chat), vec![WebSearch]);
+        let stored = json!({"input": [{"role": "user", "content": [
+            {"type": "input_file", "file_id": "file_123"}]}]});
+        assert!(request_input_is_self_contained("openai:responses", &stored));
+        assert!(super::request_hosted_tools(&stored).is_empty());
+        // Conversation state stays unestimable (422 fallback).
+        for body in [
+            json!({"input": "continue", "previous_response_id": "resp_1"}),
+            json!({"input": [{"type": "item_reference", "id": "item_1"}]}),
+        ] {
+            assert!(!request_input_is_self_contained("openai:responses", &body));
+        }
+
+        let gemini = json!({"contents": [{"role": "user", "parts": [
+            {"text": "news"},
+            {"fileData": {"mimeType": "video/mp4", "fileUri": "gs://x"}}]}],
+            "tools": [{"googleSearch": {}}, {"codeExecution": {}}, {"functionDeclarations": []}]});
+        assert!(request_input_is_self_contained(
+            "gemini:generate_content",
+            &gemini
+        ));
+        assert_eq!(super::request_hosted_tools(&gemini), vec![WebSearch, Other]);
+
+        let mut claude = claude_text_request();
+        claude["tools"] = json!([
+            {"type": "web_search_20250305", "name": "web_search", "max_uses": 3},
+            {"type": "code_execution_20250522", "name": "code_execution"}]);
+        claude["mcp_servers"] =
+            json!([{"type": "url", "url": "https://example.test", "name": "m"}]);
+        claude["messages"] = json!([
+            {"role": "user", "content": [
+                {"type": "text", "text": "news"},
+                {"type": "document", "source": {"type": "file", "file_id": "file_1"}}]},
+            {"role": "assistant", "content": [
+                {"type": "server_tool_use", "id": "srvtoolu_1", "name": "web_search", "input": {"query": "news"}},
+                {"type": "web_search_tool_result", "tool_use_id": "srvtoolu_1", "content": []}]},
+            {"role": "user", "content": "more"}]);
+        assert!(request_input_is_self_contained("claude:messages", &claude));
+        assert_eq!(super::request_hosted_tools(&claude), vec![WebSearch, Other]);
+        assert!(super::request_hosted_tools(&claude_text_request()).is_empty());
+
+        assert_eq!(super::parse_usage_policy_tool_cost_usd(None, 0.05), 0.05);
+        assert_eq!(
+            super::parse_usage_policy_tool_cost_usd(Some(" 0.2 "), 0.05),
+            0.2
+        );
+        assert_eq!(
+            super::parse_usage_policy_tool_cost_usd(Some("0"), 0.05),
+            0.0
+        );
+        assert_eq!(
+            super::parse_usage_policy_tool_cost_usd(Some("-1"), 0.05),
+            0.05
+        );
+        assert_eq!(
+            super::parse_usage_policy_tool_cost_usd(Some("NaN"), 0.15),
+            0.15
+        );
+    }
+
+    #[test]
+    fn usage_policy_media_tokens_parse_with_safe_fallback() {
+        assert_eq!(super::parse_usage_policy_media_tokens(None, 4096), 4096);
+        assert_eq!(
+            super::parse_usage_policy_media_tokens(Some(" 1500 "), 4096),
+            1500
+        );
+        assert_eq!(super::parse_usage_policy_media_tokens(Some("0"), 256), 256);
+        assert_eq!(super::parse_usage_policy_media_tokens(Some("-1"), 256), 256);
+        assert_eq!(super::parse_usage_policy_media_tokens(Some("x"), 256), 256);
     }
 
     fn claude_text_request() -> serde_json::Value {
@@ -2831,8 +3340,6 @@ mod tests {
     #[test]
     fn claude_media_references_and_opaque_content_fail_closed() {
         for block in [
-            json!({"type": "image", "source": {"type": "base64", "data": "AA=="}}),
-            json!({"type": "document", "source": {"type": "url", "url": "https://example.invalid"}}),
             json!({"type": "file", "file_id": "file_1"}),
             json!({"type": "url", "url": "https://example.invalid"}),
             json!({"type": "thinking", "thinking": "opaque", "signature": "signed"}),
@@ -2849,9 +3356,7 @@ mod tests {
             assert!(!request_input_is_self_contained("claude:messages", &body));
         }
         for field in [
-            "container",
             "context_management",
-            "mcp_servers",
             "previous_response_id",
             "conversation",
             "cached_content",
@@ -2868,7 +3373,7 @@ mod tests {
     }
 
     #[test]
-    fn claude_server_tools_and_nontext_tool_results_fail_closed() {
+    fn claude_server_tools_are_surcharged_and_nontext_tool_results_fail_closed() {
         for kind in [
             "web_search_20250305",
             "computer_20250124",
@@ -2880,9 +3385,10 @@ mod tests {
             let mut body = claude_tool_request();
             body["tools"][0]["type"] = json!(kind);
             assert!(
-                !request_input_is_self_contained("claude:messages", &body),
+                request_input_is_self_contained("claude:messages", &body),
                 "{kind}"
             );
+            assert_eq!(super::request_hosted_tools(&body).len(), 1, "{kind}");
         }
         for content in [
             json!([{"type": "image", "source": {"type": "url", "url": "https://example.invalid"}}]),

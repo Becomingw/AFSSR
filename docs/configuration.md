@@ -12,6 +12,8 @@
 - `ARCA_GATEWAY_MAX_IN_FLIGHT_REQUESTS`：单实例请求并发上限；未配置时按 CPU 自动推导（基础范围 `512-65536`），低文件描述符预算时会进一步下调
 - `ARCA_GATEWAY_REQUEST_BODY_BUFFER_BUDGET_MB`：单实例同时读取和解压请求体的加权内存预算，默认 `256MB`
 - `ARCA_GATEWAY_USAGE_POLICY_DEFAULT_OUTPUT_TOKENS`：客户端未传 `max_tokens` 时，套餐用量策略预占成本所用的输出 token 数，默认 `4096`，并受模型配置的 `output_limit` 约束；超出部分在请求结束后按实际用量结算。显式传入 `max_tokens` 时仍按其值预占
+- `ARCA_GATEWAY_USAGE_POLICY_IMAGE_TOKENS` / `ARCA_GATEWAY_USAGE_POLICY_AUDIO_TOKENS` / `ARCA_GATEWAY_USAGE_POLICY_VIDEO_TOKENS` / `ARCA_GATEWAY_USAGE_POLICY_FILE_TOKENS`：套餐硬性成本上限预占时，每个图片 / 音频 / 视频 / 文件输入部件按固定输入 token 上界估价（不再按 base64 字节计数，也不再因无法估价返回 500；引用已存储文件的 `file_id` / `fileUri` 同样按文件/对应媒体类型计），默认分别为 `4096` / `256` / `8192` / `4096`，参考 new-api 预扣费的做法；实际费用在请求结束后按真实用量结算
+- `ARCA_GATEWAY_USAGE_POLICY_WEB_SEARCH_COST_USD` / `ARCA_GATEWAY_USAGE_POLICY_IMAGE_GENERATION_COST_USD` / `ARCA_GATEWAY_USAGE_POLICY_HOSTED_TOOL_COST_USD`：请求启用托管工具时，在 token 估价之外按每种工具额外预占的固定美元金额。联网搜索（OpenAI `web_search*` / `web_search_options`、Claude `web_search_*`、Gemini `googleSearch`）默认 `0.05`（new-api web_search $10/1K 次，约 5 次）；`image_generation` 默认 `0.15`（new-api $150/1K 次，约 1 次）；其他托管工具（code_interpreter、mcp / `mcp_servers`、computer_use、file_search / `vector_store_ids`、Gemini codeExecution/urlContext 等，new-api 无对应定价）默认 `0.05`。实际费用按真实用量结算。仅 `previous_response_id`、`conversation`、`prompt.id`、`item_reference` 等引用服务端会话状态的请求仍无法估价，此时返回 HTTP 422（不再是 500）
 - `ARCA_GATEWAY_REQUEST_BODY_READ_TIMEOUT_MS`：可选的请求体完整读取超时；默认或显式设为 `0` 时关闭，非零值限制在 `1000-600000ms`
 - `ARCA_MAX_REQUEST_BODY_MB`：单请求解压后请求体上限，默认 `256MB`；显式设为 `0` 表示不再收紧默认值，但仍受 `256MB` 安全硬上限约束
 - `ARCA_MAX_INTERNAL_BUFFERED_BODY_MB`：heartbeat、管理探测等内部整包响应体上限，默认 `64MB`；显式设为 `0` 表示不再收紧默认值，但仍受 `256MB` 安全硬上限约束
