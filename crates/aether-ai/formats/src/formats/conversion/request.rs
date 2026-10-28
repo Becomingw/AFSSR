@@ -174,6 +174,79 @@ mod tests {
         normalize_openai_responses_request_to_openai_chat_request,
     };
 
+    fn issue_18_responses_tool_call_history(reasoning: Option<Value>) -> Value {
+        let mut input = vec![json!({
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "inspect the repository"}]
+        })];
+        if let Some(reasoning) = reasoning {
+            input.push(reasoning);
+        }
+        input.push(json!({
+            "type": "function_call",
+            "call_id": "call_x",
+            "name": "shell",
+            "arguments": "{\"cmd\":\"ls\"}"
+        }));
+        input.push(json!({
+            "type": "function_call_output",
+            "call_id": "call_x",
+            "output": "README.md"
+        }));
+        input.push(json!({
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "continue"}]
+        }));
+        json!({"model": "deepseek-v4.1-flash", "input": input})
+    }
+
+    fn assistant_tool_call_message(messages: &[Value]) -> &Value {
+        messages
+            .iter()
+            .find(|message| message["role"] == "assistant" && message.get("tool_calls").is_some())
+            .expect("assistant tool-call message")
+    }
+
+    #[test]
+    fn responses_reasoning_with_opaque_encrypted_content_keeps_reasoning_content_text() {
+        // Issue #18: a replayed reasoning item whose `encrypted_content` is not a gateway thinking
+        // carrier must not drop its readable summary from the Chat `reasoning_content`.
+        let body = issue_18_responses_tool_call_history(Some(json!({
+            "type": "reasoning",
+            "id": "rs_1",
+            "summary": [{"type": "summary_text", "text": "need to list files"}],
+            "encrypted_content": "opaque-upstream-state"
+        })));
+
+        let converted = normalize_openai_responses_request_to_openai_chat_request(&body)
+            .expect("openai chat request");
+        let messages = converted["messages"].as_array().expect("messages");
+        let assistant = assistant_tool_call_message(messages);
+
+        assert_eq!(assistant["tool_calls"][0]["id"], "call_x");
+        assert_eq!(assistant["reasoning_content"], "need to list files");
+    }
+
+    #[test]
+    fn responses_tool_call_without_reasoning_item_converts_without_reasoning_text() {
+        // Without a reasoning item there is no text to replay; the thinking-mode provider compat
+        // layer in the gateway fills `reasoning_content` for such messages.
+        let body = issue_18_responses_tool_call_history(None);
+
+        let converted = normalize_openai_responses_request_to_openai_chat_request(&body)
+            .expect("openai chat request");
+        let messages = converted["messages"].as_array().expect("messages");
+        let assistant = assistant_tool_call_message(messages);
+
+        assert_eq!(assistant["tool_calls"][0]["id"], "call_x");
+        assert!(assistant
+            .get("reasoning_content")
+            .and_then(Value::as_str)
+            .is_none_or(|text| text.trim().is_empty()));
+    }
+
     #[test]
     fn pairwise_request_helper_routes_through_registry() {
         let body = json!({
