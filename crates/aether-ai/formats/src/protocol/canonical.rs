@@ -1038,6 +1038,16 @@ pub(crate) fn canonical_blocks_to_openai_chat_message(content: &[CanonicalConten
                 encrypted_content,
                 extensions,
             } => {
+                // Opaque state and readable summary are independent. Preserve the text
+                // before retaining the carrier, which some Chat adapters later strip.
+                let omit_reasoning_content = extensions
+                    .get("openai")
+                    .and_then(|value| value.get("omit_reasoning_content"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                if !text.trim().is_empty() && !omit_reasoning_content {
+                    reasoning_text.push(text.clone());
+                }
                 if let Some(data) = encrypted_content.as_ref().filter(|value| !value.is_empty()) {
                     reasoning_parts.push(json!({
                         "type": "redacted_thinking",
@@ -1046,19 +1056,11 @@ pub(crate) fn canonical_blocks_to_openai_chat_message(content: &[CanonicalConten
                     continue;
                 }
                 if !text.trim().is_empty() {
-                    let omit_reasoning_content = extensions
-                        .get("openai")
-                        .and_then(|value| value.get("omit_reasoning_content"))
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false);
                     let omit_reasoning_parts = extensions
                         .get("openai")
                         .and_then(|value| value.get("omit_reasoning_parts"))
                         .and_then(Value::as_bool)
                         .unwrap_or(false);
-                    if !omit_reasoning_content {
-                        reasoning_text.push(text.clone());
-                    }
                     if !omit_reasoning_parts {
                         let mut reasoning_part = Map::new();
                         reasoning_part
@@ -3827,6 +3829,16 @@ fn canonical_message_blocks_to_openai_chat(
                 encrypted_content,
                 extensions,
             } if matches!(message.role, CanonicalRole::Assistant) => {
+                // Opaque state and readable summary are independent. Preserve the text
+                // before retaining the carrier, which some Chat adapters later strip.
+                let omit_reasoning_content = extensions
+                    .get("openai")
+                    .and_then(|value| value.get("omit_reasoning_content"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                if !text.trim().is_empty() && !omit_reasoning_content {
+                    reasoning_segments.push(text.clone());
+                }
                 if let Some(data) = encrypted_content.as_ref().filter(|value| !value.is_empty()) {
                     reasoning_parts.push(json!({
                         "type": "redacted_thinking",
@@ -3835,19 +3847,11 @@ fn canonical_message_blocks_to_openai_chat(
                     continue;
                 }
                 if !text.trim().is_empty() {
-                    let omit_reasoning_content = extensions
-                        .get("openai")
-                        .and_then(|value| value.get("omit_reasoning_content"))
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false);
                     let omit_reasoning_parts = extensions
                         .get("openai")
                         .and_then(|value| value.get("omit_reasoning_parts"))
                         .and_then(Value::as_bool)
                         .unwrap_or(false);
-                    if !omit_reasoning_content {
-                        reasoning_segments.push(text.clone());
-                    }
                     if !omit_reasoning_parts {
                         let mut reasoning_part = Map::new();
                         reasoning_part
@@ -8448,6 +8452,34 @@ mod tests {
             assert_eq!(rebuilt["input"][0]["input"], payload);
             assert_eq!(rebuilt["input"][1]["type"], "custom_tool_call_output");
             assert_eq!(rebuilt["input"][1]["output"], "ok");
+        }
+    }
+
+    #[test]
+    fn chat_emitters_keep_explicit_reasoning_content_omission_with_opaque_state() {
+        let blocks = vec![CanonicalContentBlock::Thinking {
+            text: "synthetic summary".to_string(),
+            signature: None,
+            encrypted_content: Some("synthetic-opaque-state".to_string()),
+            extensions: std::collections::BTreeMap::from([(
+                "openai".to_string(),
+                json!({"omit_reasoning_content": true}),
+            )]),
+        }];
+        let message = super::CanonicalMessage {
+            role: CanonicalRole::Assistant,
+            content: blocks.clone(),
+            extensions: std::collections::BTreeMap::new(),
+        };
+        for emitted in [
+            super::canonical_message_to_openai_chat_messages(&message).remove(0),
+            super::canonical_blocks_to_openai_chat_message(&blocks),
+        ] {
+            assert!(emitted.get("reasoning_content").is_none());
+            assert_eq!(
+                emitted["reasoning_parts"],
+                json!([{"type": "redacted_thinking", "data": "synthetic-opaque-state"}])
+            );
         }
     }
 
