@@ -187,6 +187,27 @@ fn apply_deepseek_openai_chat_thinking_compat(
         if !is_assistant {
             continue;
         }
+        let has_tool_calls = message_object
+            .get("tool_calls")
+            .and_then(Value::as_array)
+            .is_some_and(|calls| !calls.is_empty());
+        if has_tool_calls {
+            // Thinking mode rejects a replayed assistant tool-call turn without its
+            // `reasoning_content` ("must be passed back to the API"), and some DeepSeek-serving
+            // relays treat an empty string as missing. A single space is the smallest value that
+            // every such upstream accepts when no reasoning text survived the client round-trip.
+            let has_reasoning_text = message_object
+                .get("reasoning_content")
+                .and_then(Value::as_str)
+                .is_some_and(|text| !text.trim().is_empty());
+            if !has_reasoning_text {
+                message_object.insert(
+                    "reasoning_content".to_string(),
+                    Value::String(TOOL_CALL_REASONING_CONTENT_PLACEHOLDER.to_string()),
+                );
+            }
+            continue;
+        }
         if message_object
             .get("reasoning_content")
             .is_some_and(|value| !value.is_null())
@@ -199,6 +220,11 @@ fn apply_deepseek_openai_chat_thinking_compat(
         );
     }
 }
+
+/// Placeholder replayed as `reasoning_content` on assistant tool-call messages whose reasoning
+/// text was not preserved by the client (for example Responses clients that only replay the
+/// `function_call` item). Not empty: some upstreams reject `""` as missing.
+const TOOL_CALL_REASONING_CONTENT_PLACEHOLDER: &str = " ";
 
 fn apply_deepseek_claude_messages_thinking_compat(
     provider_request_body: &mut Value,
@@ -444,7 +470,7 @@ mod tests {
     }
 
     #[test]
-    fn openai_chat_deepseek_adds_thinking_and_empty_reasoning_content() {
+    fn openai_chat_deepseek_adds_thinking_and_placeholder_reasoning_content() {
         let mut body = json!({
             "model": "deepseek-chat",
             "messages": [
@@ -467,7 +493,7 @@ mod tests {
         );
 
         assert_eq!(body["thinking"]["type"], "enabled");
-        assert_eq!(body["messages"][1]["reasoning_content"], "");
+        assert_eq!(body["messages"][1]["reasoning_content"], " ");
     }
 
     #[test]
@@ -494,7 +520,106 @@ mod tests {
         );
 
         assert_eq!(body["thinking"]["type"], "enabled");
-        assert_eq!(body["messages"][1]["reasoning_content"], "");
+        assert_eq!(body["messages"][1]["reasoning_content"], " ");
+    }
+
+    #[test]
+    fn openai_chat_deepseek_tool_call_keeps_reasoning_text_and_replaces_empty_value() {
+        let tool_call = json!([{
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "lookup", "arguments": "{}"}
+        }]);
+        let mut body = json!({
+            "model": "deepseek-v4.1-flash",
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": null, "reasoning_content": "plan", "tool_calls": tool_call},
+                {"role": "tool", "tool_call_id": "call_1", "content": "{}"},
+                {"role": "assistant", "content": null, "reasoning_content": "", "tool_calls": tool_call},
+                {"role": "tool", "tool_call_id": "call_1", "content": "{}"},
+                {"role": "assistant", "content": "done"}
+            ]
+        });
+
+        apply_deepseek_tool_call_thinking_compat(
+            &mut body,
+            "opencode_go",
+            "https://opencode.ai/zen/go/v1",
+            "openai:chat",
+            None,
+        );
+
+        assert_eq!(body["messages"][1]["reasoning_content"], "plan");
+        assert_eq!(body["messages"][3]["reasoning_content"], " ");
+        assert_eq!(body["messages"][5]["reasoning_content"], "");
+    }
+
+    #[test]
+    fn responses_to_chat_tool_call_history_replays_reasoning_content_for_deepseek() {
+        // Issue #18: Responses clients replay only `function_call` items for tool-call turns
+        // without reasoning text, which used to reach the thinking-mode upstream without
+        // `reasoning_content` and fail every later turn with a 400.
+        for reasoning in [
+            None,
+            Some(json!({
+                "type": "reasoning",
+                "id": "rs_1",
+                "summary": [{"type": "summary_text", "text": "need to list files"}],
+                "encrypted_content": "opaque-upstream-state"
+            })),
+        ] {
+            let mut input = vec![json!({
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "inspect"}]
+            })];
+            input.extend(reasoning.clone());
+            input.push(json!({
+                "type": "function_call",
+                "call_id": "call_x",
+                "name": "shell",
+                "arguments": "{}"
+            }));
+            input.push(json!({
+                "type": "function_call_output",
+                "call_id": "call_x",
+                "output": "ok"
+            }));
+            input.push(json!({
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "continue"}]
+            }));
+            let responses_body = json!({"model": "deepseek-v4.1-flash", "input": input});
+            let mut body = super::super::normalize_openai_responses_request_to_openai_chat_request(
+                &responses_body,
+            )
+            .expect("openai chat request");
+
+            apply_deepseek_tool_call_thinking_compat(
+                &mut body,
+                "custom",
+                "https://relay.example.com/v1",
+                "openai:chat",
+                Some(&responses_body),
+            );
+
+            let assistant = body["messages"]
+                .as_array()
+                .expect("messages")
+                .iter()
+                .find(|message| message.get("tool_calls").is_some())
+                .expect("assistant tool-call message")
+                .clone();
+            let reasoning_content = assistant["reasoning_content"]
+                .as_str()
+                .expect("reasoning_content on assistant tool-call message");
+            assert!(!reasoning_content.is_empty());
+            if reasoning.is_some() {
+                assert_eq!(reasoning_content, "need to list files");
+            }
+        }
     }
 
     #[test]
