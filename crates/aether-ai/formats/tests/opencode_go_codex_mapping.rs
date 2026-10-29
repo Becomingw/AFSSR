@@ -1357,41 +1357,52 @@ fn grok_native_web_lifecycle_and_sources_survive_client_custom_tool_rewriting() 
 
 #[test]
 fn go_chat_custom_tool_sync_roundtrip_preserves_payload_and_namespace() {
-    let mut body = body();
-    let ctx = context(&body, "openai:chat", "space-bunny");
-    let mapped = convert_request("openai:responses", "openai:chat", &body, &ctx).unwrap();
-    let name = mapped["tools"][0]["function"]["name"].clone();
-    let payload = "text(\"nonce\");\n";
-    let upstream = json!({"id":"chatcmpl_fixture", "model":"space-bunny", "choices":[{
+    for payload in [
+        "text(\"nonce\");\n",
+        "\"hello\"",
+        "{\n  \"value\": 1\n}",
+        "null",
+        "42",
+        "true",
+        "[ 1, 2 ]",
+        "",
+    ] {
+        let mut body = body();
+        let ctx = context(&body, "openai:chat", "space-bunny");
+        let mapped = convert_request("openai:responses", "openai:chat", &body, &ctx).unwrap();
+        let name = mapped["tools"][0]["function"]["name"].clone();
+        let upstream = json!({"id":"chatcmpl_fixture", "model":"space-bunny", "choices":[{
         "index":0, "message":{"role":"assistant", "content":null, "tool_calls":[{
             "id":"call_fixture", "type":"function", "function":{"name":name,
             "arguments":json!({"input":payload}).to_string()}}]}, "finish_reason":"tool_calls"}]});
-    let response = convert_response("openai:chat", "openai:responses", &upstream, &ctx).unwrap();
-    let call = response["output"][0].clone();
-    assert_eq!(call["type"], "custom_tool_call");
-    assert_eq!(call["namespace"], "functions");
-    assert_eq!(call["name"], "exec");
-    assert_eq!(call["input"], payload);
-    body["input"].as_array_mut().unwrap().extend([
-        call,
-        json!({"type":"custom_tool_call_output", "call_id":"call_fixture", "output":"nonce"}),
-    ]);
-    let next = convert_request(
-        "openai:responses",
-        "openai:chat",
-        &body,
-        &context(&body, "openai:chat", "space-bunny"),
-    )
-    .unwrap();
-    let messages = next["messages"].as_array().unwrap();
-    assert!(messages.iter().any(|m| m["role"] == "tool"
-        && m["content"] == "nonce"
-        && m["tool_call_id"] == "call_fixture"));
-    let expected_arguments = json!({"input":payload}).to_string();
-    assert!(messages
-        .iter()
-        .any(|m| m["tool_calls"][0]["function"]["arguments"].as_str()
-            == Some(expected_arguments.as_str())));
+        let response =
+            convert_response("openai:chat", "openai:responses", &upstream, &ctx).unwrap();
+        let call = response["output"][0].clone();
+        assert_eq!(call["type"], "custom_tool_call");
+        assert_eq!(call["namespace"], "functions");
+        assert_eq!(call["name"], "exec");
+        assert_eq!(call["input"], payload);
+        body["input"].as_array_mut().unwrap().extend([
+            call,
+            json!({"type":"custom_tool_call_output", "call_id":"call_fixture", "output":"nonce"}),
+        ]);
+        let next = convert_request(
+            "openai:responses",
+            "openai:chat",
+            &body,
+            &context(&body, "openai:chat", "space-bunny"),
+        )
+        .unwrap();
+        let messages = next["messages"].as_array().unwrap();
+        assert!(messages.iter().any(|m| m["role"] == "tool"
+            && m["content"] == "nonce"
+            && m["tool_call_id"] == "call_fixture"));
+        let expected_arguments = json!({"input":payload}).to_string();
+        assert!(messages
+            .iter()
+            .any(|m| m["tool_calls"][0]["function"]["arguments"].as_str()
+                == Some(expected_arguments.as_str())));
+    }
 }
 
 #[test]

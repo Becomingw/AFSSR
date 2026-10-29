@@ -1038,6 +1038,16 @@ pub(crate) fn canonical_blocks_to_openai_chat_message(content: &[CanonicalConten
                 encrypted_content,
                 extensions,
             } => {
+                // Opaque state and readable summary are independent. Preserve the text
+                // before retaining the carrier, which some Chat adapters later strip.
+                let omit_reasoning_content = extensions
+                    .get("openai")
+                    .and_then(|value| value.get("omit_reasoning_content"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                if !text.trim().is_empty() && !omit_reasoning_content {
+                    reasoning_text.push(text.clone());
+                }
                 if let Some(data) = encrypted_content.as_ref().filter(|value| !value.is_empty()) {
                     reasoning_parts.push(json!({
                         "type": "redacted_thinking",
@@ -1046,19 +1056,11 @@ pub(crate) fn canonical_blocks_to_openai_chat_message(content: &[CanonicalConten
                     continue;
                 }
                 if !text.trim().is_empty() {
-                    let omit_reasoning_content = extensions
-                        .get("openai")
-                        .and_then(|value| value.get("omit_reasoning_content"))
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false);
                     let omit_reasoning_parts = extensions
                         .get("openai")
                         .and_then(|value| value.get("omit_reasoning_parts"))
                         .and_then(Value::as_bool)
                         .unwrap_or(false);
-                    if !omit_reasoning_content {
-                        reasoning_text.push(text.clone());
-                    }
                     if !omit_reasoning_parts {
                         let mut reasoning_part = Map::new();
                         reasoning_part
@@ -2305,9 +2307,11 @@ pub(crate) fn openai_message_content_blocks(
                 blocks.push(CanonicalContentBlock::ToolUse {
                     id,
                     name,
-                    input: parse_jsonish_value(
-                        custom.get("input").or_else(|| custom.get("arguments")),
-                    ),
+                    input: custom
+                        .get("input")
+                        .or_else(|| custom.get("arguments"))
+                        .cloned()
+                        .unwrap_or_else(|| json!({})),
                     extensions,
                 });
             } else {
@@ -2661,11 +2665,11 @@ pub(crate) fn openai_responses_input_to_canonical_messages(
                         let tool_use = CanonicalContentBlock::ToolUse {
                             id,
                             name,
-                            input: parse_jsonish_value(
-                                item_object
-                                    .get("input")
-                                    .or_else(|| item_object.get("arguments")),
-                            ),
+                            input: item_object
+                                .get("input")
+                                .or_else(|| item_object.get("arguments"))
+                                .cloned()
+                                .unwrap_or_else(|| json!({})),
                             extensions,
                         };
                         append_openai_responses_tool_use(
@@ -3112,11 +3116,11 @@ pub(crate) fn openai_responses_output_to_canonical(
                 blocks.push(CanonicalContentBlock::ToolUse {
                     id,
                     name: name.to_string(),
-                    input: parse_jsonish_value(
-                        item_object
-                            .get("input")
-                            .or_else(|| item_object.get("arguments")),
-                    ),
+                    input: item_object
+                        .get("input")
+                        .or_else(|| item_object.get("arguments"))
+                        .cloned()
+                        .unwrap_or_else(|| json!({})),
                     extensions,
                 });
             }
@@ -7924,94 +7928,116 @@ mod tests {
 
     #[test]
     fn openai_chat_response_preserves_custom_tool_calls_for_responses() {
-        let response = json!({
-            "id": "chatcmpl_custom",
-            "object": "chat.completion",
-            "model": "gpt-5",
-            "choices": [{
-                "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": null,
-                    "tool_calls": [{
-                        "id": "call_custom_1",
-                        "type": "custom",
-                        "custom": {
-                            "name": "shell_command",
-                            "input": "ls -la"
-                        }
-                    }]
-                },
-                "finish_reason": "tool_calls"
-            }]
-        });
+        for payload in [
+            "ls -la",
+            "null",
+            "\"hello\"",
+            "{\n  \"value\": 1\n}",
+            "42",
+            "true",
+            "[ 1, 2 ]",
+            "",
+        ] {
+            let response = json!({
+                "id": "chatcmpl_custom",
+                "object": "chat.completion",
+                "model": "gpt-5",
+                "choices": [{
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": null,
+                        "tool_calls": [{
+                            "id": "call_custom_1",
+                            "type": "custom",
+                            "custom": {
+                                "name": "shell_command",
+                                "input": payload
+                            }
+                        }]
+                    },
+                    "finish_reason": "tool_calls"
+                }]
+            });
 
-        let canonical =
-            from_openai_chat_to_canonical_response(&response).expect("canonical response");
-        assert!(matches!(
-            canonical.content[0],
-            CanonicalContentBlock::ToolUse { ref id, ref name, ref input, .. }
-                if id == "call_custom_1" && name == "shell_command" && input == "ls -la"
-        ));
+            let canonical =
+                from_openai_chat_to_canonical_response(&response).expect("canonical response");
+            assert!(matches!(
+                canonical.content[0],
+                CanonicalContentBlock::ToolUse { ref id, ref name, ref input, .. }
+                    if id == "call_custom_1" && name == "shell_command" && input == payload
+            ));
 
-        let rebuilt_chat = canonical_to_openai_chat_response(&canonical);
-        assert_eq!(
-            rebuilt_chat["choices"][0]["message"]["tool_calls"][0]["type"],
-            "custom"
-        );
-        assert_eq!(
-            rebuilt_chat["choices"][0]["message"]["tool_calls"][0]["custom"]["name"],
-            "shell_command"
-        );
+            let rebuilt_chat = canonical_to_openai_chat_response(&canonical);
+            assert_eq!(
+                rebuilt_chat["choices"][0]["message"]["tool_calls"][0]["type"],
+                "custom"
+            );
+            assert_eq!(
+                rebuilt_chat["choices"][0]["message"]["tool_calls"][0]["custom"]["name"],
+                "shell_command"
+            );
 
-        let responses = canonical_to_openai_responses_response(&canonical, &json!({}));
-        assert_eq!(responses["output"][0]["type"], "custom_tool_call");
-        assert_eq!(responses["output"][0]["name"], "shell_command");
-        assert_eq!(responses["output"][0]["input"], "ls -la");
+            let responses = canonical_to_openai_responses_response(&canonical, &json!({}));
+            assert_eq!(responses["output"][0]["type"], "custom_tool_call");
+            assert_eq!(responses["output"][0]["name"], "shell_command");
+            assert_eq!(responses["output"][0]["input"], payload);
+        }
     }
 
     #[test]
     fn openai_responses_response_preserves_custom_tool_calls_for_chat() {
-        let response = json!({
-            "id": "resp_custom",
-            "object": "response",
-            "status": "completed",
-            "model": "gpt-5",
-            "output": [{
-                "type": "custom_tool_call",
-                "id": "call_custom_1",
-                "call_id": "call_custom_1",
+        for payload in [
+            "pwd",
+            "null",
+            "\"hello\"",
+            "{\n  \"value\": 1\n}",
+            "42",
+            "true",
+            "[ 1, 2 ]",
+            "",
+        ] {
+            let response = json!({
+                "id": "resp_custom",
+                "object": "response",
                 "status": "completed",
-                "name": "shell_command",
-                "input": "pwd"
-            }]
-        });
+                "model": "gpt-5",
+                "output": [{
+                    "type": "custom_tool_call",
+                    "id": "call_custom_1",
+                    "call_id": "call_custom_1",
+                    "status": "completed",
+                    "name": "shell_command",
+                    "input": payload
+                }]
+            });
 
-        let canonical =
-            from_openai_responses_to_canonical_response(&response).expect("canonical response");
-        assert!(matches!(
-            canonical.content[0],
-            CanonicalContentBlock::ToolUse { ref id, ref name, ref input, .. }
-                if id == "call_custom_1" && name == "shell_command" && input == "pwd"
-        ));
+            let canonical =
+                from_openai_responses_to_canonical_response(&response).expect("canonical response");
+            assert!(matches!(
+                canonical.content[0],
+                CanonicalContentBlock::ToolUse { ref id, ref name, ref input, .. }
+                    if id == "call_custom_1" && name == "shell_command" && input == payload
+            ));
 
-        let chat = canonical_to_openai_chat_response(&canonical);
-        assert_eq!(
-            chat["choices"][0]["message"]["tool_calls"][0]["type"],
-            "custom"
-        );
-        assert_eq!(
-            chat["choices"][0]["message"]["tool_calls"][0]["custom"]["name"],
-            "shell_command"
-        );
-        assert_eq!(
-            chat["choices"][0]["message"]["tool_calls"][0]["custom"]["input"],
-            "pwd"
-        );
+            let chat = canonical_to_openai_chat_response(&canonical);
+            assert_eq!(
+                chat["choices"][0]["message"]["tool_calls"][0]["type"],
+                "custom"
+            );
+            assert_eq!(
+                chat["choices"][0]["message"]["tool_calls"][0]["custom"]["name"],
+                "shell_command"
+            );
+            assert_eq!(
+                chat["choices"][0]["message"]["tool_calls"][0]["custom"]["input"],
+                payload
+            );
 
-        let rebuilt = canonical_to_openai_responses_response(&canonical, &json!({}));
-        assert_eq!(rebuilt["output"][0]["type"], "custom_tool_call");
-        assert_eq!(rebuilt["output"][0]["input"], "pwd");
+            let rebuilt = canonical_to_openai_responses_response(&canonical, &json!({}));
+            assert_eq!(rebuilt["output"][0]["type"], "custom_tool_call");
+            assert_eq!(rebuilt["output"][0]["input"], payload);
+        }
     }
 
     #[test]
@@ -8373,48 +8399,88 @@ mod tests {
 
     #[test]
     fn openai_responses_request_adapter_preserves_custom_tool_history() {
-        let request = json!({
-            "model": "gpt-5",
-            "input": [
-                {
-                    "type": "custom_tool_call",
-                    "id": "ctc_1",
-                    "call_id": "call_custom_1",
-                    "name": "shell_command",
-                    "input": "ls -la",
-                    "status": "completed"
-                },
-                {
-                    "type": "custom_tool_call_output",
-                    "call_id": "call_custom_1",
-                    "output": "ok"
-                }
-            ]
-        });
+        for payload in [
+            "ls -la",
+            "null",
+            "\"hello\"",
+            "{\n  \"value\": 1\n}",
+            "42",
+            "true",
+            "[ 1, 2 ]",
+            "",
+        ] {
+            let request = json!({
+                "model": "gpt-5",
+                "input": [
+                    {
+                        "type": "custom_tool_call",
+                        "id": "ctc_1",
+                        "call_id": "call_custom_1",
+                        "name": "shell_command",
+                        "input": payload,
+                        "status": "completed"
+                    },
+                    {
+                        "type": "custom_tool_call_output",
+                        "call_id": "call_custom_1",
+                        "output": "ok"
+                    }
+                ]
+            });
 
-        let canonical =
-            from_openai_responses_to_canonical_request(&request).expect("canonical request");
+            let canonical =
+                from_openai_responses_to_canonical_request(&request).expect("canonical request");
 
-        let chat = canonical_to_openai_chat_request(&canonical).expect("openai chat request");
-        assert_eq!(chat["messages"][0]["tool_calls"][0]["type"], "custom");
-        assert_eq!(
-            chat["messages"][0]["tool_calls"][0]["custom"]["name"],
-            "shell_command"
-        );
-        assert_eq!(
-            chat["messages"][0]["tool_calls"][0]["custom"]["input"],
-            "ls -la"
-        );
+            let chat = canonical_to_openai_chat_request(&canonical).expect("openai chat request");
+            assert_eq!(chat["messages"][0]["tool_calls"][0]["type"], "custom");
+            assert_eq!(
+                chat["messages"][0]["tool_calls"][0]["custom"]["name"],
+                "shell_command"
+            );
+            assert_eq!(
+                chat["messages"][0]["tool_calls"][0]["custom"]["input"],
+                payload
+            );
 
-        let rebuilt = canonical_to_openai_responses_request(&canonical, "gpt-5-upstream", false)
-            .expect("openai responses request");
-        assert_eq!(rebuilt["input"][0]["type"], "custom_tool_call");
-        assert_eq!(rebuilt["input"][0]["id"], "ctc_1");
-        assert_eq!(rebuilt["input"][0]["call_id"], "call_custom_1");
-        assert_eq!(rebuilt["input"][0]["name"], "shell_command");
-        assert_eq!(rebuilt["input"][0]["input"], "ls -la");
-        assert_eq!(rebuilt["input"][1]["type"], "custom_tool_call_output");
-        assert_eq!(rebuilt["input"][1]["output"], "ok");
+            let rebuilt =
+                canonical_to_openai_responses_request(&canonical, "gpt-5-upstream", false)
+                    .expect("openai responses request");
+            assert_eq!(rebuilt["input"][0]["type"], "custom_tool_call");
+            assert_eq!(rebuilt["input"][0]["id"], "ctc_1");
+            assert_eq!(rebuilt["input"][0]["call_id"], "call_custom_1");
+            assert_eq!(rebuilt["input"][0]["name"], "shell_command");
+            assert_eq!(rebuilt["input"][0]["input"], payload);
+            assert_eq!(rebuilt["input"][1]["type"], "custom_tool_call_output");
+            assert_eq!(rebuilt["input"][1]["output"], "ok");
+        }
+    }
+
+    #[test]
+    fn chat_emitters_keep_explicit_reasoning_content_omission_with_opaque_state() {
+        let blocks = vec![CanonicalContentBlock::Thinking {
+            text: "synthetic summary".to_string(),
+            signature: None,
+            encrypted_content: Some("synthetic-opaque-state".to_string()),
+            extensions: std::collections::BTreeMap::from([(
+                "openai".to_string(),
+                json!({"omit_reasoning_content": true}),
+            )]),
+        }];
+        let message = super::CanonicalMessage {
+            role: CanonicalRole::Assistant,
+            content: blocks.clone(),
+            extensions: std::collections::BTreeMap::new(),
+        };
+        for emitted in [
+            super::canonical_message_to_openai_chat_messages(&message).remove(0),
+            super::canonical_blocks_to_openai_chat_message(&blocks),
+        ] {
+            assert!(emitted.get("reasoning_content").is_none());
+            assert_eq!(
+                emitted["reasoning_parts"],
+                json!([{"type": "redacted_thinking", "data": "synthetic-opaque-state"}])
+            );
+        }
     }
 
     #[test]

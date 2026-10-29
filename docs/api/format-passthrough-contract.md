@@ -83,3 +83,27 @@ Current pure entrypoints:
 - `convert_response_pure`
 
 `convert_request` and `convert_response` remain legacy wrappers for existing callers that still need mapped model/report-context behavior during migration.
+
+## Custom Tool Input Text
+
+OpenAI Chat custom tool calls and Responses `custom_tool_call` history/output carry
+opaque string input, not JSON function arguments. Canonical conversion must preserve
+the string value exactly, including JSON-looking text (`null`, quoted strings,
+objects/arrays), whitespace, and empty input. Ordinary function-call arguments
+continue to use JSON parsing. OpenCode Go custom-to-function wrapping must likewise
+roundtrip the original string and namespace. This is a text-fidelity contract; it
+does not establish the cause of a provider HTTP 400 or alter diagnostic retention.
+
+## Readable Reasoning Alongside Opaque State
+
+When a canonical assistant Thinking block contains both readable text and opaque
+`encrypted_content`, the Chat request and canonical response emitters must retain
+the readable text in `reasoning_content` (unless explicitly marked for omission).
+The opaque carrier remains separate in `reasoning_parts`; it must not suppress or
+be substituted for the text. In particular, OpenCode Go's Chat request adapter may
+remove `reasoning_parts` while retaining the readable text next to `tool_calls`.
+
+Empty/missing readable reasoning does not acquire placeholder text. This contract
+does not relax the public response converter's encrypted-state loss guard, change
+stream finalization, guarantee a Chat-to-canonical roundtrip of both fields, or
+establish the cause of a provider HTTP 400. It does not alter diagnostic retention.
