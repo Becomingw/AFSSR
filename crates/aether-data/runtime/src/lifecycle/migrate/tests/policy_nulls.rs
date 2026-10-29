@@ -33,6 +33,19 @@ const POLICY_COLUMNS: &[(&str, &[&str])] = &[
     ("management_tokens", &["allowed_ips", "permissions"]),
 ];
 
+/// The managed test server runs with `max_connections=8`, while sqlx's default
+/// pool allows 10 connections and a 30s acquire timeout. Under parallel CI load
+/// the default pool can try to open more connections than the server accepts and
+/// surface `PoolTimedOut`. Keep the fixture pool well below the server limit and
+/// give acquisition generous headroom on slow runners.
+async fn connect_fixture_pool(database_url: &str) -> Result<PgPool, sqlx::Error> {
+    sqlx::postgres::PgPoolOptions::new()
+        .max_connections(2)
+        .acquire_timeout(std::time::Duration::from_secs(120))
+        .connect(database_url)
+        .await
+}
+
 #[tokio::test]
 async fn postgres_policy_null_migration_preserves_non_null_policies_and_is_idempotent() {
     let migration = POSTGRES_MIGRATOR
@@ -80,7 +93,7 @@ async fn postgres_policy_null_migration_preserves_non_null_policies_and_is_idemp
         else {
             return;
         };
-        let pool = PgPool::connect(server.database_url())
+        let pool = connect_fixture_pool(server.database_url())
             .await
             .expect("policy fixture pool should connect");
 
@@ -223,7 +236,7 @@ async fn postgres_policy_null_migration_repairs_legacy_upgrade_before_auth_reads
     }
     drop(connection);
 
-    let pool = PgPool::connect(server.database_url())
+    let pool = connect_fixture_pool(server.database_url())
         .await
         .expect("legacy database pool should connect");
     sqlx::raw_sql(

@@ -18,6 +18,15 @@ use crate::control::{
 
 pub(super) const OUTPUT_LIMIT: usize = 128 * 1024;
 
+// Read-only describes side effects, not HTTP payload semantics: previews may POST JSON.
+pub(super) fn body_for_method<'a>(method: &Method, body: &'a Bytes) -> Option<&'a Bytes> {
+    if matches!(*method, Method::GET | Method::HEAD) {
+        None
+    } else {
+        Some(body)
+    }
+}
+
 pub(super) fn principal(
     auth: &crate::management_token_auth::AuthenticatedManagementToken,
 ) -> GatewayAdminPrincipalContext {
@@ -286,7 +295,7 @@ impl McpHandler {
             &context,
             &identity.remote,
             &headers,
-            if op.read_only() { None } else { Some(&bytes) },
+            body_for_method(&method, &bytes),
         )
         .await;
         let mut response = match result {

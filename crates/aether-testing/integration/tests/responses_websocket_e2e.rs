@@ -174,6 +174,13 @@ async fn weekly_plan_request_limit_counts_turns_but_not_the_websocket_upgrade(
         .send(response_create(json!({"input": "allowed turn"})))
         .await?;
     receive_event(&mut client, "response.completed").await?;
+    // The weekly plan counter is fed by the settled usage record, which is
+    // written asynchronously after `response.completed` reaches the client.
+    // Wait for the first turn to settle so the second turn deterministically
+    // observes the exhausted plan instead of racing the usage writer.
+    harness
+        .usage_audits_where(1, "the allowed plan-limited turn", is_billed)
+        .await?;
 
     client
         .send(response_create(json!({"input": "rejected turn"})))
